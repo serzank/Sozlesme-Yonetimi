@@ -5,7 +5,7 @@ import yfinance as yf
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📱")
 
-# --- CSS Tasarım (MOBİL & DARK MODE FİXLENDİ) ---
+# --- CSS Tasarım (MOBİL & DARK MODE VE TABLO HATASI DÜZELTİLDİ) ---
 st.markdown("""
     <style>
     /* Logo Ayarı */
@@ -17,52 +17,41 @@ st.markdown("""
         margin-bottom: 20px; 
     }
 
-    /* KUTU TASARIMI - GENEL */
+    /* KUTU TASARIMI */
     .kutu, .kutu-enerji {
         padding: 15px; 
         border-radius: 10px; 
         margin-bottom: 12px; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* Hafif gölge */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
-    /* FİNANS KUTULARI (Mavi Kenar) */
+    /* RENK VE GÖRÜNÜRLÜK AYARLARI (Dark Mode Fix) */
     .kutu { 
-        background-color: #f8f9fa !important; /* Arka plan zorla beyaz/gri */
+        background-color: #f8f9fa !important; 
         border-left: 6px solid #1E3D59 !important; 
-        color: #1E3D59 !important; /* YAZI RENGİNİ ZORLA KOYU YAP (Dark Mode Fix) */
+        color: #1E3D59 !important; /* Yazıyı koyu lacivert yap */
     }
-
-    /* ENERJİ KUTULARI (Turuncu Kenar) */
+    
     .kutu-enerji { 
         background-color: #fffcf5 !important; 
         border-left: 6px solid #F39C12 !important; 
-        color: #1E3D59 !important; /* YAZI RENGİNİ ZORLA KOYU YAP */
-    }
-
-    /* KUTU İÇİNDEKİ BAŞLIKLAR (Kalın Yazılar) */
-    .kutu b, .kutu-enerji b {
-        color: #1E3D59 !important; /* Başlıkları da koyu yap */
-        font-size: 15px;
-    }
-
-    /* RAKAMLAR (Mobil için font ayarı) */
-    .big-metric { 
-        font-size: 22px !important; 
-        font-weight: bold; 
         color: #1E3D59 !important; 
     }
-    
-    /* ESKİ FİYAT YAZISI */
-    .old-price { 
-        font-size: 12px !important; 
-        color: #666666 !important; 
-    }
 
-    /* TAHMİN ETİKETİ */
+    /* Kutuların içindeki tüm metinleri zorla koyu renk yap */
+    .kutu *, .kutu-enerji * {
+        color: #1E3D59 !important;
+    }
+    
+    /* Yeşil ve Kırmızı oranlar için istisna */
+    .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
+    .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
+
+    /* Tahmin Etiketi */
     .prediction-tag { 
         font-size: 11px; 
-        background-color: #e8f5e9; 
-        color: #2e7d32; 
+        background-color: #e8f5e9 !important; 
+        color: #2e7d32 !important; 
         padding: 3px 6px; 
         border-radius: 4px; 
         font-weight: bold; 
@@ -70,10 +59,6 @@ st.markdown("""
         margin-bottom: 4px;
     }
 
-    /* MOBİL İÇİN INPUT ALANLARINI İYİLEŞTİRME */
-    div[data-testid="stNumberInput"] label { font-size: 14px !important; font-weight: bold; color: #333 !important; }
-    div[data-testid="stNumberInput"] input { color: #000 !important; }
-    
     /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
     </style>
@@ -147,7 +132,7 @@ if hata:
         if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
 
 # ============================================================================
-# 3. FİNANSAL GÖSTERGELER
+# 3. GÖSTERGE PANELİ
 # ============================================================================
 st.title("📱 Finans Kokpiti")
 st.markdown(f"**Dönem:** {donem_secimi}")
@@ -156,20 +141,28 @@ def kutu(col, baslik, key, ikon):
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
     ilk, son, deg = val["ilk"], val["son"], val["degisim"]
     with col:
-        # İkon ve Başlığı yan yana getirip hizalama
-        st.markdown(f"""
+        # İkon ve Başlık
+        html_content = f"""
         <div class='kutu'>
             <div style='display:flex; align-items:center; margin-bottom:5px;'>
                 <span style='font-size:20px; margin-right:8px;'>{ikon}</span>
-                <b>{baslik}</b>
+                <b style='font-size:16px;'>{baslik}</b>
             </div>
-        """, unsafe_allow_html=True)
+        """
+        st.markdown(html_content, unsafe_allow_html=True)
         
-        if son == 0: deg = st.number_input(f"{baslik} (%)", value=0.0, step=0.1, key=key)
+        if son == 0: 
+            deg = st.number_input(f"{baslik} (%)", value=0.0, step=0.1, key=key)
         else:
-            st.markdown(f"<span class='old-price'>Eski: {tr_fmt(ilk)}</span>", unsafe_allow_html=True)
-            renk = "#27AE60" if deg >= 0 else "#C0392B"
-            st.markdown(f"<span class='big-metric'>{tr_fmt(son)}</span> <span style='color:{renk};font-weight:bold'>%{deg:+.2f}</span>", unsafe_allow_html=True)
+            renk_class = "pozitif" if deg >= 0 else "negatif"
+            st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
+            st.markdown(f"""
+                <div style='display:flex; justify-content:space-between; align-items:baseline;'>
+                    <span style='font-size:22px; font-weight:bold; color:#1E3D59 !important;'>{tr_fmt(son)}</span>
+                    <span class='{renk_class}'>%{deg:+.2f}</span>
+                </div>
+            """, unsafe_allow_html=True)
+        
         st.markdown("</div>", unsafe_allow_html=True)
     return deg
 
@@ -180,7 +173,7 @@ d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
 d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
 # ============================================================================
-# 4. ENERJİ VE AKARYAKIT
+# 4. ENERJİ
 # ============================================================================
 st.markdown("---")
 col_link_fuel, _ = st.columns([1,3])
@@ -208,8 +201,8 @@ with e2:
     if b_eski > 0: d_benzin = ((b_yeni - b_eski) / b_eski) * 100
     else: d_benzin = 0.0
     
-    renk = "#27AE60" if d_benzin >= 0 else "#C0392B"
-    st.markdown(f"<div style='text-align:right; font-weight:bold; font-size:18px; color:{renk}'>%{d_benzin:.2f}</div></div>", unsafe_allow_html=True)
+    renk_class = "pozitif" if d_benzin >= 0 else "negatif"
+    st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
 # Motorin
 with e3:
@@ -227,8 +220,8 @@ with e3:
     if m_eski > 0: d_dizel = ((m_yeni - m_eski) / m_eski) * 100
     else: d_dizel = 0.0
     
-    renk = "#27AE60" if d_dizel >= 0 else "#C0392B"
-    st.markdown(f"<div style='text-align:right; font-weight:bold; font-size:18px; color:{renk}'>%{d_dizel:.2f}</div></div>", unsafe_allow_html=True)
+    renk_class = "pozitif" if d_dizel >= 0 else "negatif"
+    st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
@@ -240,7 +233,6 @@ st.link_button("🔗 TÜİK Verisi", "https://data.tuik.gov.tr/Search/Search?tex
 
 st.markdown("### 📈 Enflasyon & Sepet")
 
-# 4 Kolon (Enflasyon Girişleri)
 ec1, ec2, ec3, ec4 = st.columns(4)
 tufe = ec1.number_input("TÜFE %", value=3.45)
 ufe = ec2.number_input("ÜFE %", value=4.15)
@@ -251,7 +243,6 @@ ozel_oran = (tufe + ufe) / 2
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
 
-# Sepet Girişleri (Mobilde alt alta daha düzgün dursun diye 3'lü grupladım)
 w1, w2, w3 = st.columns(3)
 w_ozel = w1.number_input("Karma (Mix) %", value=0)
 w_tufe = w2.number_input("Saf TÜFE %", value=40)
@@ -266,7 +257,6 @@ w7, w8, w9 = st.columns(3)
 w_benzin = w7.number_input("Benzin %", value=0)
 w_dizel = w8.number_input("Motorin %", value=10)
 w_brent = w9.number_input("Brent %", value=0)
-
 w_altin = st.number_input("Altın %", value=0)
 
 toplam_agirlik = w_ozel+w_tufe+w_ufe+w_hufe+w_usd+w_eur+w_brent+w_benzin+w_dizel+w_altin
@@ -274,7 +264,6 @@ toplam_agirlik = w_ozel+w_tufe+w_ufe+w_hufe+w_usd+w_eur+w_brent+w_benzin+w_dizel
 if toplam_agirlik != 100:
     st.error(f"⚠️ Toplam: %{toplam_agirlik}")
 else:
-    # Hesaplama
     etki_ozel = w_ozel * ozel_oran
     etki_tufe = w_tufe * tufe
     etki_ufe = w_ufe * ufe
@@ -284,7 +273,7 @@ else:
     etki_brent = w_brent * d_brent
     etki_benzin = w_benzin * d_benzin
     etki_dizel = w_dizel * d_dizel
-    etki_altin = w_altin * d_gram # d_gram artık kutu fonksiyonundan değil data_dict'ten gelmeliydi ama burada global 'd_gram' değişkeni kutu() çağrıldığında atanıyor. Sıralama doğru olduğu için sorun yok.
+    etki_altin = w_altin * d_gram 
     
     zam = (etki_ozel + etki_tufe + etki_ufe + etki_hufe + etki_usd + etki_eur + etki_brent + etki_benzin + etki_dizel + etki_altin) / 100
     fark = sozlesme_tutari * (zam / 100)
@@ -293,7 +282,7 @@ else:
     st.success(f"YENİ TUTAR: {tr_fmt(yeni_tutar)} TL")
     st.info(f"Fark: {tr_fmt(fark)} TL (+%{zam:.2f})")
     
-    # Detay Tablosu
+    # Detay Tablosu (ValueError ÇÖZÜMÜ)
     data = {
         "Kalem": ["TÜFE+ÜFE/2", "TÜFE", "ÜFE", "H-ÜFE", "Dolar", "Euro", "Brent", "Benzin", "Motorin", "Altın"],
         "Değişim %": [ozel_oran, tufe, ufe, h_ufe, d_usd, d_eur, d_brent, d_benzin, d_dizel, d_gram],
@@ -303,4 +292,13 @@ else:
     df = df[df["Ağırlık %"] > 0]
     df["Etki %"] = (df["Değişim %"] * df["Ağırlık %"]) / 100
     
-    st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
+    # HATA VEREN SATIR DÜZELTİLDİ:
+    # Tüm tabloyu değil, sadece sayısal sütunları formatlıyoruz.
+    st.dataframe(
+        df.style.format({
+            "Değişim %": "{:.2f}",
+            "Ağırlık %": "{:.0f}",
+            "Etki %": "{:.2f}"
+        }),
+        use_container_width=True
+    )
