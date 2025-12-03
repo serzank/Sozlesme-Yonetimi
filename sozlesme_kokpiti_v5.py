@@ -5,7 +5,7 @@ import yfinance as yf
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📱")
 
-# --- CSS Tasarım (MOBİL & DARK MODE VE TABLO HATASI DÜZELTİLDİ) ---
+# --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
 st.markdown("""
     <style>
     /* Logo Ayarı */
@@ -17,7 +17,7 @@ st.markdown("""
         margin-bottom: 20px; 
     }
 
-    /* KUTU TASARIMI */
+    /* Kutu Tasarımları */
     .kutu, .kutu-enerji {
         padding: 15px; 
         border-radius: 10px; 
@@ -25,11 +25,10 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
-    /* RENK VE GÖRÜNÜRLÜK AYARLARI (Dark Mode Fix) */
     .kutu { 
         background-color: #f8f9fa !important; 
         border-left: 6px solid #1E3D59 !important; 
-        color: #1E3D59 !important; /* Yazıyı koyu lacivert yap */
+        color: #1E3D59 !important; 
     }
     
     .kutu-enerji { 
@@ -38,12 +37,8 @@ st.markdown("""
         color: #1E3D59 !important; 
     }
 
-    /* Kutuların içindeki tüm metinleri zorla koyu renk yap */
-    .kutu *, .kutu-enerji * {
-        color: #1E3D59 !important;
-    }
-    
-    /* Yeşil ve Kırmızı oranlar için istisna */
+    /* Kutu İçi Metinler (Zorla Koyu Renk) */
+    .kutu *, .kutu-enerji * { color: #1E3D59 !important; }
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
 
@@ -58,21 +53,22 @@ st.markdown("""
         display: inline-block;
         margin-bottom: 4px;
     }
-
+    
     /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- YARDIMCI FONKSİYON: TÜRKÇE PARA FORMATI ---
+# --- YARDIMCI FONKSİYON: TÜRKÇE PARA FORMATI (GÖSTERİM İÇİN) ---
 def tr_fmt(deger):
     if isinstance(deger, (int, float)):
+        # 1,234.56 -> 1.234,56 dönüşümü
         s = "{:,.2f}".format(deger)
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return deger
 
 # ============================================================================
-# 1. SOL MENÜ
+# 1. SOL MENÜ (TÜRKÇE FORMAT GİRİŞİ)
 # ============================================================================
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
@@ -83,8 +79,19 @@ with st.sidebar:
     selected_period = period_map[donem_secimi]
 
     st.markdown("---")
-    sozlesme_tutari = st.number_input("Sözleşme Tutarı (TL):", value=100000.0, format="%.2f")
-    st.caption(f"Tutar: {tr_fmt(sozlesme_tutari)} TL")
+    
+    # --- YENİ INPUT SİSTEMİ: METİN KUTUSU ---
+    # Kullanıcı 100.000,00 şeklinde yazar
+    tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00", help="Örnek: 1.250.000,50")
+    
+    # Arka planda sayıya çevirme işlemi
+    try:
+        # Noktaları sil (binlik), Virgülü noktaya çevir (kuruş)
+        temiz_tutar = tutar_giris.replace(".", "").replace(",", ".")
+        sozlesme_tutari = float(temiz_tutar)
+    except:
+        st.error("Lütfen geçerli bir sayı giriniz (Örn: 100.000,00)")
+        sozlesme_tutari = 0.0
 
 # ============================================================================
 # 2. VERİ ÇEKME MOTORU
@@ -141,18 +148,15 @@ def kutu(col, baslik, key, ikon):
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
     ilk, son, deg = val["ilk"], val["son"], val["degisim"]
     with col:
-        # İkon ve Başlık
-        html_content = f"""
+        st.markdown(f"""
         <div class='kutu'>
             <div style='display:flex; align-items:center; margin-bottom:5px;'>
                 <span style='font-size:20px; margin-right:8px;'>{ikon}</span>
                 <b style='font-size:16px;'>{baslik}</b>
             </div>
-        """
-        st.markdown(html_content, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         
-        if son == 0: 
-            deg = st.number_input(f"{baslik} (%)", value=0.0, step=0.1, key=key)
+        if son == 0: deg = st.number_input(f"{baslik} (%)", value=0.0, step=0.1, key=key)
         else:
             renk_class = "pozitif" if deg >= 0 else "negatif"
             st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
@@ -162,7 +166,6 @@ def kutu(col, baslik, key, ikon):
                     <span class='{renk_class}'>%{deg:+.2f}</span>
                 </div>
             """, unsafe_allow_html=True)
-        
         st.markdown("</div>", unsafe_allow_html=True)
     return deg
 
@@ -197,10 +200,8 @@ with e2:
     
     b_eski = st.number_input("Eski (TL)", value=42.0, step=0.5, key="b_o")
     b_yeni = st.number_input("Yeni (TL)", value=44.0, step=0.5, key="b_n")
-    
     if b_eski > 0: d_benzin = ((b_yeni - b_eski) / b_eski) * 100
     else: d_benzin = 0.0
-    
     renk_class = "pozitif" if d_benzin >= 0 else "negatif"
     st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
@@ -216,10 +217,8 @@ with e3:
     
     m_eski = st.number_input("Eski (TL)", value=43.0, step=0.5, key="m_o")
     m_yeni = st.number_input("Yeni (TL)", value=45.0, step=0.5, key="m_n")
-    
     if m_eski > 0: d_dizel = ((m_yeni - m_eski) / m_eski) * 100
     else: d_dizel = 0.0
-    
     renk_class = "pozitif" if d_dizel >= 0 else "negatif"
     st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
@@ -282,7 +281,6 @@ else:
     st.success(f"YENİ TUTAR: {tr_fmt(yeni_tutar)} TL")
     st.info(f"Fark: {tr_fmt(fark)} TL (+%{zam:.2f})")
     
-    # Detay Tablosu (ValueError ÇÖZÜMÜ)
     data = {
         "Kalem": ["TÜFE+ÜFE/2", "TÜFE", "ÜFE", "H-ÜFE", "Dolar", "Euro", "Brent", "Benzin", "Motorin", "Altın"],
         "Değişim %": [ozel_oran, tufe, ufe, h_ufe, d_usd, d_eur, d_brent, d_benzin, d_dizel, d_gram],
@@ -292,8 +290,6 @@ else:
     df = df[df["Ağırlık %"] > 0]
     df["Etki %"] = (df["Değişim %"] * df["Ağırlık %"]) / 100
     
-    # HATA VEREN SATIR DÜZELTİLDİ:
-    # Tüm tabloyu değil, sadece sayısal sütunları formatlıyoruz.
     st.dataframe(
         df.style.format({
             "Değişim %": "{:.2f}",
