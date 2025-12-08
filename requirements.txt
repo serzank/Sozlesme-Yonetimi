@@ -3,5 +3,5 @@ requests
 pandas
 yfinance
 evds
-pyhton - dateutil
+
 
