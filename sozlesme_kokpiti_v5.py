@@ -10,17 +10,45 @@ MY_API_KEY = "Uol1kIOQos"
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📱")
 
-# --- CSS Tasarım ---
+# --- CSS Tasarım (Mobil & Dark Mode Fix) ---
 st.markdown("""
     <style>
+    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
-    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
-    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
+    
+    /* Kutu Genel */
+    .kutu, .kutu-enerji { 
+        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    }
+    
+    /* Finans Kutusu */
+    .kutu { 
+        background-color: #f8f9fa !important; 
+        border-left: 6px solid #1E3D59 !important; 
+    }
+    
+    /* Enerji Kutusu */
+    .kutu-enerji { 
+        background-color: #fffcf5 !important; 
+        border-left: 6px solid #F39C12 !important; 
+    }
+    
+    /* Yazı Renklerini Zorla Koyu Yap (Dark Mode Sorununu Çözer) */
+    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { 
+        color: #1E3D59 !important; 
+    }
+    
+    /* Özel Renkler */
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
+    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 3px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
+    
+    /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    
+    /* Input Alanı Başlıkları */
+    div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -31,22 +59,38 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU ---
+# --- TCMB VERİ MOTORU (GÜÇLENDİRİLMİŞ) ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(donem_tipi):
     result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Başlatılıyor..."}
+    
     try:
         api = evds.evdsAPI(MY_API_KEY)
+        
+        # Son 3 yılın verisini çek (Garantili Yöntem)
         end = datetime.now().strftime("%d-%m-%Y")
         start = (datetime.now() - pd.DateOffset(months=36)).strftime("%d-%m-%Y")
         
+        # TP.FG.J0 = TÜFE
+        # TP.TUFE1YI.K1 = Yİ-ÜFE
+        # TP.HKFE01.I1 = H-ÜFE (Hizmet)
         df = api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1'], startdate=start, enddate=end)
         
-        if df is None or df.empty: return result
-        df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
-        if len(df) < 2: return result
+        if df is None or df.empty:
+            result["Msg"] = "TCMB yanıt vermedi."
+            return result
             
+        # Boş verileri temizle
+        df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
+        
+        if len(df) < 2:
+            result["Msg"] = "Veri yetersiz."
+            return result
+            
+        # --- DÖNEM HESABI ---
         son_row = df.iloc[-1]
+        
+        # Geriye dönük kaç ay gideceğiz?
         lookback = 1
         if donem_tipi == "3 Ay": lookback = 3
         elif donem_tipi == "6 Ay": lookback = 6
@@ -55,25 +99,37 @@ def get_tcmb_data(donem_tipi):
             lookback = datetime.now().month
             if len(df) < lookback: lookback = len(df) - 1
             
+        # Listeden taşmamak için kontrol
         idx = -(lookback + 1)
         if abs(idx) > len(df): idx = 0 
+        
         ilk_row = df.iloc[idx]
         
+        # Oran Hesaplama
         def calc_change(now, old):
-            try: return ((float(now) - float(old)) / float(old)) * 100
-            except: return 0.0
+            try:
+                return ((float(now) - float(old)) / float(old)) * 100
+            except:
+                return 0.0
 
         result["TUFE"] = round(calc_change(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
         result["UFE"] = round(calc_change(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
+        
+        # H-ÜFE bazen boş gelebilir
         try:
             if 'TP_HKFE01.I1' in df.columns:
                 h_now = df['TP_HKFE01.I1'].iloc[-1]
                 h_old = df['TP_HKFE01.I1'].iloc[idx]
                 result["HUFE"] = round(calc_change(h_now, h_old), 2)
-        except: pass
+        except:
+            result["HUFE"] = 0.0
+            
         result["Status"] = True
         result["Msg"] = f"Dönem: {ilk_row['Tarih']} - {son_row['Tarih']}"
-    except: pass
+        
+    except Exception as e:
+        result["Msg"] = f"Hata: {str(e)}"
+        
     return result
 
 # ============================================================================
@@ -82,20 +138,26 @@ def get_tcmb_data(donem_tipi):
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
     st.header("⚙️ Ayarlar")
+    
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     
+    # YAHOO DÖNEM MAP
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
-    tcmb_data = get_tcmb_data(donem_secimi)
+    # TCMB VERİSİNİ ÇEK
+    with st.spinner("TCMB Verisi Alınıyor..."):
+        tcmb_data = get_tcmb_data(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except: sozlesme_tutari = 0.0
+    try:
+        sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
+    except:
+        sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ
+# 2. YAHOO VERİ ÇEKME
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -111,8 +173,10 @@ def piyasa_verisi_al(periyot):
         else:
             for key, symbol in tickers.items():
                 try:
+                    # Sütun adı bulma
                     c_name = [c for c in df.columns if symbol in str(c)]
                     if not c_name: continue
+                    
                     seri = df[c_name[0]].dropna()
                     if len(seri) > 1:
                         ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
@@ -121,6 +185,7 @@ def piyasa_verisi_al(periyot):
                     else: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
                 except: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
             
+            # Gram Altın
             if "ONS_ALTIN" in data_dict and "USDTRY" in data_dict:
                 g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
                 g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
