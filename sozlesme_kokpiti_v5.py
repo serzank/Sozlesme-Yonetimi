@@ -75,9 +75,12 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- 2. CANLI PİYASA VERİSİ (SON FİYATLAR) ---
+# --- 2. CANLI PİYASA VERİSİ (SON FİYATLAR - BIGPARA) ---
 @st.cache_data(ttl=300)
 def canli_piyasa_cek():
+    """
+    Yahoo'nun gecikmeli veya hatalı güncel verisi yerine Bigpara'yı kullanır.
+    """
     base_url = "https://bigpara.hurriyet.com.tr"
     targets = {
         "USD": "/doviz/dolar/",
@@ -113,6 +116,11 @@ def get_tcmb_data(api_key, start_date, end_date):
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
+        
+        # Gelecek tarihli sorgu hatasını önlemek için bugünü geçme
+        if end_date > date.today():
+            end_q = date.today().strftime("%d-%m-%Y")
+
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         
         if raw_df is None or raw_df.empty:
@@ -123,6 +131,8 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
         max_date = raw_df['Tarih_Dt'].max()
+        
+        # Eğer seçilen bitiş tarihi veriden büyükse, eldeki en son veriye çek
         if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
 
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
@@ -163,36 +173,26 @@ def get_tcmb_data(api_key, start_date, end_date):
 # --- 4. YENİ: TCMB KAYITLI GRAM ALTIN (ESKİ TARİH) ---
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
-    """
-    Belirtilen başlangıç tarihi için TCMB'den kayıtlı Külçe Altın (Gram) fiyatını çeker.
-    Hesaplama yapmaz, resmi veriyi getirir.
-    """
     price = 0.0
     if not api_key: return price
     try:
         evds = evdsAPI(api_key)
-        # Tarih aralığını 1 hafta öncesinden başlatıyoruz (Haftasonuna denk gelirse geriye bakabilsin)
         s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
         e_date_str = d_start.strftime("%d-%m-%Y")
         
-        # TP.MK.KUL.YTL = Külçe Altın (1 gr) - TL (Satış)
         series = ["TP.MK.KUL.YTL"]
-        
         df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
         if df is not None and not df.empty:
              col = [c for c in df.columns if "TP" in c][0]
-             # Sayısal olmayanları temizle ve NaN at
              df[col] = pd.to_numeric(df[col], errors='coerce')
              df.dropna(subset=[col], inplace=True)
-             
              if not df.empty:
-                 # Tarihe göre en son veri (Yani start_date veya ona en yakın önceki iş günü)
                  price = float(df.iloc[-1][col])
     except: pass
     return price
 
 # ============================================================================
-# SOL MENÜ
+# SOL MENÜ (REVİZE EDİLMİŞ)
 # ============================================================================
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
@@ -201,37 +201,19 @@ with st.sidebar:
     today = date.today()
     default_start = today - relativedelta(years=1)
     
-    # --- REVİZE EDİLEN KISIM: TARİH SEÇİCİ ---
-    # Min ve Max değerleri vererek yıl seçimini kolaylaştırıyoruz.
-    # Kullanıcıya ipucu (help) ekliyoruz.
+    # Yıl seçimi için geniş aralık
     min_select = date(2000, 1, 1)
     max_select = date(2030, 12, 31)
     
-    start_date = st.date_input(
-        "Başlangıç Tarihi", 
-        value=default_start, 
-        min_value=min_select, 
-        max_value=max_select,
-        help="Yılı hızlı değiştirmek için açılan takvimin en üstündeki 'Ay Yıl' (Örn: Aralık 2024) yazısına tıklayınız."
-    )
-    
-    end_date = st.date_input(
-        "Bitiş Tarihi (Güncel)", 
-        value=today, 
-        min_value=min_select, 
-        max_value=max_select
-    )
+    start_date = st.date_input("Başlangıç Tarihi", value=default_start, min_value=min_select, max_value=max_select)
+    end_date = st.date_input("Bitiş Tarihi (Güncel)", value=today, min_value=min_select, max_value=max_select)
     
     if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
     
     with st.spinner("Veriler Toplanıyor..."):
-        # 1. Enflasyon
         tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
-        # 2. Akaryakıt
         yakit_data = guncel_akaryakit_cek()
-        # 3. Canlı Piyasalar
         canli_veri = canli_piyasa_cek()
-        # 4. Kayıtlı Eski Altın Fiyatı (EVDS)
         evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
 
     st.markdown("---")
@@ -242,80 +224,96 @@ with st.sidebar:
     d_key = f"{start_date}_{end_date}"
 
 # ============================================================================
-# 5. PİYASA VERİSİ (HİBRİT + EVDS ALTIN)
+# 5. PİYASA VERİSİ (GARANTİLİ - TEK TEK İNDİRME)
 # ============================================================================
 @st.cache_data(ttl=600)
-def piyasa_verisi_al(d_start, d_end, live_data, evds_gold_start):
-    tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
+    """
+    Her ticker'ı ayrı ayrı indirir. Karışıklığı %100 önler.
+    """
+    # Yahoo End Date bugünü geçemez, hata verir. Gelecek seçilse bile bugüne çekiyoruz.
+    y_end = d_end
+    if y_end > date.today():
+        y_end = date.today()
+
+    # Ticker Listesi: (Bizim Key, Yahoo Symbol)
+    symbol_map = [
+        ("USDTRY", "TRY=X"), 
+        ("EURTRY", "EURTRY=X"), 
+        ("EURUSD", "EURUSD=X"), 
+        ("ONS_ALTIN", "GC=F"), 
+        ("BRENT_PETROL", "BZ=F"), 
+        ("ABD_TAHVIL", "^TNX")
+    ]
+    
     data_dict = {}
-    for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
+    for key, symbol in symbol_map:
+        ilk, son = 0.0, 0.0
+        try:
+            # TEK Ticker İndir (Karışıklık yok)
+            # progress=False konsol kirliliğini önler
+            df = yf.download(symbol, start=d_start, end=y_end + timedelta(days=1), progress=False)
+            
+            # Yahoo yeni versiyonda bazen MultiIndex döner, bazen dönmez.
+            # Sadece 'Close' sütununu alıp Series'e çevirelim.
+            if isinstance(df, pd.DataFrame):
+                if 'Close' in df.columns:
+                    seri = df['Close']
+                else:
+                    # Tek kolon dönerse direkt odur
+                    seri = df.iloc[:, 0]
+            else:
+                seri = df # Zaten series ise
 
-    try:
-        raw_data = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
+            # Series temizliği
+            seri = seri.dropna()
+            
+            if len(seri) > 0:
+                ilk = float(seri.iloc[0]) # Başlangıç tarihindeki değer
+                son = float(seri.iloc[-1]) # Yahoo'daki en son değer (Yedek)
+
+        except Exception as e:
+            # Hata olursa 0 geç
+            pass
         
-        for key, symbol in tickers.items():
-            ilk, son = 0.0, 0.0
-            try:
-                # Sütun eşleştirme
-                if isinstance(raw_data, pd.DataFrame):
-                    col_found = None
-                    if symbol in raw_data.columns:
-                        col_found = raw_data[symbol]
-                    else:
-                        for c in raw_data.columns:
-                            if str(c) == symbol:
-                                col_found = raw_data[c]; break
-                    
-                    if col_found is not None:
-                        col_found = col_found.fillna(method='ffill').fillna(method='bfill')
-                        if len(col_found) > 0:
-                            ilk = float(col_found.iloc[0])
-                            son = float(col_found.iloc[-1])
-                elif isinstance(raw_data, pd.Series):
-                    if raw_data.name == symbol:
-                        ilk = float(raw_data.iloc[0])
-                        son = float(raw_data.iloc[-1])
-            except: pass
-            
-            # --- CANLI VERİ OVERRIDE ---
-            if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
-            elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-            elif key == "GRAM_ALTIN_TL": pass 
-                 
-            degisim = 0.0
-            if ilk > 0: degisim = ((son - ilk) / ilk) * 100
-            data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
+        # --- CANLI VERİ OVERRIDE (ÖNCELİK) ---
+        # Eğer canlı veri (Bigpara) varsa, Yahoo'nun SON verisini ez.
+        if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
+        elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
+        
+        # Gram Altın henüz hesaplanmadı, aşağıda.
+        
+        degisim = 0.0
+        if ilk > 0: degisim = ((son - ilk) / ilk) * 100
+        data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-        # --- GRAM ALTIN (KAYITLI + CANLI) ---
-        # 1. ESKİ FİYAT: EVDS'den gelen kayıtlı veri (Hesaplama YOK)
-        # Eğer EVDS başarısız olursa (0 gelirse), fallback olarak eski usul hesapla
-        gold_ilk = evds_gold_start
-        if gold_ilk == 0:
-             # Fallback: Ons * USD (Mecburen)
-             if data_dict["ONS_ALTIN"]["ilk"] > 0 and data_dict["USDTRY"]["ilk"] > 0:
-                 gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
+    # --- GRAM ALTIN ÖZEL HESAP ---
+    # 1. Başlangıç: EVDS
+    gold_ilk = evds_gold_start
+    if gold_ilk == 0:
+        # Fallback: Ons * USD
+        ons_ilk = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
+        usd_ilk = data_dict.get("USDTRY", {}).get("ilk", 0)
+        if ons_ilk > 0 and usd_ilk > 0:
+            gold_ilk = (ons_ilk / 31.1035) * usd_ilk
 
-        # 2. YENİ FİYAT: Canlı Bigpara verisi
-        gold_son = 0.0
-        if live_data.get("ALTIN", 0) > 0:
-            gold_son = live_data["ALTIN"]
-        else:
-            # Fallback
-            gold_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
-            
-        gold_deg = 0.0
-        if gold_ilk > 0:
-            gold_deg = ((gold_son - gold_ilk) / gold_ilk) * 100
-            
-        data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": gold_deg}
+    # 2. Bitiş: Canlı
+    gold_son = live_data.get("ALTIN", 0)
+    if gold_son == 0:
+        # Fallback
+        ons_son = data_dict.get("ONS_ALTIN", {}).get("son", 0)
+        usd_son = data_dict.get("USDTRY", {}).get("son", 0)
+        gold_son = (ons_son / 31.1035) * usd_son
 
-    except: pass
+    g_deg = 0.0
+    if gold_ilk > 0: g_deg = ((gold_son - gold_ilk) / gold_ilk) * 100
+    
+    data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
+    
     return data_dict
 
-# Fonksiyona EVDS verisini de gönderiyoruz
-piyasa = piyasa_verisi_al(start_date, end_date, canli_veri, evds_gold_ilk)
-if "GRAM_ALTIN_TL" not in piyasa: 
-    piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
+# Fonksiyonu çalıştır
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
