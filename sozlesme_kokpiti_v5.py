@@ -4,12 +4,8 @@ import yfinance as yf
 import evds
 from datetime import datetime
 
-# --- API ANAHTARINIZI BURAYA YAPIŞTIRIN ---
-# Örnek: EVDS_API_KEY = "a1b2c3d4..."
-EVDS_API_KEY = "Uol1kIOQos"
-
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📱")
+st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="⛽")
 
 # --- CSS Tasarım ---
 st.markdown("""
@@ -34,44 +30,46 @@ def tr_fmt(deger):
     return deger
 
 # --- TCMB ENFLASYON VERİSİ ÇEKME ---
-@st.cache_data(ttl=3600) # 1 saatte bir yenile (Enflasyon ayda bir değişir)
+@st.cache_data(ttl=3600)
 def get_tcmb_inflation(api_key):
-    # Varsayılan değerler (API çalışmazsa)
-    result = {"TUFE": 3.45, "UFE": 4.15, "Status": False}
+    # Varsayılan (Hata durumunda dönecek)
+    result = {"TUFE": 0.0, "UFE": 0.0, "Status": False, "Msg": ""}
     
-    if api_key == "BURAYA_ALDIĞINIZ_UZUN_KEYİ_YAPIŞTIRIN" or len(api_key) < 5:
+    if not api_key:
+        result["Msg"] = "API Anahtarı Girilmedi"
         return result
 
     try:
         evds_api = evds.evdsAPI(api_key)
-        # TP.FG.J0: TÜFE (Genel) | TP.TUFE1YI.K1: Yİ-ÜFE (Genel)
-        
-        # Son 3 aylık veriyi çekelim ki garanti olsun
+        # Son 4 ayın verisini çek (Gecikmeli veri ihtimaline karşı geniş aralık)
         end_date = datetime.now().strftime("%d-%m-%Y")
-        start_date = (datetime.now() - pd.DateOffset(months=3)).strftime("%d-%m-%Y")
+        start_date = (datetime.now() - pd.DateOffset(months=4)).strftime("%d-%m-%Y")
         
         df = evds_api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1'], startdate=start_date, enddate=end_date)
         
         if df is not None and not df.empty:
-            df.dropna(inplace=True)
+            # Sadece dolu satırları al
+            df = df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'])
+            
             if len(df) >= 2:
-                # Son iki ayın endekslerini alıp aylık değişim hesapla
                 son = df.iloc[-1]
                 onceki = df.iloc[-2]
                 
-                tufe_degisim = ((son['TP_FG_J0'] - onceki['TP_FG_J0']) / onceki['TP_FG_J0']) * 100
-                ufe_degisim = ((son['TP_TUFE1YI_K1'] - onceki['TP_TUFE1YI_K1']) / onceki['TP_TUFE1YI_K1']) * 100
+                # Aylık Değişim Hesabı: ((Yeni-Eski)/Eski)*100
+                tufe_degisim = ((float(son['TP_FG_J0']) - float(onceki['TP_FG_J0'])) / float(onceki['TP_FG_J0'])) * 100
+                ufe_degisim = ((float(son['TP_TUFE1YI_K1']) - float(onceki['TP_TUFE1YI_K1'])) / float(onceki['TP_TUFE1YI_K1'])) * 100
                 
                 result["TUFE"] = round(tufe_degisim, 2)
                 result["UFE"] = round(ufe_degisim, 2)
                 result["Status"] = True
-    except:
+                result["Msg"] = f"Veri Dönemi: {son['Tarih']}"
+            else:
+                result["Msg"] = "Yeterli veri bulunamadı"
+    except Exception as e:
+        result["Msg"] = f"Hata: {str(e)}"
         pass
         
     return result
-
-# Enflasyon verilerini baştan çek
-tcmb_data = get_tcmb_inflation(EVDS_API_KEY)
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -79,6 +77,17 @@ tcmb_data = get_tcmb_inflation(EVDS_API_KEY)
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
     st.header("⚙️ Ayarlar")
+    
+    # API ANAHTAR GİRİŞİ (YENİ EKLENDİ)
+    tcmb_key = st.text_input("TCMB API Anahtarı:", type="password", placeholder="Anahtarı buraya yapıştırın...")
+    
+    # Enflasyon verisini çekmeye çalış
+    if tcmb_key:
+        tcmb_data = get_tcmb_inflation(tcmb_key)
+    else:
+        tcmb_data = {"TUFE": 3.45, "UFE": 4.15, "Status": False, "Msg": "Anahtar Yok"}
+
+    st.markdown("---")
     
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     period_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
@@ -94,7 +103,7 @@ with st.sidebar:
         sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO FINANCE VERİ ÇEKME
+# 2. YAHOO VERİ ÇEKME
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -221,22 +230,22 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON (EVDS ENTEGRE EDİLDİ)
+# 5. ENFLASYON (EVDS ENTEGRE)
 # ============================================================================
 st.markdown("---")
-# Enflasyon Başlığı ve Durum Bilgisi
+# Bilgi satırı
 c_inf_title, c_inf_status = st.columns([2, 1])
 with c_inf_title:
     st.markdown("### 📈 Enflasyon & Sepet")
 with c_inf_status:
     if tcmb_data["Status"]:
-        st.success("✅ Veriler TCMB'den Çekildi")
+        st.success(f"✅ {tcmb_data['Msg']}")
     else:
-        st.info("⚠️ Manuel Veri Girişi")
+        st.info("⚠️ Manuel / Varsayılan")
 
 ec1, ec2, ec3, ec4 = st.columns(4)
 
-# Değerleri TCMB'den geliyorsa oradan, yoksa varsayılandan al
+# Değerleri TCMB'den otomatik doldur
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"])
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"])
 h_ufe = ec3.number_input("H-ÜFE %", value=5.00)
