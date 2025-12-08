@@ -402,3 +402,4 @@ else:
         df.to_excel(writer, sheet_name='Detay', index=False)
     st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel")
 
+
