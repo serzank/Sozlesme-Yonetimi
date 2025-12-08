@@ -19,7 +19,7 @@ except:
     MY_API_KEY = "Uol1kIOQos" 
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="SK - Procurement Specialist", layout="wide", page_icon="🛡️")
 
 # --- CSS Tasarım ---
 st.markdown("""
@@ -241,7 +241,7 @@ if "GRAM_ALTIN_TL" not in piyasa:
 # ============================================================================
 # 3. GÖSTERGE PANELİ
 # ============================================================================
-st.title("📱 Finans & Sözleşme Kokpiti v5.0")
+st.title("📱 Finansal Sözleşme Kokpiti")
 st.caption(f"Aralık: {start_date.strftime('%d.%m.%Y')} ➡️ {end_date.strftime('%d.%m.%Y')}")
 
 def kutu(col, baslik, key, ikon):
@@ -401,3 +401,4 @@ else:
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Detay', index=False)
     st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel")
+
