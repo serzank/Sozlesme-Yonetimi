@@ -201,8 +201,26 @@ with st.sidebar:
     today = date.today()
     default_start = today - relativedelta(years=1)
     
-    start_date = st.date_input("Başlangıç Tarihi", value=default_start)
-    end_date = st.date_input("Bitiş Tarihi (Güncel)", value=today)
+    # --- REVİZE EDİLEN KISIM: TARİH SEÇİCİ ---
+    # Min ve Max değerleri vererek yıl seçimini kolaylaştırıyoruz.
+    # Kullanıcıya ipucu (help) ekliyoruz.
+    min_select = date(2000, 1, 1)
+    max_select = date(2030, 12, 31)
+    
+    start_date = st.date_input(
+        "Başlangıç Tarihi", 
+        value=default_start, 
+        min_value=min_select, 
+        max_value=max_select,
+        help="Yılı hızlı değiştirmek için açılan takvimin en üstündeki 'Ay Yıl' (Örn: Aralık 2024) yazısına tıklayınız."
+    )
+    
+    end_date = st.date_input(
+        "Bitiş Tarihi (Güncel)", 
+        value=today, 
+        min_value=min_select, 
+        max_value=max_select
+    )
     
     if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
     
