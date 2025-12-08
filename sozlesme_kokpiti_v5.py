@@ -34,6 +34,7 @@ st.markdown("""
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     .badge-live { background-color: #27AE60; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; vertical-align: middle; }
+    .badge-tcmb { background-color: #1E3D59; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; vertical-align: middle; margin-left: 5px; }
     /* Tarih Seçici Genişlik Ayarı */
     div[data-testid="stDateInput"] { width: 100% !important; }
     </style>
@@ -54,7 +55,7 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- 1. WEB SCRAPING: AKARYAKIT ---
+# --- 1. WEB SCRAPING: GÜNCEL AKARYAKIT ---
 @st.cache_data(ttl=3600)
 def guncel_akaryakit_cek():
     url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
@@ -186,6 +187,39 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
+# --- 5. YENİ: TCMB KAYITLI AKARYAKIT FİYATLARI (OTOMATİK ÇEKME) ---
+@st.cache_data(ttl=3600)
+def get_evds_fuel_history(api_key, d_start):
+    """
+    EVDS'den geçmiş tarihli Benzin (TP.AK.U95) ve Motorin (TP.AK.MTR) fiyatlarını çeker.
+    """
+    res = {"benzin": 0.0, "motorin": 0.0}
+    if not api_key: return res
+    try:
+        evds = evdsAPI(api_key)
+        # Akaryakıt verileri bazen haftalık girilir, 10 gün geriye bakarak son veriyi al
+        s_date_str = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+        e_date_str = d_start.strftime("%d-%m-%Y")
+        
+        # TP.AK.U95 = Kurşunsuz Benzin 95, TP.AK.MTR = Motorin
+        series = ["TP.AK.U95", "TP.AK.MTR"]
+        
+        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
+        if df is not None and not df.empty:
+            # Benzin
+            cols_b = [c for c in df.columns if "TP_AK_U95" in c or "TP.AK.U95" in c]
+            if cols_b:
+                s_b = pd.to_numeric(df[cols_b[0]], errors='coerce').dropna()
+                if not s_b.empty: res["benzin"] = float(s_b.iloc[-1])
+            
+            # Motorin
+            cols_m = [c for c in df.columns if "TP_AK_MTR" in c or "TP.AK.MTR" in c]
+            if cols_m:
+                s_m = pd.to_numeric(df[cols_m[0]], errors='coerce').dropna()
+                if not s_m.empty: res["motorin"] = float(s_m.iloc[-1])
+    except: pass
+    return res
+
 # ============================================================================
 # SOL MENÜ
 # ============================================================================
@@ -201,7 +235,6 @@ with st.sidebar:
 # ============================================================================
 # ANA EKRAN - ÜST KISIM (TARİH SEÇİMİ)
 # ============================================================================
-# 13 inç ekranda Sidebar dar kaldığı için ana ekrana alıyoruz.
 st.markdown("#### 📅 Sözleşme Tarih Aralığı")
 
 c_date1, c_date2 = st.columns(2)
@@ -217,7 +250,7 @@ with c_date1:
         value=default_start, 
         min_value=min_select, 
         max_value=max_select,
-        format="DD.MM.YYYY" # Yılın net görünmesi için format
+        format="DD.MM.YYYY"
     )
 
 with c_date2:
@@ -236,11 +269,13 @@ if start_date >= end_date:
 d_key = f"{start_date}_{end_date}"
 
 # VERİ ÇEKME İŞLEMLERİ
-with st.spinner("Piyasa Verileri Taranıyor..."):
+with st.spinner("Piyasa Verileri ve Geçmiş Akaryakıt Taranıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
-    yakit_data = guncel_akaryakit_cek()
+    yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
+    # YENİ: Geçmiş Akaryakıt
+    evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
 
 # ============================================================================
 # 5. PİYASA VERİSİ (GARANTİLİ - TEK TEK İNDİRME)
@@ -332,25 +367,48 @@ st.markdown("### 🛢️ Enerji")
 e1, e2, e3, e4 = st.columns(4)
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
 
-oto_benzin = yakit_data.get("benzin", 0.0)
-oto_motorin = yakit_data.get("motorin", 0.0)
+# --- OTOMATİK AKARYAKIT MANTIĞI ---
+# Eğer EVDS'den eski fiyat geldiyse onu kullan, yoksa manuel bırak (42.0/43.0 gibi)
+benzin_eski_val = evds_fuel_ilk["benzin"] if evds_fuel_ilk["benzin"] > 0 else 42.0
+motorin_eski_val = evds_fuel_ilk["motorin"] if evds_fuel_ilk["motorin"] > 0 else 43.0
+
+benzin_yeni_val = yakit_guncel.get("benzin", 0.0)
+if benzin_yeni_val == 0: benzin_yeni_val = 44.0
+
+motorin_yeni_val = yakit_guncel.get("motorin", 0.0)
+if motorin_yeni_val == 0: motorin_yeni_val = 45.0
 
 with e2:
-    badge = f"<span class='badge-live'>CANLI: {oto_benzin} TL</span>" if oto_benzin > 0 else ""
+    badge = f"<span class='badge-live'>CANLI: {benzin_yeni_val} TL</span>" if yakit_guncel.get("benzin", 0) > 0 else ""
     st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b> {badge}", unsafe_allow_html=True)
-    b_eski = st.number_input("Eski (TL)", value=42.0, key=f"bo_{d_key}")
-    def_bn = oto_benzin if oto_benzin > 0 else 44.0
-    b_yeni = st.number_input("Yeni (TL)", value=def_bn, key=f"bn_{d_key}")
+    
+    # Rozet Kontrolü (Eski veri TCMB'den mi?)
+    etiket_b = "Eski (TL)"
+    if evds_fuel_ilk["benzin"] > 0: etiket_b += " <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
+    st.markdown(f"<label style='font-size:13px;'>{etiket_b}</label>", unsafe_allow_html=True)
+    
+    b_eski = st.number_input("bo_input", value=benzin_eski_val, key=f"bo_{d_key}", label_visibility="collapsed")
+    
+    st.markdown("<label style='font-size:13px;'>Yeni (TL)</label>", unsafe_allow_html=True)
+    b_yeni = st.number_input("bn_input", value=benzin_yeni_val, key=f"bn_{d_key}", label_visibility="collapsed")
+    
     d_benzin = 0.0
     if b_eski > 0: d_benzin = ((b_yeni-b_eski)/b_eski)*100
     st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
 with e3:
-    badge_m = f"<span class='badge-live'>CANLI: {oto_motorin} TL</span>" if oto_motorin > 0 else ""
+    badge_m = f"<span class='badge-live'>CANLI: {motorin_yeni_val} TL</span>" if yakit_guncel.get("motorin", 0) > 0 else ""
     st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b> {badge_m}", unsafe_allow_html=True)
-    m_eski = st.number_input("Eski (TL)", value=43.0, key=f"mo_{d_key}")
-    def_mn = oto_motorin if oto_motorin > 0 else 45.0
-    m_yeni = st.number_input("Yeni (TL)", value=def_mn, key=f"mn_{d_key}")
+    
+    etiket_m = "Eski (TL)"
+    if evds_fuel_ilk["motorin"] > 0: etiket_m += " <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
+    st.markdown(f"<label style='font-size:13px;'>{etiket_m}</label>", unsafe_allow_html=True)
+
+    m_eski = st.number_input("mo_input", value=motorin_eski_val, key=f"mo_{d_key}", label_visibility="collapsed")
+    
+    st.markdown("<label style='font-size:13px;'>Yeni (TL)</label>", unsafe_allow_html=True)
+    m_yeni = st.number_input("mn_input", value=motorin_yeni_val, key=f"mn_{d_key}", label_visibility="collapsed")
+    
     d_dizel = 0.0
     if m_eski > 0: d_dizel = ((m_yeni-m_eski)/m_eski)*100
     st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
@@ -368,7 +426,7 @@ with c_link: st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesapla
 if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
 else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-# --- YENİ: TÜFE+ÜFE / 2 HESAPLAMASI ---
+# --- TÜFE+ÜFE / 2 HESAPLAMASI ---
 val_tufe = safe_float(tcmb["TUFE"])
 val_ufe = safe_float(tcmb["UFE"])
 val_mix = (val_tufe + val_ufe) / 2
@@ -389,7 +447,6 @@ st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
 
 w1, w2, w3, w4 = st.columns(4)
-# Eski "Karma" yerine şimdi net isimle Ortalama koyuyoruz
 w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=0)
 w_tufe = w2.number_input("Saf TÜFE %", value=30)
 w_ufe = w3.number_input("Saf ÜFE %", value=0)
