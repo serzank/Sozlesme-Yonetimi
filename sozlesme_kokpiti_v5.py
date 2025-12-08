@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import evds
-from datetime import datetime
+from datetime import datetime, date
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="⛽")
@@ -29,42 +29,93 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return deger
 
-# --- TCMB ENFLASYON VERİSİ ÇEKME ---
+# --- TCMB DİNAMİK ENFLASYON ÇEKME (DÖNEME GÖRE) ---
 @st.cache_data(ttl=3600)
-def get_tcmb_inflation(api_key):
-    # Varsayılan (Hata durumunda dönecek)
-    result = {"TUFE": 0.0, "UFE": 0.0, "Status": False, "Msg": ""}
+def get_dynamic_inflation(api_key, donem_adi):
+    # Varsayılan (Hata veya manuel durum için)
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": ""}
     
     if not api_key:
-        result["Msg"] = "API Anahtarı Girilmedi"
+        result["Msg"] = "API Anahtarı Yok"
         return result
 
     try:
         evds_api = evds.evdsAPI(api_key)
-        # Son 4 ayın verisini çek (Gecikmeli veri ihtimaline karşı geniş aralık)
-        end_date = datetime.now().strftime("%d-%m-%Y")
-        start_date = (datetime.now() - pd.DateOffset(months=4)).strftime("%d-%m-%Y")
         
-        df = evds_api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1'], startdate=start_date, enddate=end_date)
+        # 1. Bitiş Tarihi (Bugün)
+        end_date = datetime.now().strftime("%d-%m-%Y")
+        
+        # 2. Başlangıç Tarihini Döneme Göre Hesapla
+        bugun = datetime.now()
+        
+        if donem_adi == "1 Ay":
+            start_dt = bugun - pd.DateOffset(months=2) # Veri gecikmeli gelir, 2 ay geriden tara
+        elif donem_adi == "3 Ay":
+            start_dt = bugun - pd.DateOffset(months=4)
+        elif donem_adi == "6 Ay":
+            start_dt = bugun - pd.DateOffset(months=7)
+        elif donem_adi == "Yılbaşından Bugüne (YTD)":
+            start_dt = datetime(bugun.year - 1, 12, 1) # Geçen yılın Aralığı baz alınır
+        elif donem_adi == "1 Yıl":
+            start_dt = bugun - pd.DateOffset(months=13)
+        else:
+            start_dt = bugun - pd.DateOffset(months=2)
+
+        start_date_str = start_dt.strftime("%d-%m-%Y")
+        
+        # Kodlar: 
+        # TÜFE: TP.FG.J0
+        # Yİ-ÜFE: TP.TUFE1YI.K1
+        # H-ÜFE (Hizmet): TP.HKFE01.I1
+        series_list = ['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1']
+        
+        df = evds_api.get_data(series_list, startdate=start_date_str, enddate=end_date)
         
         if df is not None and not df.empty:
-            # Sadece dolu satırları al
-            df = df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'])
+            # Boş satırları temizle
+            df.dropna(subset=series_list, inplace=True)
             
             if len(df) >= 2:
-                son = df.iloc[-1]
-                onceki = df.iloc[-2]
+                son_veri = df.iloc[-1]
                 
-                # Aylık Değişim Hesabı: ((Yeni-Eski)/Eski)*100
-                tufe_degisim = ((float(son['TP_FG_J0']) - float(onceki['TP_FG_J0'])) / float(onceki['TP_FG_J0'])) * 100
-                ufe_degisim = ((float(son['TP_TUFE1YI_K1']) - float(onceki['TP_TUFE1YI_K1'])) / float(onceki['TP_TUFE1YI_K1'])) * 100
+                # Başlangıç verisini belirle (Döneme göre ne kadar geri gideceğiz?)
+                # TCMB verisi aylıktır.
+                # 1 Ay seçilirse: Son Veri vs Bir Önceki Veri
+                # 3 Ay seçilirse: Son Veri vs 3 Önceki Veri
                 
-                result["TUFE"] = round(tufe_degisim, 2)
-                result["UFE"] = round(ufe_degisim, 2)
+                lookback = 1 # Varsayılan 1 ay
+                if donem_adi == "3 Ay": lookback = 3
+                elif donem_adi == "6 Ay": lookback = 6
+                elif donem_adi == "1 Yıl": lookback = 12
+                elif donem_adi == "Yılbaşından Bugüne (YTD)":
+                    # Yılbaşından beri kaç ay geçti?
+                    lookback = bugun.month 
+                    # Eğer veri henüz yayınlanmadıysa (örn: ayın 3'ü) bir önceki ayı baz al
+                    if len(df) < lookback: lookback = len(df) - 1
+
+                # Liste uzunluğu kontrolü (İstenen kadar geriye veri var mı?)
+                if len(df) > lookback:
+                    ilk_veri = df.iloc[-(lookback + 1)] # İlgili geçmiş veri
+                else:
+                    ilk_veri = df.iloc[0] # En eski veri
+                
+                # Hesaplama: ((Yeni - Eski) / Eski) * 100
+                tufe_deg = ((float(son_veri['TP_FG_J0']) - float(ilk_veri['TP_FG_J0'])) / float(ilk_veri['TP_FG_J0'])) * 100
+                ufe_deg = ((float(son_veri['TP_TUFE1YI_K1']) - float(ilk_veri['TP_TUFE1YI_K1'])) / float(ilk_veri['TP_TUFE1YI_K1'])) * 100
+                
+                # H-ÜFE bazen null gelebilir, kontrol et
+                try:
+                    hufe_deg = ((float(son_veri['TP_HKFE01.I1']) - float(ilk_veri['TP_HKFE01.I1'])) / float(ilk_veri['TP_HKFE01.I1'])) * 100
+                except:
+                    hufe_deg = 0.0
+
+                result["TUFE"] = round(tufe_deg, 2)
+                result["UFE"] = round(ufe_deg, 2)
+                result["HUFE"] = round(hufe_deg, 2)
                 result["Status"] = True
-                result["Msg"] = f"Veri Dönemi: {son['Tarih']}"
+                result["Msg"] = f"Baz Alınan Dönem: {ilk_veri['Tarih']} - {son_veri['Tarih']}"
             else:
-                result["Msg"] = "Yeterli veri bulunamadı"
+                result["Msg"] = "Yeterli veri yok"
     except Exception as e:
         result["Msg"] = f"Hata: {str(e)}"
         pass
@@ -78,23 +129,26 @@ with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
     st.header("⚙️ Ayarlar")
     
-    # API ANAHTAR GİRİŞİ (YENİ EKLENDİ)
+    # API KEY GİRİŞİ
     tcmb_key = st.text_input("TCMB API Anahtarı:", type="password", placeholder="Anahtarı buraya yapıştırın...")
     
-    # Enflasyon verisini çekmeye çalış
-    if tcmb_key:
-        tcmb_data = get_tcmb_inflation(tcmb_key)
-    else:
-        tcmb_data = {"TUFE": 3.45, "UFE": 4.15, "Status": False, "Msg": "Anahtar Yok"}
-
     st.markdown("---")
     
+    # DÖNEM SEÇİMİ
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
+    
+    # ENFLASYON VERİSİNİ BURADA ÇAĞIRIYORUZ (Seçilen döneme göre)
+    if tcmb_key:
+        with st.spinner(f"TCMB'den {donem_secimi}lık enflasyon verisi çekiliyor..."):
+            tcmb_data = get_dynamic_inflation(tcmb_key, donem_secimi)
+    else:
+        tcmb_data = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Anahtar Yok"}
+
     period_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = period_map[donem_secimi]
 
     st.markdown("---")
-    tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00", help="Örnek: 1.250.000,50")
+    tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     try:
         temiz_tutar = tutar_giris.replace(".", "").replace(",", ".")
         sozlesme_tutari = float(temiz_tutar)
@@ -143,12 +197,12 @@ def piyasa_verisi_al(periyot):
 
 piyasa, hata = piyasa_verisi_al(selected_period)
 if hata:
-    st.warning("⚠️ Yahoo verisi alınamadı. Manuel mod aktif.")
+    st.warning("⚠️ Yahoo verisi alınamadı.")
     for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL"]:
         if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
 
 # ============================================================================
-# 3. GÖSTERGE PANELİ
+# 3. FİNANSAL GÖSTERGELER
 # ============================================================================
 st.title("📱 Finans Kokpiti")
 st.markdown(f"**Dönem:** {donem_secimi}")
@@ -230,25 +284,24 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON (EVDS ENTEGRE)
+# 5. ENFLASYON (DİNAMİK)
 # ============================================================================
 st.markdown("---")
-# Bilgi satırı
 c_inf_title, c_inf_status = st.columns([2, 1])
 with c_inf_title:
     st.markdown("### 📈 Enflasyon & Sepet")
 with c_inf_status:
     if tcmb_data["Status"]:
-        st.success(f"✅ {tcmb_data['Msg']}")
+        st.success(f"✅ Otomatik ({tcmb_data['Msg']})")
     else:
-        st.info("⚠️ Manuel / Varsayılan")
+        st.info("⚠️ Manuel Giriş")
 
 ec1, ec2, ec3, ec4 = st.columns(4)
 
-# Değerleri TCMB'den otomatik doldur
+# Değerleri Otomatik Doldur
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"])
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"])
-h_ufe = ec3.number_input("H-ÜFE %", value=5.00)
+h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"]) # H-ÜFE eklendi
 abd_enf = ec4.number_input("ABD Enf.%", value=0.4)
 ozel_oran = (tufe + ufe) / 2
 
