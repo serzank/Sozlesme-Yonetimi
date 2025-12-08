@@ -1,13 +1,8 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import requests
-import json
+import evds
 from datetime import datetime
-import urllib3
-
-# SSL Uyarılarını Sustur (TAV Firewall Bypass)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- API ANAHTARI ---
 MY_API_KEY = "Uol1kIOQos"
@@ -26,7 +21,6 @@ st.markdown("""
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
-    div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -37,85 +31,89 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (FORCE BYPASS MODU) ---
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_inflation_force(api_key, donem_tipi):
-    # EN KÖTÜ SENARYO YEDEKLERİ (Son Açıklanan Resmi Veriler)
-    # Bağlantı kopsa bile burası çalışır.
-    backup = {
-        "TUFE": 2.93, "UFE": 1.14, "HUFE": 2.50, # Örnek güncel veriler
-        "Status": False, "Msg": "Yedek Veri (Bağlantı Yok)"
-    }
+# --- TCMB VERİ MOTORU (Sıfır Hata Toleransı) ---
+@st.cache_data(ttl=3600)
+def get_tcmb_data(api_key, donem_tipi):
+    # Başlangıçta boş
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": ""}
     
-    # URL Hazırla (Son 5 Yıl - TP.FG.J0=TÜFE, TP.TUFE1YI.K1=ÜFE)
-    series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
-    end_date = datetime.now().strftime("%d-%m-%Y")
-    start_date = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
-    
-    url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json&key={api_key}&frequency=1"
-    
-    # Maskeleme Headerları (TCMB bizi tarayıcı sansın)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
+    if not api_key: 
+        result["Msg"] = "API Anahtarı Yok"
+        return result
 
     try:
-        # verify=False ile SSL kontrolünü kapatıyoruz (Firewall bypass)
-        r = requests.get(url, headers=headers, verify=False, timeout=15)
+        api = evds.evdsAPI(api_key)
         
-        if r.status_code == 200:
-            data = r.json()
-            if "items" in data:
-                items = data["items"]
-                df = pd.DataFrame(items)
-                
-                # Temizlik
-                for col in ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                
-                df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
-                
-                if len(df) > 2:
-                    son_row = df.iloc[-1]
-                    
-                    # Dönem Ayarı
-                    lookback = 1
-                    if donem_tipi == "3 Ay": lookback = 3
-                    elif donem_tipi == "6 Ay": lookback = 6
-                    elif donem_tipi == "1 Yıl": lookback = 12
-                    elif donem_tipi == "Yılbaşından Bugüne (YTD)":
-                        lookback = datetime.now().month
-                        if len(df) < lookback: lookback = len(df) - 1
-                    
-                    idx = -(lookback + 1)
-                    if abs(idx) > len(df): idx = 0
-                    ilk_row = df.iloc[idx]
-                    
-                    def calc(n, o):
-                        try: return ((n - o) / o) * 100
-                        except: return 0.0
+        # Son 5 yıl (Geniş Aralık)
+        end = datetime.now().strftime("%d-%m-%Y")
+        start = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
+        
+        # Kodlar: TÜFE, Yİ-ÜFE, H-ÜFE
+        df = api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1'], startdate=start, enddate=end)
+        
+        if df is None or df.empty:
+            result["Msg"] = "TCMB'den Veri Dönmedi"
+            return result
+            
+        # SÜTUN İSMİ DÜZELTME (Kritik Nokta)
+        # EVDS bazen nokta, bazen alt tire ile döndürür. Hepsini standartlaştıralım.
+        df.columns = [c.replace('.', '_') for c in df.columns]
+        
+        # Standart isimler: TP_FG_J0, TP_TUFE1YI_K1
+        if 'TP_FG_J0' not in df.columns:
+            result["Msg"] = "Veri Formatı Uyumsuz"
+            return result
 
-                    res = {}
-                    res["TUFE"] = round(calc(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
-                    res["UFE"] = round(calc(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
-                    
-                    # H-ÜFE
-                    try:
-                        h_now = df['TP_HKFE01_I1'].iloc[-1]
-                        h_old = df['TP_HKFE01_I1'].iloc[idx]
-                        res["HUFE"] = round(calc(h_now, h_old), 2)
-                    except: res["HUFE"] = 0.0
-                    
-                    res["Status"] = True
-                    res["Msg"] = f"Canlı: {ilk_row['Tarih']} -> {son_row['Tarih']}"
-                    return res
+        # Boş satırları temizle
+        df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
+        
+        if len(df) < 2:
+            result["Msg"] = "Yetersiz Veri (API Çalıştı ama veri az)"
+            return result
+            
+        # --- HESAPLAMA ---
+        son_row = df.iloc[-1]
+        
+        lookback = 1
+        if donem_tipi == "3 Ay": lookback = 3
+        elif donem_tipi == "6 Ay": lookback = 6
+        elif donem_tipi == "1 Yıl": lookback = 12
+        elif donem_tipi == "Yılbaşından Bugüne (YTD)":
+            lookback = datetime.now().month
+            if len(df) < lookback: lookback = len(df) - 1
+            
+        idx = -(lookback + 1)
+        if abs(idx) > len(df): idx = 0 
+        
+        ilk_row = df.iloc[idx]
+        
+        def safe_calc(new, old):
+            try:
+                n = float(new)
+                o = float(old)
+                if o == 0: return 0.0
+                return ((n - o) / o) * 100
+            except: return 0.0
 
-    except:
-        pass # Hata olursa sessizce yedeğe geç
-    
-    return backup
+        result["TUFE"] = round(safe_calc(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
+        result["UFE"] = round(safe_calc(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
+        
+        # H-ÜFE Kontrolü
+        col_hufe = 'TP_HKFE01_I1' # Alt tireli hali
+        if col_hufe in df.columns:
+             try:
+                h_now = df[col_hufe].iloc[-1]
+                h_old = df[col_hufe].iloc[idx]
+                result["HUFE"] = round(safe_calc(h_now, h_old), 2)
+             except: pass
+            
+        result["Status"] = True
+        result["Msg"] = f"Dönem: {ilk_row['Tarih']} ➡️ {son_row['Tarih']}"
+        
+    except Exception as e:
+        result["Msg"] = f"Bağlantı Hatası: {str(e)}"
+        
+    return result
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -129,8 +127,8 @@ with st.sidebar:
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
-    # TCMB ÇEK (Arka planda çalışır, hata vermez)
-    tcmb_data = get_inflation_force(MY_API_KEY, donem_secimi)
+    # TCMB ÇEK
+    tcmb_data = get_tcmb_data(MY_API_KEY, donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -144,35 +142,30 @@ with st.sidebar:
 def piyasa_verisi_al(periyot):
     tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
     data_dict = {}
-    hata = False
     try:
         df = yf.download(list(tickers.values()), period=periyot, progress=False)['Close']
-        if df.empty: hata = True
-        else:
-            for key, symbol in tickers.items():
-                try:
-                    c_name = [c for c in df.columns if symbol in str(c)]
-                    if not c_name: continue
-                    seri = df[c_name[0]].dropna()
-                    if len(seri) > 1:
-                        ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
-                        degisim = ((son - ilk) / ilk) * 100
-                        data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
-                    else: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
-                except: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
-            
-            if "ONS_ALTIN" in data_dict and "USDTRY" in data_dict:
-                g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
-                g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
-                g_deg = ((g_son - g_ilk) / g_ilk) * 100 if g_ilk > 0 else 0
-                data_dict["GRAM_ALTIN_TL"] = {"ilk": g_ilk, "son": g_son, "degisim": g_deg}
-    except: hata = True
-    return data_dict, hata
+        if df.empty: return data_dict
+        for key, symbol in tickers.items():
+            try:
+                c_name = [c for c in df.columns if symbol in str(c)]
+                if not c_name: continue
+                seri = df[c_name[0]].dropna()
+                if len(seri) > 1:
+                    ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
+                    degisim = ((son - ilk) / ilk) * 100
+                    data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
+                else: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
+            except: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
+        
+        if "ONS_ALTIN" in data_dict and "USDTRY" in data_dict:
+            g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
+            g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
+            g_deg = ((g_son - g_ilk) / g_ilk) * 100 if g_ilk > 0 else 0
+            data_dict["GRAM_ALTIN_TL"] = {"ilk": g_ilk, "son": g_son, "degisim": g_deg}
+    except: pass
+    return data_dict
 
-piyasa, hata = piyasa_verisi_al(selected_period)
-if hata:
-    for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL"]:
-        if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
+piyasa = piyasa_verisi_al(selected_period)
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
@@ -233,7 +226,7 @@ st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
-    if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
+    if tcmb_data["Status"]: st.success(f"✅ Otomatik ({tcmb_data['Msg']})")
     else: st.warning(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
