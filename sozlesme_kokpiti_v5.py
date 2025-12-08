@@ -10,55 +10,17 @@ MY_API_KEY = "Uol1kIOQos"
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
 
-# --- CSS Tasarım (MOBİL & DARK MODE KESİN ÇÖZÜM) ---
+# --- CSS Tasarım ---
 st.markdown("""
     <style>
-    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    
-    /* Kutu Genel Yapısı */
-    .kutu, .kutu-enerji { 
-        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-    }
-    
-    /* Finans Kutusu Renkleri */
-    .kutu { 
-        background-color: #f8f9fa !important; 
-        border-left: 6px solid #1E3D59 !important; 
-    }
-    
-    /* Enerji Kutusu Renkleri */
-    .kutu-enerji { 
-        background-color: #fffcf5 !important; 
-        border-left: 6px solid #F39C12 !important; 
-    }
-    
-    /* KRİTİK: Kutu içindeki TÜM metinleri zorla Koyu Lacivert Yap */
-    .kutu, .kutu-enerji, .kutu *, .kutu-enerji * { 
-        color: #1E3D59 !important; 
-    }
-    
-    /* Pozitif/Negatif Değerler için İstisna */
+    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
+    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
+    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-    
-    /* Etiketler */
-    .prediction-tag { 
-        font-size: 11px; 
-        background-color: #e8f5e9 !important; 
-        color: #2e7d32 !important; 
-        padding: 2px 6px; 
-        border-radius: 4px; 
-        font-weight: bold; 
-        display: inline-block; 
-        margin-bottom: 4px; 
-    }
-    
-    /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
-    
-    /* Input Alanları */
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -70,33 +32,39 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (GÜVENLİ MOD) ---
+# --- TCMB VERİ MOTORU (DÜZELTİLMİŞ KODLARLA) ---
 @st.cache_data(ttl=3600)
-def get_safe_inflation(api_key, donem_tipi):
-    # API Çökse bile dönecek olan YEDEK VERİLER (Sistem asla boş kalmaz)
-    backup_data = {
-        "TUFE": 1.95, "UFE": 2.15, "HUFE": 2.50, 
-        "Status": False, "Msg": "Otomatik Veri (Yedek)"
-    }
+def get_tcmb_data(api_key, donem_tipi):
+    # Varsayılan değerler (Güvenli Mod)
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor..."}
     
-    if not api_key: return backup_data
+    if not api_key: return result
 
     try:
         api = evds.evdsAPI(api_key)
         
-        # Son 5 yılın verisini çek (Garantili Veri Bulmak İçin)
+        # Son 5 yılın verisini çek
         end = datetime.now().strftime("%d-%m-%Y")
         start = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
         
-        # Kodlar: TÜFE, Yİ-ÜFE, H-ÜFE
-        df = api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1'], startdate=start, enddate=end)
+        # DOĞRU KODLAR:
+        # TÜFE (Genel): TP.FG.J0
+        # Yİ-ÜFE (Genel): TP.TUFE1YI.K1 (Sizin T1 yazdığınız yer burasıydı, K1 olmalı)
+        # H-ÜFE (Hizmet): TP.HKFE01.I1
+        series = ['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1']
         
-        if df is None or df.empty: return backup_data
+        df = api.get_data(series, startdate=start, enddate=end)
+        
+        if df is None or df.empty:
+            result["Msg"] = "API Bağlandı ama Veri Yok"
+            return result
             
-        # Boş satırları at
+        # Boş satırları temizle (Tarih ve Ana veriler dolu olmalı)
         df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
         
-        if len(df) < 5: return backup_data
+        if len(df) < 2:
+            result["Msg"] = "Yetersiz Veri (Hesaplama yapılamıyor)"
+            return result
             
         # --- DÖNEM SEÇİMİ ---
         son_row = df.iloc[-1]
@@ -114,7 +82,8 @@ def get_safe_inflation(api_key, donem_tipi):
         
         ilk_row = df.iloc[idx]
         
-        # HESAPLAMA (Sıfıra bölünme hatasını engelle)
+        # --- MATEMATİKSEL HESAPLAMA ---
+        # Endeksler gelir (Örn: 2300.5), biz değişimi (%) hesaplarız.
         def safe_calc(new, old):
             try:
                 n, o = float(new), float(old)
@@ -122,25 +91,24 @@ def get_safe_inflation(api_key, donem_tipi):
                 return ((n - o) / o) * 100
             except: return 0.0
 
-        res = {}
-        res["TUFE"] = round(safe_calc(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
-        res["UFE"] = round(safe_calc(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
+        result["TUFE"] = round(safe_calc(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
+        # İşte düzeltilen kısım burası (K1 kodu kullanılıyor):
+        result["UFE"] = round(safe_calc(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
         
-        # H-ÜFE (Varsa hesapla yoksa 0)
         try:
             if 'TP_HKFE01.I1' in df.columns:
                 h_now = df['TP_HKFE01.I1'].iloc[-1]
                 h_old = df['TP_HKFE01.I1'].iloc[idx]
-                res["HUFE"] = round(safe_calc(h_now, h_old), 2)
-            else: res["HUFE"] = 0.0
-        except: res["HUFE"] = 0.0
+                result["HUFE"] = round(safe_calc(h_now, h_old), 2)
+        except: pass
             
-        res["Status"] = True
-        res["Msg"] = f"TCMB Verisi: {ilk_row['Tarih']} - {son_row['Tarih']}"
-        return res
+        result["Status"] = True
+        result["Msg"] = f"Dönem: {ilk_row['Tarih']} - {son_row['Tarih']}"
         
-    except:
-        return backup_data
+    except Exception as e:
+        result["Msg"] = f"Hata: {str(e)}"
+        
+    return result
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -154,8 +122,8 @@ with st.sidebar:
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
-    # TCMB VERİSİNİ ÇEK
-    tcmb_data = get_safe_inflation(MY_API_KEY, donem_secimi)
+    # TCMB ÇEK
+    tcmb_data = get_tcmb_data(MY_API_KEY, donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -163,7 +131,7 @@ with st.sidebar:
     except: sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ ÇEKME
+# 2. YAHOO VERİ
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -252,14 +220,14 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & İŞÇİLİK
+# 5. ENFLASYON (DİNAMİK + K1 KODU)
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
     if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
-    else: st.info(f"⚠️ {tcmb_data['Msg']}")
+    else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
@@ -314,7 +282,6 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    # HATA ÇÖZÜMÜ: Sadece sayısal sütunları formatla
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
