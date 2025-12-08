@@ -164,6 +164,41 @@ def guncel_akaryakit_cek():
 
     return fiyatlar
 
+# --- YENİ: WEB SCRAPING: CANLI GRAM ALTIN ---
+@st.cache_data(ttl=600)
+def canli_gram_altin_cek():
+    """Bigpara üzerinden Gram Altın Satış Fiyatını çeker"""
+    url = "https://bigpara.hurriyet.com.tr/altin/gram-altin-fiyati/"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    fiyat = 0.0
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, "html.parser")
+            # Bigpara'da ilgili class yapısı (Genelde 'kurBox' içindeki value)
+            # Sayfa yapısına göre direkt text arayalım
+            # Genelde üstteki büyük gösterge:
+            box = soup.find("span", {"class": "value up"}) 
+            if not box: box = soup.find("span", {"class": "value down"})
+            if not box: box = soup.find("span", {"class": "value"}) # Sabitse
+            
+            if box:
+                raw_price = box.get_text().strip().replace(".", "").replace(",", ".")
+                fiyat = float(raw_price)
+    except Exception as e:
+        # Yedek kaynak: Doviz.com
+        try:
+            url2 = "https://www.doviz.com/altin/gram-altin"
+            r2 = requests.get(url2, headers=headers, timeout=10)
+            s2 = BeautifulSoup(r2.content, "html.parser")
+            # data-socket-key="gram-altin" olan div
+            div = s2.find("div", {"data-socket-key": "gram-altin"})
+            if div:
+                raw = div.get_text().strip().replace(".", "").replace(",", ".")
+                fiyat = float(raw)
+        except: pass
+        
+    return fiyat
 
 
 # --- 2. TCMB MOTORU (SİZİN TARİH ARALIĞI MANTIĞINIZ) ---
@@ -448,24 +483,26 @@ def piyasa_verisi_al(d_start, d_end):
 
             
 
-            # Gram Altın
-
+    # --- GRAM ALTIN MANTIĞI ---
+            # 1. Yahoo'dan gelen eski usul hesaplama (Başlangıç verisi için mecburen bunu kullanacağız)
+            y_son = 0.0
+            y_ilk = 0.0
+            
             if data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
-
-                g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
-
-                g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
-
-                g_deg = 0.0
-
-                if g_ilk > 0:
-
-                    g_deg = ((g_son - g_ilk) / g_ilk) * 100
-
-                data_dict["GRAM_ALTIN_TL"] = {"ilk": g_ilk, "son": g_son, "degisim": g_deg}
-
+                y_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
+                y_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
+            
+            # 2. Eğer Canlı Scrape Başarılıysa SON veriyi ez
+            final_son = live_gold_val if live_gold_val > 0 else y_son
+            
+            # Değişimi tekrar hesapla
+            g_deg = 0.0
+            if y_ilk > 0:
+                g_deg = ((final_son - y_ilk) / y_ilk) * 100
+                
+            data_dict["GRAM_ALTIN_TL"] = {"ilk": y_ilk, "son": final_son, "degisim": g_deg}
+            
     except: pass
-
     return data_dict
 
 
@@ -782,3 +819,4 @@ else:
         df.to_excel(writer, sheet_name='Detay', index=False)
 
     st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel")
+
