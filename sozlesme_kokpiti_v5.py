@@ -35,6 +35,7 @@ st.markdown("""
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     .badge-live { background-color: #27AE60; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; vertical-align: middle; }
     .badge-tcmb { background-color: #1E3D59; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; vertical-align: middle; margin-left: 5px; }
+    .badge-est { background-color: #F39C12; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; vertical-align: middle; margin-left: 5px; }
     /* Tarih Seçici Genişlik Ayarı */
     div[data-testid="stDateInput"] { width: 100% !important; }
     </style>
@@ -187,21 +188,21 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- 5. YENİ: TCMB KAYITLI AKARYAKIT FİYATLARI (OTOMATİK ÇEKME) ---
+# --- 5. YENİ: TCMB KAYITLI AKARYAKIT FİYATLARI (GENİŞLETİLMİŞ) ---
 @st.cache_data(ttl=3600)
 def get_evds_fuel_history(api_key, d_start):
     """
     EVDS'den geçmiş tarihli Benzin (TP.AK.U95) ve Motorin (TP.AK.MTR) fiyatlarını çeker.
+    Aralık 30 güne çıkarıldı, veri bulunamazsa 0 döner (sonra proxy devreye girer).
     """
     res = {"benzin": 0.0, "motorin": 0.0}
     if not api_key: return res
     try:
         evds = evdsAPI(api_key)
-        # Akaryakıt verileri bazen haftalık girilir, 10 gün geriye bakarak son veriyi al
-        s_date_str = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+        # Akaryakıt verileri bazen haftalık/aylık girilir, 30 gün geriye bak
+        s_date_str = (d_start - timedelta(days=30)).strftime("%d-%m-%Y")
         e_date_str = d_start.strftime("%d-%m-%Y")
         
-        # TP.AK.U95 = Kurşunsuz Benzin 95, TP.AK.MTR = Motorin
         series = ["TP.AK.U95", "TP.AK.MTR"]
         
         df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
@@ -274,7 +275,6 @@ with st.spinner("Piyasa Verileri ve Geçmiş Akaryakıt Taranıyor..."):
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
-    # YENİ: Geçmiş Akaryakıt
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
 
 # ============================================================================
@@ -367,24 +367,38 @@ st.markdown("### 🛢️ Enerji")
 e1, e2, e3, e4 = st.columns(4)
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
 
-# --- OTOMATİK AKARYAKIT MANTIĞI ---
-# Eğer EVDS'den eski fiyat geldiyse onu kullan, yoksa manuel bırak (42.0/43.0 gibi)
-benzin_eski_val = evds_fuel_ilk["benzin"] if evds_fuel_ilk["benzin"] > 0 else 42.0
-motorin_eski_val = evds_fuel_ilk["motorin"] if evds_fuel_ilk["motorin"] > 0 else 43.0
+# --- HİBRİT AKARYAKIT MODÜLÜ (EVDS + PROXY) ---
+# 1. Yeni Fiyatlar (Zorunlu)
+benzin_yeni_val = yakit_guncel.get("benzin", 0.0) if yakit_guncel.get("benzin", 0) > 0 else 44.0
+motorin_yeni_val = yakit_guncel.get("motorin", 0.0) if yakit_guncel.get("motorin", 0) > 0 else 45.0
 
-benzin_yeni_val = yakit_guncel.get("benzin", 0.0)
-if benzin_yeni_val == 0: benzin_yeni_val = 44.0
-
-motorin_yeni_val = yakit_guncel.get("motorin", 0.0)
-if motorin_yeni_val == 0: motorin_yeni_val = 45.0
+# 2. Eski Fiyatlar (Akıllı Mantık)
+is_proxy = False
+# A. EVDS'den geldiyse direkt onu al
+if evds_fuel_ilk["benzin"] > 0:
+    benzin_eski_val = evds_fuel_ilk["benzin"]
+    motorin_eski_val = evds_fuel_ilk["motorin"]
+# B. EVDS yoksa, USD Değişimine göre proxy (tahmin) hesapla
+else:
+    is_proxy = True
+    usd_ilk = piyasa["USDTRY"]["ilk"]
+    usd_son = piyasa["USDTRY"]["son"]
+    if usd_son > 0 and usd_ilk > 0:
+        ratio = usd_ilk / usd_son
+        benzin_eski_val = round(benzin_yeni_val * ratio, 2)
+        motorin_eski_val = round(motorin_yeni_val * ratio, 2)
+    else:
+        # Dolar da yoksa mecburen manuel default
+        benzin_eski_val = 42.0
+        motorin_eski_val = 43.0
 
 with e2:
     badge = f"<span class='badge-live'>CANLI: {benzin_yeni_val} TL</span>" if yakit_guncel.get("benzin", 0) > 0 else ""
     st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b> {badge}", unsafe_allow_html=True)
     
-    # Rozet Kontrolü (Eski veri TCMB'den mi?)
-    etiket_b = "Eski (TL)"
-    if evds_fuel_ilk["benzin"] > 0: etiket_b += " <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
+    # Etiket Dinamiği
+    if not is_proxy: etiket_b = "Eski (TL) <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
+    else: etiket_b = "Eski (TL) <span class='badge-est'>⚠️ USD Bazlı Tahmin</span>"
     st.markdown(f"<label style='font-size:13px;'>{etiket_b}</label>", unsafe_allow_html=True)
     
     b_eski = st.number_input("bo_input", value=benzin_eski_val, key=f"bo_{d_key}", label_visibility="collapsed")
@@ -400,8 +414,8 @@ with e3:
     badge_m = f"<span class='badge-live'>CANLI: {motorin_yeni_val} TL</span>" if yakit_guncel.get("motorin", 0) > 0 else ""
     st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b> {badge_m}", unsafe_allow_html=True)
     
-    etiket_m = "Eski (TL)"
-    if evds_fuel_ilk["motorin"] > 0: etiket_m += " <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
+    if not is_proxy: etiket_m = "Eski (TL) <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
+    else: etiket_m = "Eski (TL) <span class='badge-est'>⚠️ USD Bazlı Tahmin</span>"
     st.markdown(f"<label style='font-size:13px;'>{etiket_m}</label>", unsafe_allow_html=True)
 
     m_eski = st.number_input("mo_input", value=motorin_eski_val, key=f"mo_{d_key}", label_visibility="collapsed")
