@@ -75,13 +75,9 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- YENİ: GENİŞLETİLMİŞ CANLI PİYASA (USD, EUR, ALTIN) ---
+# --- 2. CANLI PİYASA VERİSİ (SON FİYATLAR) ---
 @st.cache_data(ttl=300)
 def canli_piyasa_cek():
-    """
-    Bigpara üzerinden USD, EUR ve Gram Altın Satış Fiyatlarını çeker.
-    Bu yöntem Yahoo'daki 'TRY=X' ile 'EURTRY=X' karışıklığını önler.
-    """
     base_url = "https://bigpara.hurriyet.com.tr"
     targets = {
         "USD": "/doviz/dolar/",
@@ -97,7 +93,6 @@ def canli_piyasa_cek():
             response = requests.get(url, headers=headers, timeout=5)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.content, "html.parser")
-                # Bigpara detay sayfasındaki fiyat kutusu
                 box = soup.find("span", {"class": "value up"}) 
                 if not box: box = soup.find("span", {"class": "value down"})
                 if not box: box = soup.find("span", {"class": "value"})
@@ -105,12 +100,10 @@ def canli_piyasa_cek():
                 if box:
                     raw = box.get_text().strip().replace(".", "").replace(",", ".")
                     sonuclar[key] = float(raw)
-        except:
-            pass
-            
+        except: pass
     return sonuclar
 
-# --- 2. TCMB MOTORU ---
+# --- 3. TCMB ENFLASYON VERİLERİ ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -167,6 +160,37 @@ def get_tcmb_data(api_key, start_date, end_date):
     except Exception as e: res["Msg"] = f"Hata: {str(e)}"
     return res
 
+# --- 4. YENİ: TCMB KAYITLI GRAM ALTIN (ESKİ TARİH) ---
+@st.cache_data(ttl=3600)
+def get_evds_gold_history(api_key, d_start):
+    """
+    Belirtilen başlangıç tarihi için TCMB'den kayıtlı Külçe Altın (Gram) fiyatını çeker.
+    Hesaplama yapmaz, resmi veriyi getirir.
+    """
+    price = 0.0
+    if not api_key: return price
+    try:
+        evds = evdsAPI(api_key)
+        # Tarih aralığını 1 hafta öncesinden başlatıyoruz (Haftasonuna denk gelirse geriye bakabilsin)
+        s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
+        e_date_str = d_start.strftime("%d-%m-%Y")
+        
+        # TP.MK.KUL.YTL = Külçe Altın (1 gr) - TL (Satış)
+        series = ["TP.MK.KUL.YTL"]
+        
+        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
+        if df is not None and not df.empty:
+             col = [c for c in df.columns if "TP" in c][0]
+             # Sayısal olmayanları temizle ve NaN at
+             df[col] = pd.to_numeric(df[col], errors='coerce')
+             df.dropna(subset=[col], inplace=True)
+             
+             if not df.empty:
+                 # Tarihe göre en son veri (Yani start_date veya ona en yakın önceki iş günü)
+                 price = float(df.iloc[-1][col])
+    except: pass
+    return price
+
 # ============================================================================
 # SOL MENÜ
 # ============================================================================
@@ -183,10 +207,14 @@ with st.sidebar:
     if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
     
     with st.spinner("Veriler Toplanıyor..."):
+        # 1. Enflasyon
         tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
+        # 2. Akaryakıt
         yakit_data = guncel_akaryakit_cek()
-        # HEPSİNİ CANLI ÇEK
+        # 3. Canlı Piyasalar
         canli_veri = canli_piyasa_cek()
+        # 4. Kayıtlı Eski Altın Fiyatı (EVDS)
+        evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -196,90 +224,65 @@ with st.sidebar:
     d_key = f"{start_date}_{end_date}"
 
 # ============================================================================
-# 2. PİYASA VERİSİ (HİBRİT DÜZELTİLMİŞ)
+# 5. PİYASA VERİSİ (HİBRİT + EVDS ALTIN)
 # ============================================================================
 @st.cache_data(ttl=600)
-def piyasa_verisi_al(d_start, d_end, live_data):
-    # 'TRY=X' Dolar, 'EURTRY=X' Euro. İsim çakışmasını önleyeceğiz.
+def piyasa_verisi_al(d_start, d_end, live_data, evds_gold_start):
     tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
     data_dict = {}
     for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
     try:
-        # Ticker listesini indir
         raw_data = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
-        
-        # --- SORUN ÇÖZÜCÜ: VERİYİ DOĞRU OKUMA ---
-        # Eğer tek ticker gelirse raw_data Series olur, çoklu gelirse DataFrame
-        # DataFrame ise sütun isimlerine tam eşleşme ile bakacağız.
         
         for key, symbol in tickers.items():
             ilk, son = 0.0, 0.0
-            
-            # 1. Yahoo'dan Tarihsel Veriyi Al
             try:
-                # Kolon bulma mantığı (Substring hatasını önle)
+                # Sütun eşleştirme
                 if isinstance(raw_data, pd.DataFrame):
-                    # Sütunlarda tam eşleşme ara veya MultiIndex kontrol et
                     col_found = None
                     if symbol in raw_data.columns:
                         col_found = raw_data[symbol]
                     else:
-                        # Bazen kolonlar karışık gelebilir, tekrar dene
                         for c in raw_data.columns:
-                            # 'TRY=X' in 'EURTRY=X' -> True olur, bunu engelle
-                            # Sadece stringin sonu symbol ile bitiyorsa veya eşitse
                             if str(c) == symbol:
-                                col_found = raw_data[c]
-                                break
+                                col_found = raw_data[c]; break
                     
                     if col_found is not None:
                         col_found = col_found.fillna(method='ffill').fillna(method='bfill')
                         if len(col_found) > 0:
                             ilk = float(col_found.iloc[0])
-                            son = float(col_found.iloc[-1]) # Fallback
-                
+                            son = float(col_found.iloc[-1])
                 elif isinstance(raw_data, pd.Series):
-                    # Tek bir veri geldiyse (Nadir ama mümkün)
-                    # Sadece isim tutuyorsa al
                     if raw_data.name == symbol:
                         ilk = float(raw_data.iloc[0])
                         son = float(raw_data.iloc[-1])
             except: pass
             
-            # 2. CANLI VERİ İLE EZ (OVERRIDE)
-            # Eğer canlı veri geldiyse SON değeri ondan al, Yahoo'dan sadece İLK değeri kullan.
-            if key == "USDTRY" and live_data.get("USD", 0) > 0:
-                son = live_data["USD"]
-            elif key == "EURTRY" and live_data.get("EUR", 0) > 0:
-                son = live_data["EUR"]
-            elif key == "GRAM_ALTIN_TL":
-                 pass # Aşağıda özel hesaplanacak
+            # --- CANLI VERİ OVERRIDE ---
+            if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
+            elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
+            elif key == "GRAM_ALTIN_TL": pass 
                  
-            # 3. Değişim Hesapla
             degisim = 0.0
-            if ilk > 0:
-                degisim = ((son - ilk) / ilk) * 100
-                
+            if ilk > 0: degisim = ((son - ilk) / ilk) * 100
             data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-        # --- GRAM ALTIN ÖZEL HESAP ---
-        # Başlangıç (Eski) değerini Yahoo Ons * Yahoo Dolar ile buluyoruz
-        # Bitiş (Yeni) değerini ise direkt CANLI veriden alıyoruz.
-        
-        y_ons_ilk = data_dict["ONS_ALTIN"]["ilk"]
-        y_usd_ilk = data_dict["USDTRY"]["ilk"]
-        
-        gold_ilk = 0.0
-        if y_ons_ilk > 0 and y_usd_ilk > 0:
-            gold_ilk = (y_ons_ilk / 31.1035) * y_usd_ilk
-            
+        # --- GRAM ALTIN (KAYITLI + CANLI) ---
+        # 1. ESKİ FİYAT: EVDS'den gelen kayıtlı veri (Hesaplama YOK)
+        # Eğer EVDS başarısız olursa (0 gelirse), fallback olarak eski usul hesapla
+        gold_ilk = evds_gold_start
+        if gold_ilk == 0:
+             # Fallback: Ons * USD (Mecburen)
+             if data_dict["ONS_ALTIN"]["ilk"] > 0 and data_dict["USDTRY"]["ilk"] > 0:
+                 gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
+
+        # 2. YENİ FİYAT: Canlı Bigpara verisi
         gold_son = 0.0
-        # Canlı veri varsa öncelik onda
         if live_data.get("ALTIN", 0) > 0:
             gold_son = live_data["ALTIN"]
         else:
-            # Yoksa formülden git
+            # Fallback
             gold_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
             
         gold_deg = 0.0
@@ -288,14 +291,11 @@ def piyasa_verisi_al(d_start, d_end, live_data):
             
         data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": gold_deg}
 
-    except Exception as e:
-        print(e)
-        pass
-        
+    except: pass
     return data_dict
 
-# Fonksiyona canlı paketi gönderiyoruz
-piyasa = piyasa_verisi_al(start_date, end_date, canli_veri)
+# Fonksiyona EVDS verisini de gönderiyoruz
+piyasa = piyasa_verisi_al(start_date, end_date, canli_veri, evds_gold_ilk)
 if "GRAM_ALTIN_TL" not in piyasa: 
     piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
@@ -316,14 +316,14 @@ def kutu(col, baslik, key, ikon):
             renk = "pozitif" if deg >= 0 else "negatif"
             st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
             
-            # Canlı veri uyarısı
             is_live = False
             if key == "GRAM_ALTIN_TL" and canli_veri.get("ALTIN", 0) > 0: is_live = True
             if key == "USDTRY" and canli_veri.get("USD", 0) > 0: is_live = True
             if key == "EURTRY" and canli_veri.get("EUR", 0) > 0: is_live = True
             
             ek_bilgi = " (Canlı Piyasa)" if is_live else ""
-            
+            if key == "GRAM_ALTIN_TL" and evds_gold_ilk > 0: ek_bilgi += " | TCMB Ref."
+
             st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
             if ek_bilgi: st.markdown(f"<div style='font-size:10px; color:#27AE60; text-align:right;'>{ek_bilgi}</div>", unsafe_allow_html=True)
 
