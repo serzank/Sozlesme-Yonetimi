@@ -307,9 +307,10 @@ kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 # 5. ENFLASYON
 # ============================================================================
 st.markdown("---")
-tab1, tab2 = st.tabs(["⚡ Otomatik Hesap", "🔗 Diğer Site"])
+col_link, _ = st.columns([2,2])
+col_link.link_button("Manuel Kontrol", "https://tufehesaplama-serzan.streamlit.app/")
 
-with tab1:
+with st.markdown:
     c_inf_title, c_inf_status = st.columns([2, 2])
     with c_inf_status:
         if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
@@ -323,10 +324,6 @@ with tab1:
     iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{d_key}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     ozel_oran = (tufe + ufe) / 2
-
-with tab2:
-    st.info("Manuel kontrol için:")
-    st.components.v1.iframe("https://tufehesaplama-serzan.streamlit.app/", height=500, scrolling=True)
 
 # ============================================================================
 # 6. SEPET VE HESAPLAMA
@@ -401,5 +398,6 @@ else:
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Detay', index=False)
     st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel")
+
 
 
