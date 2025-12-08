@@ -216,9 +216,7 @@ with st.sidebar:
         yakit_data = guncel_akaryakit_cek()
     
     st.markdown("---")
-    tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except: sozlesme_tutari = 0.0
+    sozlesme_tutari = st.number_input("Sözleşme Tutarı (TL):", value=100000.0, step=1000.0, format="%.2f")
     d_key = f"{start_date}_{end_date}"
 
 # ============================================================================
@@ -238,6 +236,7 @@ if piyasa["ONS_ALTIN"]["ilk"] > 0 and tcmb["USD_ILK"] > 0:
 st.title("📱 Finans & Sözleşme Kokpiti v5.0")
 st.caption(f"Analiz Dönemi: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}")
 
+# Kutu Fonksiyonu
 def kutu_goster(col, baslik, ilk, son, degisim, ikon, kaynak=""):
     with col:
         st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; justify-content:space-between; margin-bottom:5px;'><div><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div><small style='color:#999'>{kaynak}</small></div>", unsafe_allow_html=True)
@@ -247,10 +246,12 @@ def kutu_goster(col, baslik, ilk, son, degisim, ikon, kaynak=""):
         st.markdown("</div>", unsafe_allow_html=True)
 
 k1, k2, k3, k4 = st.columns(4)
+# Dövizleri TCMB verisinden gösteriyoruz
 kutu_goster(k1, "USD/TL", tcmb["USD_ILK"], tcmb["USD_SON"], tcmb["USD_DEG"], "💵", "TCMB")
 kutu_goster(k2, "EUR/TL", tcmb["EUR_ILK"], tcmb["EUR_SON"], tcmb["EUR_DEG"], "💶", "TCMB")
+# Altını hesaplanan veriden gösteriyoruz
 kutu_goster(k3, "Gram Altın", gram_ilk, gram_son, gram_deg, "🥇", "Hesap")
-
+# Parite (Elle hesapla)
 parite_ilk = tcmb["EUR_ILK"] / tcmb["USD_ILK"] if tcmb["USD_ILK"] > 0 else 0
 parite_son = tcmb["EUR_SON"] / tcmb["USD_SON"] if tcmb["USD_SON"] > 0 else 0
 parite_deg = ((parite_son-parite_ilk)/parite_ilk)*100 if parite_ilk > 0 else 0
