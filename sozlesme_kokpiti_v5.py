@@ -1,74 +1,80 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import evds
+from datetime import datetime
+
+# --- API ANAHTARINIZI BURAYA YAPIŞTIRIN ---
+# Örnek: EVDS_API_KEY = "a1b2c3d4..."
+EVDS_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📱")
 
-# --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
+# --- CSS Tasarım ---
 st.markdown("""
     <style>
-    /* Logo Ayarı */
-    .logo-text { 
-        font-size: 22px !important; 
-        font-weight: 900 !important; 
-        color: #D91E18 !important; 
-        font-family: sans-serif; 
-        margin-bottom: 20px; 
-    }
-
-    /* Kutu Tasarımları */
-    .kutu, .kutu-enerji {
-        padding: 15px; 
-        border-radius: 10px; 
-        margin-bottom: 12px; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-
-    .kutu { 
-        background-color: #f8f9fa !important; 
-        border-left: 6px solid #1E3D59 !important; 
-        color: #1E3D59 !important; 
-    }
-    
-    .kutu-enerji { 
-        background-color: #fffcf5 !important; 
-        border-left: 6px solid #F39C12 !important; 
-        color: #1E3D59 !important; 
-    }
-
-    /* Kutu İçi Metinler (Zorla Koyu Renk) */
+    .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
+    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
+    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
     .kutu *, .kutu-enerji * { color: #1E3D59 !important; }
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-
-    /* Tahmin Etiketi */
-    .prediction-tag { 
-        font-size: 11px; 
-        background-color: #e8f5e9 !important; 
-        color: #2e7d32 !important; 
-        padding: 3px 6px; 
-        border-radius: 4px; 
-        font-weight: bold; 
-        display: inline-block;
-        margin-bottom: 4px;
-    }
-    
-    /* Link Butonları */
+    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 3px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- YARDIMCI FONKSİYON: TÜRKÇE PARA FORMATI (GÖSTERİM İÇİN) ---
+# --- YARDIMCI FONKSİYONLAR ---
 def tr_fmt(deger):
     if isinstance(deger, (int, float)):
-        # 1,234.56 -> 1.234,56 dönüşümü
         s = "{:,.2f}".format(deger)
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return deger
 
+# --- TCMB ENFLASYON VERİSİ ÇEKME ---
+@st.cache_data(ttl=3600) # 1 saatte bir yenile (Enflasyon ayda bir değişir)
+def get_tcmb_inflation(api_key):
+    # Varsayılan değerler (API çalışmazsa)
+    result = {"TUFE": 3.45, "UFE": 4.15, "Status": False}
+    
+    if api_key == "BURAYA_ALDIĞINIZ_UZUN_KEYİ_YAPIŞTIRIN" or len(api_key) < 5:
+        return result
+
+    try:
+        evds_api = evds.evdsAPI(api_key)
+        # TP.FG.J0: TÜFE (Genel) | TP.TUFE1YI.K1: Yİ-ÜFE (Genel)
+        
+        # Son 3 aylık veriyi çekelim ki garanti olsun
+        end_date = datetime.now().strftime("%d-%m-%Y")
+        start_date = (datetime.now() - pd.DateOffset(months=3)).strftime("%d-%m-%Y")
+        
+        df = evds_api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1'], startdate=start_date, enddate=end_date)
+        
+        if df is not None and not df.empty:
+            df.dropna(inplace=True)
+            if len(df) >= 2:
+                # Son iki ayın endekslerini alıp aylık değişim hesapla
+                son = df.iloc[-1]
+                onceki = df.iloc[-2]
+                
+                tufe_degisim = ((son['TP_FG_J0'] - onceki['TP_FG_J0']) / onceki['TP_FG_J0']) * 100
+                ufe_degisim = ((son['TP_TUFE1YI_K1'] - onceki['TP_TUFE1YI_K1']) / onceki['TP_TUFE1YI_K1']) * 100
+                
+                result["TUFE"] = round(tufe_degisim, 2)
+                result["UFE"] = round(ufe_degisim, 2)
+                result["Status"] = True
+    except:
+        pass
+        
+    return result
+
+# Enflasyon verilerini baştan çek
+tcmb_data = get_tcmb_inflation(EVDS_API_KEY)
+
 # ============================================================================
-# 1. SOL MENÜ (TÜRKÇE FORMAT GİRİŞİ)
+# 1. SOL MENÜ
 # ============================================================================
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
@@ -79,22 +85,16 @@ with st.sidebar:
     selected_period = period_map[donem_secimi]
 
     st.markdown("---")
-    
-    # --- YENİ INPUT SİSTEMİ: METİN KUTUSU ---
-    # Kullanıcı 100.000,00 şeklinde yazar
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00", help="Örnek: 1.250.000,50")
-    
-    # Arka planda sayıya çevirme işlemi
     try:
-        # Noktaları sil (binlik), Virgülü noktaya çevir (kuruş)
         temiz_tutar = tutar_giris.replace(".", "").replace(",", ".")
         sozlesme_tutari = float(temiz_tutar)
     except:
-        st.error("Lütfen geçerli bir sayı giriniz (Örn: 100.000,00)")
+        st.error("Lütfen geçerli bir sayı giriniz")
         sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. VERİ ÇEKME MOTORU
+# 2. YAHOO FINANCE VERİ ÇEKME
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -134,7 +134,7 @@ def piyasa_verisi_al(periyot):
 
 piyasa, hata = piyasa_verisi_al(selected_period)
 if hata:
-    st.warning("⚠️ Firewall engeli. Manuel mod aktif.")
+    st.warning("⚠️ Yahoo verisi alınamadı. Manuel mod aktif.")
     for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL"]:
         if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
 
@@ -188,7 +188,6 @@ e1, e2, e3, e4 = st.columns(4)
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
 ref_tahmin = d_brent + d_usd
 
-# Benzin
 with e2:
     st.markdown(f"""
     <div class='kutu-enerji'>
@@ -197,7 +196,6 @@ with e2:
         </div>
         <span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>
     """, unsafe_allow_html=True)
-    
     b_eski = st.number_input("Eski (TL)", value=42.0, step=0.5, key="b_o")
     b_yeni = st.number_input("Yeni (TL)", value=44.0, step=0.5, key="b_n")
     if b_eski > 0: d_benzin = ((b_yeni - b_eski) / b_eski) * 100
@@ -205,7 +203,6 @@ with e2:
     renk_class = "pozitif" if d_benzin >= 0 else "negatif"
     st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
-# Motorin
 with e3:
     st.markdown(f"""
     <div class='kutu-enerji'>
@@ -214,7 +211,6 @@ with e3:
         </div>
         <span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>
     """, unsafe_allow_html=True)
-    
     m_eski = st.number_input("Eski (TL)", value=43.0, step=0.5, key="m_o")
     m_yeni = st.number_input("Yeni (TL)", value=45.0, step=0.5, key="m_n")
     if m_eski > 0: d_dizel = ((m_yeni - m_eski) / m_eski) * 100
@@ -225,16 +221,24 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & SEPET
+# 5. ENFLASYON (EVDS ENTEGRE EDİLDİ)
 # ============================================================================
 st.markdown("---")
-st.link_button("🔗 TÜİK Verisi", "https://data.tuik.gov.tr/Search/Search?text=t%C3%BCfe")
-
-st.markdown("### 📈 Enflasyon & Sepet")
+# Enflasyon Başlığı ve Durum Bilgisi
+c_inf_title, c_inf_status = st.columns([2, 1])
+with c_inf_title:
+    st.markdown("### 📈 Enflasyon & Sepet")
+with c_inf_status:
+    if tcmb_data["Status"]:
+        st.success("✅ Veriler TCMB'den Çekildi")
+    else:
+        st.info("⚠️ Manuel Veri Girişi")
 
 ec1, ec2, ec3, ec4 = st.columns(4)
-tufe = ec1.number_input("TÜFE %", value=3.45)
-ufe = ec2.number_input("ÜFE %", value=4.15)
+
+# Değerleri TCMB'den geliyorsa oradan, yoksa varsayılandan al
+tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"])
+ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"])
 h_ufe = ec3.number_input("H-ÜFE %", value=5.00)
 abd_enf = ec4.number_input("ABD Enf.%", value=0.4)
 ozel_oran = (tufe + ufe) / 2
