@@ -2,17 +2,15 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import requests
-import io
 import urllib3
 from datetime import datetime
 
-# SSL Hatalarını ve Uyarılarını Sustur (Firewall Bypass İçin Şart)
+# SSL Hatalarını ve Uyarılarını Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- SİZİN API ANAHTARINIZ ---
+# --- AYARLAR ---
 MY_API_KEY = "Uol1kIOQos"
 
-# --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
 
 # --- CSS Tasarım ---
@@ -23,12 +21,10 @@ st.markdown("""
     .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
     .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
     .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
-    .big-metric { font-size: 24px !important; font-weight: bold; }
-    .pozitif { color: #27AE60 !important; font-weight: bold; }
-    .negatif { color: #C0392B !important; font-weight: bold; }
-    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
+    .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
+    .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
+    .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
-    .stLinkButton a { text-decoration: none !important; font-weight: bold !important; color: #1E3D59 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -39,105 +35,79 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB CSV TÜNEL MOTORU (BYPASS) ---
+# --- 1. TCMB VERİ MOTORU (HEADER AUTHENTICATION - 406 FIX) ---
 @st.cache_data(ttl=3600)
-def get_tcmb_csv_tunnel(donem_tipi):
-    # Başlangıç
+def get_tcmb_real_api(donem_tipi):
     result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Bağlanıyor..."}
     
     try:
-        # 1. URL İNŞASI (CSV Formatı)
-        # 2020'den bugüne tüm veriyi iste
-        start_date = "01-01-2020"
+        # Son 5 Yılın verisi (Garanti olsun diye)
         end_date = datetime.now().strftime("%d-%m-%Y")
+        start_date = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
         
-        # Kodlar: TP.FG.J0 (TÜFE), TP.TUFE1YI.K1 (Yİ-ÜFE), TP.HKFE01.I1 (H-ÜFE)
-        # Not: H-ÜFE kodu bazen TP.HKFE01.I1 olarak geçer
+        # Kodlar
         series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
+        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json"
         
-        # URL (CSV tipinde)
-        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=csv&key={MY_API_KEY}"
-        
-        # 2. İSTEK (Tarayıcı Maskesi)
+        # KRİTİK NOKTA: API ANAHTARI HEADER İÇİNDE GİTMELİ
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/csv'
+            "key": MY_API_KEY,
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
         }
         
-        # Verify=False ile SSL kontrolünü atla
-        r = requests.get(url, headers=headers, verify=False, timeout=30)
+        r = requests.get(url, headers=headers, verify=False, timeout=15)
         
         if r.status_code == 200:
-            # Gelen metni CSV olarak oku
-            csv_data = io.StringIO(r.text)
-            df = pd.read_csv(csv_data)
-            
-            # Sütun İsimlerini Standartlaştır (Nokta -> Alt Tire)
-            df.columns = [c.replace('.', '_') for c in df.columns]
-            
-            # Tarih dışındaki sütunları sayıya çevir
-            cols_to_numeric = [c for c in df.columns if "TP" in c]
-            for col in cols_to_numeric:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # Ana veri (TÜFE/ÜFE) boş olan satırları sil
-            main_cols = [c for c in df.columns if "TP_FG_J0" in c or "TP_TUFE1YI_K1" in c]
-            if main_cols:
-                df.dropna(subset=main_cols, inplace=True)
-            
-            if len(df) < 2:
-                result["Msg"] = "Veri Seti Boş Geldi"
-                return result
+            data = r.json()
+            if "items" in data:
+                items = data["items"]
+                df = pd.DataFrame(items)
                 
-            # --- DÖNEM HESABI ---
-            son_veri = df.iloc[-1]
-            
-            lookback = 1
-            if donem_tipi == "3 Ay": lookback = 3
-            elif donem_tipi == "6 Ay": lookback = 6
-            elif donem_tipi == "1 Yıl": lookback = 12
-            elif "YTD" in donem_tipi:
-                # Yılbaşından bugüne (Tarih sütunu YYYY-AA formatındadır)
-                try:
-                    tarih_str = str(son_veri['Tarih'])
-                    ay = int(tarih_str.split('-')[1])
-                    lookback = ay if len(df) > ay else len(df)-1
-                except: lookback = 12
-            
-            idx = -(lookback + 1)
-            if abs(idx) > len(df): idx = 0
-            ilk_veri = df.iloc[idx]
-            
-            # Sütunları Bul (Esnek Arama)
-            def find_val(row, pattern):
-                col = next((c for c in row.index if pattern in c), None)
-                return float(row[col]) if col else 0.0
+                # Sütunları Temizle
+                cols = ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']
+                for c in cols:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors='coerce')
+                
+                # Boşları at
+                df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
+                
+                if len(df) > 2:
+                    son = df.iloc[-1]
+                    
+                    # Dönem Seçimi
+                    lookback = 1
+                    if donem_tipi == "3 Ay": lookback = 3
+                    elif donem_tipi == "6 Ay": lookback = 6
+                    elif donem_tipi == "1 Yıl": lookback = 12
+                    elif "YTD" in donem_tipi:
+                        lookback = datetime.now().month
+                        if len(df) < lookback: lookback = len(df) - 1
+                    
+                    idx = -(lookback + 1)
+                    if abs(idx) > len(df): idx = 0
+                    ilk = df.iloc[idx]
+                    
+                    def calc(n, o):
+                        try: return ((float(n)-float(o))/float(o))*100
+                        except: return 0.0
 
-            t_son = find_val(son_veri, "TP_FG_J0")
-            t_ilk = find_val(ilk_veri, "TP_FG_J0")
-            
-            u_son = find_val(son_veri, "TP_TUFE1YI_K1")
-            u_ilk = find_val(ilk_veri, "TP_TUFE1YI_K1")
-            
-            h_son = find_val(son_veri, "TP_HKFE01_I1")
-            h_ilk = find_val(ilk_veri, "TP_HKFE01_I1")
-            
-            def calc(n, o):
-                if o == 0: return 0.0
-                return ((n - o) / o) * 100
-
-            result["TUFE"] = round(calc(t_son, t_ilk), 2)
-            result["UFE"] = round(calc(u_son, u_ilk), 2)
-            result["HUFE"] = round(calc(h_son, h_ilk), 2)
-            
-            result["Status"] = True
-            result["Msg"] = f"Canlı Veri: {ilk_veri.get('Tarih','?')} ➡️ {son_veri.get('Tarih','?')}"
-            
+                    result["TUFE"] = round(calc(son.get('TP_FG_J0',0), ilk.get('TP_FG_J0',0)), 2)
+                    result["UFE"] = round(calc(son.get('TP_TUFE1YI_K1',0), ilk.get('TP_TUFE1YI_K1',0)), 2)
+                    result["HUFE"] = round(calc(son.get('TP_HKFE01_I1',0), ilk.get('TP_HKFE01_I1',0)), 2)
+                    
+                    result["Status"] = True
+                    result["Msg"] = f"TCMB: {ilk.get('Tarih')} -> {son.get('Tarih')}"
+                else:
+                    result["Msg"] = "Yetersiz Veri"
+            else:
+                result["Msg"] = "API Yanıtı Boş"
         else:
-            result["Msg"] = f"Sunucu Hatası: {r.status_code}"
+            result["Msg"] = f"Hata Kodu: {r.status_code}"
             
     except Exception as e:
-        result["Msg"] = f"Hata: {str(e)}"
+        result["Msg"] = f"Bağlantı: {str(e)}"
         
     return result
 
@@ -154,8 +124,8 @@ with st.sidebar:
     selected_period = y_map[donem_secimi]
     
     # TCMB ÇEK
-    with st.spinner("TCMB Verisi İndiriliyor..."):
-        tcmb_data = get_tcmb_csv_tunnel(donem_secimi)
+    with st.spinner("TCMB Verisi Güncelleniyor..."):
+        tcmb_data = get_tcmb_real_api(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -259,7 +229,7 @@ c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
     if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
-    else: st.error(f"⚠️ {tcmb_data['Msg']}")
+    else: st.warning(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
