@@ -4,13 +4,13 @@ import yfinance as yf
 import evds
 from datetime import datetime
 
-# --- API ANAHTARI ---
+# --- API ANAHTARI (Sabitlendi) ---
 MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
 
-# --- CSS Tasarım ---
+# --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
 st.markdown("""
     <style>
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
@@ -21,6 +21,7 @@ st.markdown("""
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -32,10 +33,10 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (DÜZELTİLMİŞ KODLARLA) ---
+# --- TCMB VERİ MOTORU (DÜZELTİLMİŞ & GÜÇLENDİRİLMİŞ) ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, donem_tipi):
-    # Varsayılan değerler (Güvenli Mod)
+    # Varsayılan Boş Değerler (Hata olursa 0 döner, sistem çökmez)
     result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor..."}
     
     if not api_key: return result
@@ -43,47 +44,47 @@ def get_tcmb_data(api_key, donem_tipi):
     try:
         api = evds.evdsAPI(api_key)
         
-        # Son 5 yılın verisini çek
+        # GARANTİLİ YÖNTEM: Son 5 yılın (60 ay) tüm verisini çek.
+        # Böylece "o tarihte veri yoktu" hatası almayız.
         end = datetime.now().strftime("%d-%m-%Y")
         start = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
         
-        # DOĞRU KODLAR:
-        # TÜFE (Genel): TP.FG.J0
-        # Yİ-ÜFE (Genel): TP.TUFE1YI.K1 (Sizin T1 yazdığınız yer burasıydı, K1 olmalı)
-        # H-ÜFE (Hizmet): TP.HKFE01.I1
+        # KODLAR (DÜZELTİLDİ):
+        # TÜFE: TP.FG.J0
+        # Yİ-ÜFE: TP.TUFE1YI.K1 (T1 yerine K1 kullanıldı - Doğrusu budur)
+        # H-ÜFE: TP.HKFE01.I1
         series = ['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1']
         
         df = api.get_data(series, startdate=start, enddate=end)
         
         if df is None or df.empty:
-            result["Msg"] = "API Bağlandı ama Veri Yok"
+            result["Msg"] = "API Bağlandı ama Veri Boş"
             return result
             
-        # Boş satırları temizle (Tarih ve Ana veriler dolu olmalı)
+        # Boş satırları temizle (Veri olmayan ayları at)
         df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
         
         if len(df) < 2:
-            result["Msg"] = "Yetersiz Veri (Hesaplama yapılamıyor)"
+            result["Msg"] = "Yetersiz Veri (Satır < 2)"
             return result
             
-        # --- DÖNEM SEÇİMİ ---
-        son_row = df.iloc[-1]
+        # --- DÖNEM HESABI ---
+        son_row = df.iloc[-1] # En son açıklanan veri (Örn: Kasım 2025)
         
         lookback = 1
         if donem_tipi == "3 Ay": lookback = 3
         elif donem_tipi == "6 Ay": lookback = 6
         elif donem_tipi == "1 Yıl": lookback = 12
         elif donem_tipi == "Yılbaşından Bugüne (YTD)":
-            lookback = datetime.now().month
+            bugun_ay = datetime.now().month
             if len(df) < lookback: lookback = len(df) - 1
             
         idx = -(lookback + 1)
         if abs(idx) > len(df): idx = 0 
         
-        ilk_row = df.iloc[idx]
+        ilk_row = df.iloc[idx] # Karşılaştırılacak eski veri
         
-        # --- MATEMATİKSEL HESAPLAMA ---
-        # Endeksler gelir (Örn: 2300.5), biz değişimi (%) hesaplarız.
+        # --- ORAN HESAPLAMA ---
         def safe_calc(new, old):
             try:
                 n, o = float(new), float(old)
@@ -92,7 +93,6 @@ def get_tcmb_data(api_key, donem_tipi):
             except: return 0.0
 
         result["TUFE"] = round(safe_calc(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
-        # İşte düzeltilen kısım burası (K1 kodu kullanılıyor):
         result["UFE"] = round(safe_calc(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
         
         try:
@@ -103,7 +103,8 @@ def get_tcmb_data(api_key, donem_tipi):
         except: pass
             
         result["Status"] = True
-        result["Msg"] = f"Dönem: {ilk_row['Tarih']} - {son_row['Tarih']}"
+        # Kullanıcıya hangi tarihleri baz aldığını göster
+        result["Msg"] = f"Dönem: {ilk_row['Tarih']} ➡️ {son_row['Tarih']}"
         
     except Exception as e:
         result["Msg"] = f"Hata: {str(e)}"
@@ -123,7 +124,8 @@ with st.sidebar:
     selected_period = y_map[donem_secimi]
     
     # TCMB ÇEK
-    tcmb_data = get_tcmb_data(MY_API_KEY, donem_secimi)
+    with st.spinner("TCMB Verisi Güncelleniyor..."):
+        tcmb_data = get_tcmb_data(MY_API_KEY, donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -195,6 +197,7 @@ d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
 # ENERJİ
 st.markdown("---")
+# PETROL OFİSİ BUTONU EKLENDİ
 col_link, _ = st.columns([1,3])
 col_link.link_button("⛽ Petrol Ofisi Arşiv", "https://www.petrolofisi.com.tr/arsiv-fiyatlari")
 
@@ -220,7 +223,7 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON (DİNAMİK + K1 KODU)
+# 5. ENFLASYON & İŞÇİLİK
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
@@ -238,7 +241,7 @@ abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
 ozel_oran = (tufe + ufe) / 2
 
 # ============================================================================
-# 6. SEPET
+# 6. SEPET (İŞÇİLİK EKLENDİ)
 # ============================================================================
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
@@ -282,6 +285,7 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
+    # Tablo Format Hatası Düzeltildi
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
