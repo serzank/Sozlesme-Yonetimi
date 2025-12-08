@@ -5,7 +5,7 @@ import requests
 import urllib3
 from datetime import datetime
 
-# SSL Hatalarını ve Uyarılarını Sustur
+# SSL Uyarısını Kapat (Kurumsal Ağ İçin Şart)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- SİZİN API ANAHTARINIZ ---
@@ -36,80 +36,107 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (ÇÖKME KORUMALI) ---
+# --- TCMB AGRESIF VERİ MOTORU ---
 @st.cache_data(ttl=3600)
-def get_tcmb_safe(donem_tipi):
-    # Varsayılan "Güvenli" Değerler
-    safe_result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+def get_tcmb_aggressive(donem_tipi):
+    # Başlangıç Durumu
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "İstek Gönderiliyor..."}
     
+    # URL (Tüm serileri tek seferde iste)
+    # TP.FG.J0: TÜFE
+    # TP.TUFE1YI.K1: Yİ-ÜFE
+    # TP.HKFE01.I1: H-ÜFE
+    series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
+    
+    # Tarih Aralığı (Sabit Geniş Aralık - Hata Riskini Azaltır)
+    # 2020'den bugüne iste, sonrasını Python ile süzeriz.
+    start_date = "01-01-2020"
+    end_date = datetime.now().strftime("%d-%m-%Y")
+    
+    # URL Yapısı
+    url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json"
+    
+    # HEADER AYARLARI (Kritik Nokta - Tarayıcı Taklidi)
+    headers = {
+        "key": MY_API_KEY,  # Anahtarı Header'a koymak daha güvenilirdir
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Connection": "keep-alive"
+    }
+
     try:
-        # Tarih Aralığı (Geniş tutuyoruz ki veri kesin olsun)
-        # Bitiş: Bugün, Başlangıç: 5 Yıl önce
-        end_date = datetime.now().strftime("%d-%m-%Y")
-        start_date = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
-        
-        # URL (JSON Formatı)
-        series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
-        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json&key={MY_API_KEY}"
-        
-        # Request
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(url, headers=headers, verify=False, timeout=10)
+        # İSTEK AT (SSL İptal)
+        r = requests.get(url, headers=headers, verify=False, timeout=20)
         
         if r.status_code == 200:
-            js = r.json()
-            # items anahtarı var mı?
-            if "items" not in js: return safe_result
+            data = r.json()
+            # "items" anahtarı yoksa TCMB hata dönmüştür
+            if "items" not in data:
+                result["Msg"] = "API Anahtarı Geçersiz Olabilir"
+                return result
+                
+            # Veriyi Tabloya Çevir
+            df = pd.DataFrame(data["items"])
             
-            df = pd.DataFrame(js["items"])
-            
-            # Sütunları Temizle ve Sayıya Çevir
-            cols = ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']
-            for col in cols:
+            # Sütun İsimlerini Temizle (Bazen null gelir)
+            numeric_cols = ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']
+            for col in numeric_cols:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             
-            # Boşları temizle
+            # Ana verisi boş olan satırları sil
             df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
             
-            # KORUMA: Eğer temizlik sonrası satır kalmadıysa çık
-            if len(df) < 2: return safe_result
+            if len(df) < 2:
+                result["Msg"] = "Veri Seti Çok Kısa"
+                return result
+                
+            # --- DÖNEM HESAPLAMA ---
+            # En son veri (Listenin en sonu)
+            son_veri = df.iloc[-1]
             
-            # --- DÖNEM SEÇİMİ ---
-            son_row = df.iloc[-1]
-            
+            # Kaç ay geri gideceğiz?
             lookback = 1
             if donem_tipi == "3 Ay": lookback = 3
             elif donem_tipi == "6 Ay": lookback = 6
             elif donem_tipi == "1 Yıl": lookback = 12
             elif "YTD" in donem_tipi:
-                lookback = datetime.now().month
-                if len(df) < lookback: lookback = len(df) - 1
+                # Yılbaşından bugüne (Mevcut ayın sayısı kadar geri git)
+                # Örn: Hazirandaysak (6. ay), yılbaşı 6 ay öncedir.
+                # Ancak veri tarihi string gelir "2025-5" gibi. Onu parse etmeliyiz.
+                try:
+                    tarih_str = str(son_veri['Tarih']) # "2025-5"
+                    ay = int(tarih_str.split('-')[1])
+                    lookback = ay if len(df) > ay else len(df)-1
+                except:
+                    lookback = 12 # Hata olursa 1 yıl al
             
-            # KORUMA: İndeks taşmasını engelle
+            # İndeks belirle
             idx = -(lookback + 1)
+            # Liste sınırını aşma kontrolü
             if abs(idx) > len(df): idx = 0
             
-            ilk_row = df.iloc[idx]
+            ilk_veri = df.iloc[idx]
             
-            # Hesapla
-            def calc(n, o):
-                if o == 0: return 0.0
-                return ((n - o) / o) * 100
+            # ORAN HESAPLA: ((Yeni - Eski) / Eski) * 100
+            def calc(new, old):
+                if old == 0: return 0.0
+                return ((new - old) / old) * 100
 
-            safe_result["TUFE"] = round(calc(son_row.get('TP_FG_J0', 0), ilk_row.get('TP_FG_J0', 0)), 2)
-            safe_result["UFE"] = round(calc(son_row.get('TP_TUFE1YI_K1', 0), ilk_row.get('TP_TUFE1YI_K1', 0)), 2)
-            safe_result["HUFE"] = round(calc(son_row.get('TP_HKFE01_I1', 0), ilk_row.get('TP_HKFE01_I1', 0)), 2)
+            result["TUFE"] = round(calc(son_veri.get('TP_FG_J0', 0), ilk_veri.get('TP_FG_J0', 0)), 2)
+            result["UFE"] = round(calc(son_veri.get('TP_TUFE1YI_K1', 0), ilk_veri.get('TP_TUFE1YI_K1', 0)), 2)
+            result["HUFE"] = round(calc(son_veri.get('TP_HKFE01_I1', 0), ilk_veri.get('TP_HKFE01_I1', 0)), 2)
             
-            safe_result["Status"] = True
-            safe_result["Msg"] = f"Dönem: {ilk_row.get('Tarih', '-')} ➡️ {son_row.get('Tarih', '-')}"
+            result["Status"] = True
+            result["Msg"] = f"Dönem: {ilk_veri['Tarih']} ➡️ {son_veri['Tarih']}"
+            
+        else:
+            result["Msg"] = f"Sunucu Hatası: {r.status_code}"
             
     except Exception as e:
-        # Hata olursa logla ama çökme, varsayılanı dön
-        print(f"Hata: {e}")
-        return safe_result
+        result["Msg"] = f"Bağlantı Hatası: {str(e)}"
         
-    return safe_result
+    return result
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -120,12 +147,14 @@ with st.sidebar:
     
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     
+    # YAHOO DÖNEM MAP
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
     # TCMB ÇEK
-    with st.spinner("TCMB Verisi Güncelleniyor..."):
-        tcmb_data = get_tcmb_safe(donem_secimi)
+    # Spinner ile kullanıcının beklemesini sağla
+    with st.spinner("TCMB Verisi Alınıyor..."):
+        tcmb_data = get_tcmb_aggressive(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -133,7 +162,7 @@ with st.sidebar:
     except: sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ
+# 2. YAHOO VERİ ÇEKME
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -222,16 +251,17 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & İŞÇİLİK
+# 5. ENFLASYON & İŞÇİLİK (OTOMATİK ÇEKİM)
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
     if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
-    else: st.warning(f"⚠️ {tcmb_data['Msg']}")
+    else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
+# Veriler Otomatik Gelir
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
