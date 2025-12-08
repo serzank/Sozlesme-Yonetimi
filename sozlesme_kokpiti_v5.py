@@ -31,37 +31,22 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (TEMİZ SÜRÜM) ---
+# --- TCMB VERİ MOTORU ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(donem_tipi):
-    # Varsayılanlar 0.00 (Eski veri göstermemek için)
-    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Başlatılıyor...", "Error": ""}
-    
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Başlatılıyor..."}
     try:
         api = evds.evdsAPI(MY_API_KEY)
-        
-        # Son 3 yılın verisini çek (Geniş Aralık)
         end = datetime.now().strftime("%d-%m-%Y")
         start = (datetime.now() - pd.DateOffset(months=36)).strftime("%d-%m-%Y")
         
-        # Verileri çek
         df = api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1'], startdate=start, enddate=end)
         
-        if df is None or df.empty:
-            result["Msg"] = "TCMB yanıt vermedi (Boş Veri)"
-            return result
-            
-        # Boş verileri temizle
+        if df is None or df.empty: return result
         df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
-        
-        if len(df) < 2:
-            result["Msg"] = "Yetersiz Veri (Satır < 2)"
-            result["Error"] = f"Gelen Satır Sayısı: {len(df)}"
-            return result
+        if len(df) < 2: return result
             
-        # --- DÖNEM HESABI ---
         son_row = df.iloc[-1]
-        
         lookback = 1
         if donem_tipi == "3 Ay": lookback = 3
         elif donem_tipi == "6 Ay": lookback = 6
@@ -74,27 +59,21 @@ def get_tcmb_data(donem_tipi):
         if abs(idx) > len(df): idx = 0 
         ilk_row = df.iloc[idx]
         
-        def safe_calc(now, old):
+        def calc_change(now, old):
             try: return ((float(now) - float(old)) / float(old)) * 100
             except: return 0.0
 
-        result["TUFE"] = round(safe_calc(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
-        result["UFE"] = round(safe_calc(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
-        
+        result["TUFE"] = round(calc_change(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
+        result["UFE"] = round(calc_change(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
         try:
             if 'TP_HKFE01.I1' in df.columns:
                 h_now = df['TP_HKFE01.I1'].iloc[-1]
                 h_old = df['TP_HKFE01.I1'].iloc[idx]
-                result["HUFE"] = round(safe_calc(h_now, h_old), 2)
+                result["HUFE"] = round(calc_change(h_now, h_old), 2)
         except: pass
-            
         result["Status"] = True
         result["Msg"] = f"Dönem: {ilk_row['Tarih']} - {son_row['Tarih']}"
-        
-    except Exception as e:
-        result["Msg"] = "Bağlantı Hatası"
-        result["Error"] = str(e)
-        
+    except: pass
     return result
 
 # ============================================================================
@@ -103,21 +82,17 @@ def get_tcmb_data(donem_tipi):
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
     st.header("⚙️ Ayarlar")
-    
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
-    # TCMB ÇEK
     tcmb_data = get_tcmb_data(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try:
-        sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except:
-        sozlesme_tutari = 0.0
+    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
+    except: sozlesme_tutari = 0.0
 
 # ============================================================================
 # 2. YAHOO VERİ
@@ -213,13 +188,8 @@ st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
-    if tcmb_data["Status"]: 
-        st.success(f"✅ Otomatik ({tcmb_data['Msg']})")
-    else: 
-        st.error(f"⚠️ {tcmb_data['Msg']}")
-        # Detaylı hatayı sadece hata varsa gösterelim
-        if tcmb_data.get("Error"):
-            st.caption(f"Hata Detayı: {tcmb_data['Error']}")
+    if tcmb_data["Status"]: st.success(f"✅ Otomatik ({tcmb_data['Msg']})")
+    else: st.info(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"])
@@ -275,7 +245,7 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    # Tablo
+    # Tablo (BU KISIM DÜZELTİLDİ - ValueError ENGELLEYİCİ)
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
@@ -285,4 +255,14 @@ else:
             data["Etki %"].append((deg*agr)/100)
             
     df = pd.DataFrame(data)
-    st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
+    
+    # DÜZELTME: Sadece sayısal kolonlara format uyguluyoruz.
+    # Kalem sütunu (String) formatlanmaz.
+    st.dataframe(
+        df.style.format({
+            "Değişim %": "{:.2f}",
+            "Ağırlık %": "{:.0f}",
+            "Etki %": "{:.2f}"
+        }),
+        use_container_width=True
+    )
