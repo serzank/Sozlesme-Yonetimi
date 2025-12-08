@@ -6,5 +6,6 @@ evds
 XlsxWriter
 beautifulsoup4
 requests
+python-dateutil
 
 
