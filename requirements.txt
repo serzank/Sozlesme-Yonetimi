@@ -3,5 +3,6 @@ requests
 pandas
 yfinance
 evds
+XlsxWriter
 
 
