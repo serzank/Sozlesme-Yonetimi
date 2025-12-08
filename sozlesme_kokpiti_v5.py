@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import requests
+import io
 import urllib3
 from datetime import datetime
 
-# SSL Uyarısını Kapat (Kurumsal Ağ İçin Şart)
+# SSL Hatalarını ve Uyarılarını Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- SİZİN API ANAHTARINIZ ---
@@ -18,14 +19,14 @@ st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀
 st.markdown("""
     <style>
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
-    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
-    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
-    .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
-    .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-    .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
+    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
+    .kutu *, .kutu-enerji * { color: #1E3D59 !important; }
+    .big-metric { font-size: 24px !important; font-weight: bold; }
+    .pozitif { color: #27AE60 !important; font-weight: bold; }
+    .negatif { color: #C0392B !important; font-weight: bold; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
+    .stLinkButton a { text-decoration: none !important; font-weight: bold !important; color: #1E3D59 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -36,96 +37,89 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB AGRESIF VERİ MOTORU ---
+# --- TCMB EXCEL (CSV) MODU ---
 @st.cache_data(ttl=3600)
-def get_tcmb_aggressive(donem_tipi):
-    # Başlangıç Durumu
-    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "İstek Gönderiliyor..."}
+def get_tcmb_excel_mode(donem_tipi):
+    # Başlangıçta boş değerler
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor"}
     
-    # URL (Tüm serileri tek seferde iste)
-    # TP.FG.J0: TÜFE
-    # TP.TUFE1YI.K1: Yİ-ÜFE
-    # TP.HKFE01.I1: H-ÜFE
-    series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
-    
-    # Tarih Aralığı (Sabit Geniş Aralık - Hata Riskini Azaltır)
-    # 2020'den bugüne iste, sonrasını Python ile süzeriz.
-    start_date = "01-01-2020"
-    end_date = datetime.now().strftime("%d-%m-%Y")
-    
-    # URL Yapısı
-    url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json"
-    
-    # HEADER AYARLARI (Kritik Nokta - Tarayıcı Taklidi)
-    headers = {
-        "key": MY_API_KEY,  # Anahtarı Header'a koymak daha güvenilirdir
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Connection": "keep-alive"
-    }
-
     try:
-        # İSTEK AT (SSL İptal)
+        # 1. URL OLUŞTURMA (Excel/CSV Mantığı)
+        # 2020'den bugüne tüm veriyi iste (Geniş Havuz)
+        start_date = "01-01-2020"
+        end_date = datetime.now().strftime("%d-%m-%Y")
+        
+        # Kodlar: TÜFE, Yİ-ÜFE, H-ÜFE
+        series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
+        
+        # type=csv parametresi kritik!
+        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=csv&key={MY_API_KEY}"
+        
+        # 2. İSTEK (Tarayıcı gibi)
+        headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(url, headers=headers, verify=False, timeout=20)
         
         if r.status_code == 200:
-            data = r.json()
-            # "items" anahtarı yoksa TCMB hata dönmüştür
-            if "items" not in data:
-                result["Msg"] = "API Anahtarı Geçersiz Olabilir"
-                return result
-                
-            # Veriyi Tabloya Çevir
-            df = pd.DataFrame(data["items"])
+            # Gelen veriyi (CSV metni) Pandas ile tabloya çevir
+            csv_data = io.StringIO(r.text)
+            df = pd.read_csv(csv_data)
             
-            # Sütun İsimlerini Temizle (Bazen null gelir)
-            numeric_cols = ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']
-            for col in numeric_cols:
-                if col in df.columns:
+            # 3. VERİ TEMİZLİĞİ
+            # TCMB sütun isimleri bazen "TP_FG_J0" bazen "TP.FG.J0" gelir. Standartlaştıralım.
+            # Sütunları bulmak için 'contains' kullanacağız.
+            
+            # Tarih sütunu haricindeki tüm sütunları sayıya çevir (Hata varsa NaN yap)
+            for col in df.columns:
+                if "Tarih" not in col:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             
-            # Ana verisi boş olan satırları sil
-            df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
+            # Kritik sütunları bul (TÜFE ve ÜFE)
+            col_tufe = next((c for c in df.columns if "TP_FG_J0" in c or "TP.FG.J0" in c), None)
+            col_ufe = next((c for c in df.columns if "TP_TUFE1YI_K1" in c or "TP.TUFE1YI.K1" in c), None)
+            col_hufe = next((c for c in df.columns if "TP_HKFE01_I1" in c or "TP.HKFE01.I1" in c), None)
+            
+            if not col_tufe or not col_ufe:
+                result["Msg"] = "Sütunlar Bulunamadı"
+                return result
+                
+            # Boş satırları at
+            df.dropna(subset=[col_tufe, col_ufe], inplace=True)
             
             if len(df) < 2:
-                result["Msg"] = "Veri Seti Çok Kısa"
+                result["Msg"] = "Yetersiz Satır"
                 return result
                 
             # --- DÖNEM HESAPLAMA ---
-            # En son veri (Listenin en sonu)
             son_veri = df.iloc[-1]
             
-            # Kaç ay geri gideceğiz?
             lookback = 1
             if donem_tipi == "3 Ay": lookback = 3
             elif donem_tipi == "6 Ay": lookback = 6
             elif donem_tipi == "1 Yıl": lookback = 12
             elif "YTD" in donem_tipi:
-                # Yılbaşından bugüne (Mevcut ayın sayısı kadar geri git)
-                # Örn: Hazirandaysak (6. ay), yılbaşı 6 ay öncedir.
-                # Ancak veri tarihi string gelir "2025-5" gibi. Onu parse etmeliyiz.
+                # Yılbaşından bugüne (Basitçe: veri tarihindeki ay sayısı kadar geri git)
                 try:
-                    tarih_str = str(son_veri['Tarih']) # "2025-5"
+                    tarih_str = str(son_veri['Tarih']) # "2025-1" gibi
                     ay = int(tarih_str.split('-')[1])
                     lookback = ay if len(df) > ay else len(df)-1
-                except:
-                    lookback = 12 # Hata olursa 1 yıl al
+                except: lookback = 12 # Hata olursa 1 yıl al
             
             # İndeks belirle
             idx = -(lookback + 1)
-            # Liste sınırını aşma kontrolü
             if abs(idx) > len(df): idx = 0
             
             ilk_veri = df.iloc[idx]
             
-            # ORAN HESAPLA: ((Yeni - Eski) / Eski) * 100
+            # ORAN HESAPLA
             def calc(new, old):
                 if old == 0: return 0.0
                 return ((new - old) / old) * 100
 
-            result["TUFE"] = round(calc(son_veri.get('TP_FG_J0', 0), ilk_veri.get('TP_FG_J0', 0)), 2)
-            result["UFE"] = round(calc(son_veri.get('TP_TUFE1YI_K1', 0), ilk_veri.get('TP_TUFE1YI_K1', 0)), 2)
-            result["HUFE"] = round(calc(son_veri.get('TP_HKFE01_I1', 0), ilk_veri.get('TP_HKFE01_I1', 0)), 2)
+            result["TUFE"] = round(calc(son_veri[col_tufe], ilk_veri[col_tufe]), 2)
+            result["UFE"] = round(calc(son_veri[col_ufe], ilk_veri[col_ufe]), 2)
+            
+            if col_hufe and pd.notna(son_veri[col_hufe]):
+                result["HUFE"] = round(calc(son_veri[col_hufe], ilk_veri[col_hufe]), 2)
             
             result["Status"] = True
             result["Msg"] = f"Dönem: {ilk_veri['Tarih']} ➡️ {son_veri['Tarih']}"
@@ -147,14 +141,12 @@ with st.sidebar:
     
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     
-    # YAHOO DÖNEM MAP
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
-    # TCMB ÇEK
-    # Spinner ile kullanıcının beklemesini sağla
-    with st.spinner("TCMB Verisi Alınıyor..."):
-        tcmb_data = get_tcmb_aggressive(donem_secimi)
+    # TCMB ÇEK (Excel Modu)
+    with st.spinner("TCMB Verisi İndiriliyor..."):
+        tcmb_data = get_tcmb_excel_mode(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -162,7 +154,7 @@ with st.sidebar:
     except: sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ ÇEKME
+# 2. YAHOO VERİ
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -251,7 +243,7 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & İŞÇİLİK (OTOMATİK ÇEKİM)
+# 5. ENFLASYON & İŞÇİLİK
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
@@ -261,7 +253,6 @@ with c_inf_status:
     else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-# Veriler Otomatik Gelir
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
@@ -314,6 +305,7 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
+    # GÜVENLİ TABLO (Hata Vermeyen)
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
@@ -323,4 +315,5 @@ else:
             data["Etki %"].append((deg*agr)/100)
             
     df = pd.DataFrame(data)
+    # Sadece sayısal formatlama
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
