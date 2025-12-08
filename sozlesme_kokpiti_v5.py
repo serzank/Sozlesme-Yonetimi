@@ -39,7 +39,6 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,00"
 
-# KRİTİK FONKSİYON: NaN HATASINI ENGELLEYEN SİGORTA
 def safe_float(val):
     try:
         if val is None: return 0.0
@@ -47,10 +46,11 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- TCMB MOTORU (SİZİN KODUNUZ) ---
+# --- TCMB MOTORU (H-ÜFE ÇIKARILDI - SADECE TÜFE/ÜFE) ---
 @st.cache_data(ttl=3600)
-def get_tcmb_user_logic(api_key, ref_date, donem_str):
-    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor"}
+def get_tcmb_stable(api_key, ref_date, donem_str):
+    # H-ÜFE'yi manuel bıraktığımız için burada hesaplamıyoruz
+    result = {"TUFE": 0.0, "UFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor"}
     
     try:
         evds = evdsAPI(api_key)
@@ -67,7 +67,8 @@ def get_tcmb_user_logic(api_key, ref_date, donem_str):
         start_q = (past_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = target_date.strftime("%d-%m-%Y")
         
-        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
+        # SADECE GÜVENİLİR SERİLER: TP.FG.J0 ve TP.TUFE1YI.T1
+        series = ["TP.FG.J0", "TP.TUFE1YI.T1"]
         
         raw_df = evds.get_data(series, startdate=start_q, enddate=end_q)
         
@@ -86,10 +87,10 @@ def get_tcmb_user_logic(api_key, ref_date, donem_str):
         if row_now.empty: row_now = raw_df.iloc[[-1]]
         if row_old.empty: row_old = raw_df.iloc[[0]]
         
-        # Sütun Kontrolü ve Değer Alma
-        c_t = "TP_FG_J0" if "TP_FG_J0" in raw_df.columns else "TP.FG.J0"
-        c_u = "TP_TUFE1YI_T1" if "TP_TUFE1YI_T1" in raw_df.columns else "TP.TUFE1YI.T1"
-        c_h = "TP_HKFE01_I1" if "TP_HKFE01_I1" in raw_df.columns else "TP.HKFE01.I1"
+        # Sütun İsimleri (Nokta/Alt Tire Kontrolü)
+        cols = raw_df.columns
+        c_t = "TP_FG_J0" if "TP_FG_J0" in cols else "TP.FG.J0"
+        c_u = "TP_TUFE1YI_T1" if "TP_TUFE1YI_T1" in cols else "TP.TUFE1YI.T1"
         
         def get_val(row, col):
             if col in row.columns and pd.notna(row[col].values[0]):
@@ -102,16 +103,12 @@ def get_tcmb_user_logic(api_key, ref_date, donem_str):
         val_u_now = get_val(row_now, c_u)
         val_u_old = get_val(row_old, c_u)
         
-        val_h_now = get_val(row_now, c_h)
-        val_h_old = get_val(row_old, c_h)
-        
         def calc(n, o):
             if o == 0: return 0.0
             return ((n - o) / o) * 100
             
         result["TUFE"] = round(calc(val_t_now, val_t_old), 2)
         result["UFE"] = round(calc(val_u_now, val_u_old), 2)
-        result["HUFE"] = round(calc(val_h_now, val_h_old), 2)
         
         result["Status"] = True
         result["Msg"] = f"{past_p} ➡️ {target_p}"
@@ -134,7 +131,7 @@ with st.sidebar:
     ref_date = today.replace(day=1) - relativedelta(months=1)
     
     with st.spinner("TCMB Verisi Hesaplanıyor..."):
-        tcmb = get_tcmb_user_logic(MY_API_KEY, ref_date, donem_secimi)
+        tcmb = get_tcmb_stable(MY_API_KEY, ref_date, donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -152,33 +149,39 @@ def piyasa_verisi_al(periyot):
     tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
     data_dict = {}
     
-    # Hata durumunda boş sözlük oluştur
     for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
     try:
         df = yf.download(list(tickers.values()), period=periyot, progress=False)['Close']
+        df = df.fillna(0)
+        
         if not df.empty:
             for key, symbol in tickers.items():
                 try:
                     c_name = [c for c in df.columns if symbol in str(c)]
                     if not c_name: continue
-                    seri = df[c_name[0]].dropna()
+                    seri = df[c_name[0]]
+                    seri = seri[seri != 0]
                     if len(seri) > 1:
                         ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
-                        degisim = ((son - ilk) / ilk) * 100
-                        data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
+                        if ilk > 0:
+                            degisim = ((son - ilk) / ilk) * 100
+                            data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
                 except: pass
             
             if data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
                 g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
                 g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
-                g_deg = ((g_son - g_ilk) / g_ilk) * 100 if g_ilk > 0 else 0
+                g_deg = 0.0
+                if g_ilk > 0:
+                    g_deg = ((g_son - g_ilk) / g_ilk) * 100
                 data_dict["GRAM_ALTIN_TL"] = {"ilk": g_ilk, "son": g_son, "degisim": g_deg}
     except: pass
     return data_dict
 
 piyasa = piyasa_verisi_al(selected_period)
-if "GRAM_ALTIN_TL" not in piyasa: piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
+if "GRAM_ALTIN_TL" not in piyasa: 
+    piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
@@ -188,8 +191,8 @@ st.caption(f"Veri Dönemi: {donem_secimi}")
 
 def kutu(col, baslik, key, ikon):
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
-    # Safe Float ile koruma
     ilk, son, deg = safe_float(val["ilk"]), safe_float(val["son"]), safe_float(val["degisim"])
+    
     w_key = f"{key}_{donem_secimi}"
     with col:
         st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; margin-bottom:5px;'><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div>", unsafe_allow_html=True)
@@ -236,11 +239,9 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON (HİBRİT SEKME YAPISI)
+# 5. ENFLASYON (H-ÜFE MANUEL)
 # ============================================================================
 st.markdown("---")
-st.markdown("### 📈 Enflasyon & İşçilik")
-
 tab1, tab2 = st.tabs(["⚡ Otomatik Hesap", "🔗 Diğer Siteyi Görüntüle"])
 
 with tab1:
@@ -250,20 +251,20 @@ with tab1:
         else: st.warning(f"⚠️ {tcmb['Msg']}")
 
     ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-    # Safe Float ile koruma
+    # H-ÜFE MANUEL OLARAK 0.00'A SABİTLENDİ
     tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{donem_secimi}")
     ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{donem_secimi}")
-    h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{donem_secimi}")
+    h_ufe = ec3.number_input("H-ÜFE %", value=0.00, key=f"h_{donem_secimi}") # MANUEL
     iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{donem_secimi}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
     ozel_oran = (tufe + ufe) / 2
 
 with tab2:
-    st.info("Eğer otomatik hesaplamada sorun yaşarsanız, diğer sitenizden kontrol edebilirsiniz.")
+    st.info("Alternatif hesaplama için:")
     st.components.v1.iframe("https://tufehesaplama-serzan.streamlit.app/", height=500, scrolling=True)
 
 # ============================================================================
-# 6. SEPET VE HESAPLAMA (GÜVENLİ MOD)
+# 6. SEPET
 # ============================================================================
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
@@ -291,7 +292,6 @@ toplam = w_ozel+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_diz
 if toplam != 100:
     st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı)")
 else:
-    # NaN HATASI ÇÖZÜMÜ: Her değişkeni safe_float() ile sar
     etkiler = [
         ("Karma", safe_float(ozel_oran), safe_float(w_ozel)), 
         ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
@@ -326,7 +326,4 @@ else:
             data["Etki %"].append((deg*agr)/100)
             
     df = pd.DataFrame(data)
-    # HATA DÜZELTME: Sadece sayısal kolonlara format uygula
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
-
-
