@@ -1,32 +1,50 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import evds
-from datetime import datetime, date
-from dateutil.relativedelta import relativedelta
-import urllib3
-
-# SSL Hatalarını Sustur
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# --- AYARLAR ---
-MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🏢")
 
-# --- CSS Tasarım ---
+# --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
 st.markdown("""
     <style>
+    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
-    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
-    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
+    
+    /* Kutu Genel */
+    .kutu, .kutu-enerji { 
+        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    }
+    
+    /* Finans Kutusu */
+    .kutu { 
+        background-color: #f8f9fa !important; 
+        border-left: 6px solid #1E3D59 !important; 
+    }
+    
+    /* Enerji Kutusu */
+    .kutu-enerji { 
+        background-color: #fffcf5 !important; 
+        border-left: 6px solid #F39C12 !important; 
+    }
+    
+    /* Yazı Renklerini Zorla Koyu Yap */
+    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { 
+        color: #1E3D59 !important; 
+    }
+    
+    /* Özel Renkler */
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-    .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    
+    /* Tahmin Etiketi */
     .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
+    
+    /* Link Butonları */
+    .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    
+    /* Input Alanı Başlıkları */
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -38,97 +56,6 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- 1. TCMB VERİ MOTORU (SİZİN KOD MANTIĞINIZ) ---
-@st.cache_data(ttl=3600)
-def get_tcmb_user_logic(api_key, ref_date, selected_period):
-    # Başlangıç Sonuçları
-    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    
-    try:
-        evds_api = evds.evdsAPI(api_key)
-        
-        # Sizin mantığınız: Hedef tarih ve Geçmiş tarihleri belirle
-        target_date = ref_date
-        
-        # Döneme göre geçmiş tarih
-        if selected_period == "1 Ay": past_date = target_date - relativedelta(months=1)
-        elif selected_period == "3 Ay": past_date = target_date - relativedelta(months=3)
-        elif selected_period == "6 Ay": past_date = target_date - relativedelta(months=6)
-        elif selected_period == "1 Yıl": past_date = target_date - relativedelta(months=12)
-        elif selected_period == "Yılbaşından Bugüne (YTD)": past_date = date(target_date.year - 1, 12, 1)
-        else: past_date = target_date - relativedelta(months=1)
-        
-        # API Sorgusu İçin Tarih Aralığı (Sizin dinamik min/max mantığınız)
-        # Hata payı için 1 ay daha geriden alıyoruz
-        start_q = (past_date - relativedelta(months=1)).strftime("%d-%m-%Y")
-        end_q = target_date.strftime("%d-%m-%Y")
-        
-        # Seriler: TÜFE, Yİ-ÜFE (K1), H-ÜFE
-        series = ["TP.FG.J0", "TP.TUFE1YI.K1", "TP.HKFE01.I1"]
-        
-        # Veriyi Çek
-        raw_df = evds_api.get_data(series, startdate=start_q, enddate=end_q)
-        
-        if raw_df is None or raw_df.empty:
-            res["Msg"] = "API Boş Döndü"
-            return res
-
-        # Tarih Formatlama
-        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
-        
-        # Sütun İsimleri Temizliği (Nokta/Alt Tire Karmaşası)
-        cols = raw_df.columns
-        c_tufe = next((c for c in cols if "TP_FG_J0" in c or "TP.FG.J0" in c), None)
-        c_ufe = next((c for c in cols if "TP_TUFE1YI_K1" in c or "TP.TUFE1YI.K1" in c), None)
-        c_hufe = next((c for c in cols if "TP_HKFE01_I1" in c or "TP.HKFE01.I1" in c), None)
-        
-        if not c_tufe or not c_ufe:
-            res["Msg"] = "Sütunlar Bulunamadı"
-            return res
-
-        # DÖNEM EŞLEŞTİRME (Sizin pd.Period Mantığınız)
-        target_p = pd.Period(target_date, freq='M')
-        past_p = pd.Period(past_date, freq='M')
-        
-        row_now = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == target_p]
-        row_old = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == past_p]
-        
-        # Eğer tam o ay yoksa (Veri açıklanmadıysa), bir önceki ayı dene (Fallback)
-        if row_now.empty:
-            target_p = target_p - 1
-            row_now = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == target_p]
-            
-        if row_now.empty or row_old.empty:
-            res["Msg"] = f"Dönem Eşleşmedi ({past_p} - {target_p})"
-            return res
-            
-        # Değerleri Al ve Hesapla
-        val_t_now = float(row_now[c_tufe].values[0])
-        val_t_old = float(row_old[c_tufe].values[0])
-        
-        val_u_now = float(row_now[c_ufe].values[0])
-        val_u_old = float(row_old[c_ufe].values[0])
-        
-        val_h_now = float(row_now[c_hufe].values[0]) if c_hufe and pd.notna(row_now[c_hufe].values[0]) else 0
-        val_h_old = float(row_old[c_hufe].values[0]) if c_hufe and pd.notna(row_old[c_hufe].values[0]) else 0
-        
-        def calc(n, o):
-            if o == 0: return 0.0
-            return ((n - o) / o) * 100
-            
-        res["TUFE"] = round(calc(val_t_now, val_t_old), 2)
-        res["UFE"] = round(calc(val_u_now, val_u_old), 2)
-        res["HUFE"] = round(calc(val_h_now, val_h_old), 2)
-        
-        res["Status"] = True
-        res["Msg"] = f"Dönem: {past_p} ➡️ {target_p}"
-        
-    except Exception as e:
-        res["Msg"] = f"Hata: {str(e)}"
-        
-    return res
-
-
 # ============================================================================
 # 1. SOL MENÜ
 # ============================================================================
@@ -138,35 +65,33 @@ with st.sidebar:
     
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     
-    # Referans Tarih (Bugün)
-    today = date.today()
-    # TCMB verisi genelde 1 ay geriden gelir (Ayın 3'ünde açıklanır)
-    # Garanti olsun diye geçen ayı "Referans Ay" kabul edelim
-    ref_date = today.replace(day=1) - relativedelta(months=1)
-    
-    # TCMB ÇEK
-    tcmb = get_tcmb_user_logic(MY_API_KEY, ref_date, donem_secimi)
+    y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
+    selected_period = y_map[donem_secimi]
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except: sozlesme_tutari = 0.0
-    
-    # YAHOO DÖNEM HARİTASI
-    y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
-    selected_period_y = y_map[donem_secimi]
+    try:
+        sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
+    except:
+        sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ
+# 2. YAHOO VERİ ÇEKME (SAĞLAM MOD)
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
-    tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
+    tickers = { 
+        "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", 
+        "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" 
+    }
     data_dict = {}
     hata = False
     try:
+        # Hata vermesin diye thread safe indirme
         df = yf.download(list(tickers.values()), period=periyot, progress=False)['Close']
-        if df.empty: hata = True
+        
+        if df.empty: 
+            hata = True
         else:
             for key, symbol in tickers.items():
                 try:
@@ -180,18 +105,24 @@ def piyasa_verisi_al(periyot):
                     else: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
                 except: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
             
+            # Gram Altın
             if "ONS_ALTIN" in data_dict and "USDTRY" in data_dict:
                 g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
                 g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
                 g_deg = ((g_son - g_ilk) / g_ilk) * 100 if g_ilk > 0 else 0
                 data_dict["GRAM_ALTIN_TL"] = {"ilk": g_ilk, "son": g_son, "degisim": g_deg}
-    except: hata = True
+    except: 
+        hata = True
+        
     return data_dict, hata
 
-piyasa, hata = piyasa_verisi_al(selected_period_y)
-if hata:
-    for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL"]:
-        if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
+piyasa, hata = piyasa_verisi_al(selected_period)
+
+# Hata durumunda boş sözlük oluştur (Çökmemesi için)
+if hata or not piyasa:
+    piyasa = {}
+    for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL", "ABD_TAHVIL"]:
+        piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
@@ -246,21 +177,22 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & İŞÇİLİK
+# 5. ENFLASYON & İŞÇİLİK (MANUEL + SİZİN LİNKİNİZ)
 # ============================================================================
 st.markdown("---")
-c_inf_title, c_inf_status = st.columns([2, 2])
-with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
-with c_inf_status:
-    if tcmb["Status"]: st.success(f"✅ Otomatik ({tcmb['Msg']})")
-    else: st.warning(f"⚠️ {tcmb['Msg']}")
+# --- SİZİN İSTEDİĞİNİZ ÖZEL LİNK ---
+col_tuik, _ = st.columns([1,3])
+col_tuik.link_button("🔗 Enflasyon Hesaplayıcı (Serzan)", "https://tufehesaplama-serzan.streamlit.app/")
+
+st.markdown("### 📈 Enflasyon & İşçilik (Manuel Giriş)")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-tufe = ec1.number_input("TÜFE %", value=tcmb["TUFE"], key=f"t_{donem_secimi}")
-ufe = ec2.number_input("ÜFE %", value=tcmb["UFE"], key=f"u_{donem_secimi}")
-h_ufe = ec3.number_input("H-ÜFE %", value=tcmb["HUFE"], key=f"h_{donem_secimi}")
-iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{donem_secimi}")
-abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
+# Manuel Giriş Kutuları
+tufe = ec1.number_input("TÜFE %", value=0.00, key=f"t_{donem_secimi}")
+ufe = ec2.number_input("ÜFE %", value=0.00, key=f"u_{donem_secimi}")
+h_ufe = ec3.number_input("H-ÜFE %", value=0.00, key=f"h_{donem_secimi}")
+iscilik = ec4.number_input("İşçilik %", value=0.00, help="Asgari Ücret", key=f"i_{donem_secimi}")
+abd_enf = ec5.number_input("ABD Enf.%", value=0.40, key=f"a_{donem_secimi}")
 ozel_oran = (tufe + ufe) / 2
 
 # ============================================================================
@@ -308,6 +240,7 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
+    # SAĞLAM TABLO (Hata Vermeyen)
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
@@ -317,4 +250,5 @@ else:
             data["Etki %"].append((deg*agr)/100)
             
     df = pd.DataFrame(data)
+    # Sadece sayısal kolonlara format uygula
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
