@@ -13,30 +13,68 @@ st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀
 # --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
 st.markdown("""
     <style>
+    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
-    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
-    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
+    
+    /* Kutu Tasarımı */
+    .kutu, .kutu-enerji { 
+        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    }
+    
+    /* Finans Kutusu Renkleri */
+    .kutu { 
+        background-color: #f8f9fa !important; 
+        border-left: 6px solid #1E3D59 !important; 
+    }
+    
+    /* Enerji Kutusu Renkleri */
+    .kutu-enerji { 
+        background-color: #fffcf5 !important; 
+        border-left: 6px solid #F39C12 !important; 
+    }
+    
+    /* KRİTİK: Yazı Renklerini Zorla Koyu Yap (Dark Mode Sorununu Çözer) */
+    .kutu, .kutu-enerji, .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { 
+        color: #1E3D59 !important; 
+    }
+    
+    /* Pozitif/Negatif Renkler */
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
+    
+    /* Tahmin Etiketi */
+    .prediction-tag { 
+        font-size: 11px; 
+        background-color: #e8f5e9 !important; 
+        color: #2e7d32 !important; 
+        padding: 2px 6px; 
+        border-radius: 4px; 
+        font-weight: bold; 
+        display: inline-block; 
+        margin-bottom: 4px; 
+    }
+    
+    /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
-    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
+    
+    /* Input Alanı Başlıkları */
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- YARDIMCI FONKSİYON ---
+# --- YARDIMCI FONKSİYONLAR ---
 def tr_fmt(deger):
     if isinstance(deger, (int, float)):
         s = "{:,.2f}".format(deger)
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (DÜZELTİLMİŞ & GÜÇLENDİRİLMİŞ) ---
+# --- TCMB VERİ MOTORU (v30.0 - GENİŞ TARAMA) ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, donem_tipi):
-    # Varsayılan Boş Değerler (Hata olursa 0 döner, sistem çökmez)
+    # Varsayılan Değerler (Sıfır değil, en son bilinen yaklaşık değerler - Hata olursa boş kalmasın)
+    # Ancak önceliğimiz API'den güncelini çekmek.
     result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor..."}
     
     if not api_key: return result
@@ -44,14 +82,13 @@ def get_tcmb_data(api_key, donem_tipi):
     try:
         api = evds.evdsAPI(api_key)
         
-        # GARANTİLİ YÖNTEM: Son 5 yılın (60 ay) tüm verisini çek.
-        # Böylece "o tarihte veri yoktu" hatası almayız.
+        # STRATEJİ: Son 60 ayı çek. Tarih hatasını yok et.
         end = datetime.now().strftime("%d-%m-%Y")
         start = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
         
-        # KODLAR (DÜZELTİLDİ):
+        # Kodlar: 
         # TÜFE: TP.FG.J0
-        # Yİ-ÜFE: TP.TUFE1YI.K1 (T1 yerine K1 kullanıldı - Doğrusu budur)
+        # Yİ-ÜFE: TP.TUFE1YI.K1 (Doğru kod K1'dir)
         # H-ÜFE: TP.HKFE01.I1
         series = ['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1']
         
@@ -69,7 +106,9 @@ def get_tcmb_data(api_key, donem_tipi):
             return result
             
         # --- DÖNEM HESABI ---
-        son_row = df.iloc[-1] # En son açıklanan veri (Örn: Kasım 2025)
+        # df.iloc[-1] bize veritabanındaki EN SON (En Güncel) veriyi verir.
+        # Tarih girmeye gerek yok, Python en sonu bulur.
+        son_row = df.iloc[-1] 
         
         lookback = 1
         if donem_tipi == "3 Ay": lookback = 3
@@ -82,7 +121,7 @@ def get_tcmb_data(api_key, donem_tipi):
         idx = -(lookback + 1)
         if abs(idx) > len(df): idx = 0 
         
-        ilk_row = df.iloc[idx] # Karşılaştırılacak eski veri
+        ilk_row = df.iloc[idx] # Geçmiş veri
         
         # --- ORAN HESAPLAMA ---
         def safe_calc(new, old):
@@ -197,7 +236,7 @@ d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
 # ENERJİ
 st.markdown("---")
-# PETROL OFİSİ BUTONU EKLENDİ
+# PETROL OFİSİ LİNKİ EKLENDİ
 col_link, _ = st.columns([1,3])
 col_link.link_button("⛽ Petrol Ofisi Arşiv", "https://www.petrolofisi.com.tr/arsiv-fiyatlari")
 
@@ -233,6 +272,7 @@ with c_inf_status:
     else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
+# Widget Key'leri eklendi, dönem değişince güncellensin
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
@@ -241,7 +281,7 @@ abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
 ozel_oran = (tufe + ufe) / 2
 
 # ============================================================================
-# 6. SEPET (İŞÇİLİK EKLENDİ)
+# 6. SEPET
 # ============================================================================
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
@@ -285,7 +325,7 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    # Tablo Format Hatası Düzeltildi
+    # HATA ÇÖZÜMÜ: Sadece sayısal sütunları formatla
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
