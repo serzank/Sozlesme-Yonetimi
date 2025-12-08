@@ -304,26 +304,31 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON
+# 5. ENFLASYON (GÜNCELLENDİ)
 # ============================================================================
 st.markdown("---")
-col_link, _ = st.columns([2,2])
-col_link.link_button("Manuel Kontrol", "https://tufehesaplama-serzan.streamlit.app/")
 
-with st.markdown:
-    c_inf_title, c_inf_status = st.columns([2, 2])
-    with c_inf_status:
-        if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
-        else: st.warning(f"⚠️ {tcmb['Msg']}")
+# Tab yapısı kaldırıldı, Link Butonu eklendi
+c_header, c_link = st.columns([3, 1])
 
-    ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-    # Safe Float ile koruma
-    tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{d_key}")
-    ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{d_key}")
-    h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
-    iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{d_key}")
-    abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
-    ozel_oran = (tufe + ufe) / 2
+with c_header:
+    st.subheader("⚡ Enflasyon Verileri (Otomatik Hesap)")
+
+with c_link:
+    st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesaplama-serzan.streamlit.app/")
+
+if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
+else: st.warning(f"⚠️ {tcmb['Msg']}")
+
+ec1, ec2, ec3, ec4, ec5 = st.columns(5)
+# Safe Float ile koruma
+tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{d_key}")
+ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{d_key}")
+h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
+iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{d_key}")
+abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
+ozel_oran = (tufe + ufe) / 2
+
 
 # ============================================================================
 # 6. SEPET VE HESAPLAMA
@@ -398,6 +403,3 @@ else:
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Detay', index=False)
     st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel")
-
-
-
