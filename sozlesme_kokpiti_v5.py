@@ -1,49 +1,31 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import requests
+import io
+from datetime import datetime
+import urllib3
+
+# SSL Hatalarını ve Uyarılarını Sustur (Firewall Bypass İçin Şart)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- SİZİN API ANAHTARINIZ ---
+MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
 
-# --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
+# --- CSS Tasarım ---
 st.markdown("""
     <style>
-    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    
-    /* Kutu Genel */
-    .kutu, .kutu-enerji { 
-        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-    }
-    
-    /* Finans Kutusu */
-    .kutu { 
-        background-color: #f8f9fa !important; 
-        border-left: 6px solid #1E3D59 !important; 
-    }
-    
-    /* Enerji Kutusu */
-    .kutu-enerji { 
-        background-color: #fffcf5 !important; 
-        border-left: 6px solid #F39C12 !important; 
-    }
-    
-    /* Yazı Renklerini Zorla Koyu Yap */
-    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { 
-        color: #1E3D59 !important; 
-    }
-    
-    /* Özel Renkler */
+    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
+    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
+    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
-    
-    /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
-    
-    /* Input Alanı Başlıkları */
-    div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -53,6 +35,105 @@ def tr_fmt(deger):
         s = "{:,.2f}".format(deger)
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
+
+# --- TCMB VERİ MOTORU (CSV STREAM - FIREWALL BYPASS) ---
+@st.cache_data(ttl=3600)
+def get_tcmb_csv_bypass(donem_tipi):
+    # En kötü durum yedeği (Bağlantı tamamen koparsa)
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor..."}
+    
+    try:
+        # 1. URL İNŞASI (JSON DEĞİL CSV İSTİYORUZ)
+        # Kodlar: TP.FG.J0 (TÜFE), TP.TUFE1YI.K1 (Yİ-ÜFE), TP.HKFE01.I1 (H-ÜFE)
+        series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
+        
+        # Son 5 yılın verisini çek (Garantili Yöntem)
+        end_date = datetime.now().strftime("%d-%m-%Y")
+        start_date = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
+        
+        # CSV Endpoint (API Kütüphanesi yerine doğrudan link)
+        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=csv&key={MY_API_KEY}"
+        
+        # 2. MASKELEME (Kendimizi Tarayıcı Gibi Tanıtıyoruz)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/csv"
+        }
+        
+        # 3. İSTEK (SSL Kontrolü Kapalı)
+        response = requests.get(url, headers=headers, verify=False, timeout=20)
+        
+        if response.status_code == 200:
+            # Gelen veriyi Pandas ile oku
+            csv_data = io.StringIO(response.text)
+            df = pd.read_csv(csv_data)
+            
+            # Sütun isimleri bazen karmaşık gelir, temizleyelim
+            # TCMB CSV'sinde sütunlar: Tarih, TP_FG_J0, TP_TUFE1YI_K1...
+            
+            # Tarih dışındaki sütunları sayıya çevir
+            cols_to_convert = [c for c in df.columns if "TP" in c]
+            for col in cols_to_convert:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Boş satırları at (TÜFE ve ÜFE sütunlarında NaN olanlar)
+            main_cols = [c for c in df.columns if "TP_FG_J0" in c or "TP_TUFE1YI_K1" in c]
+            if main_cols:
+                df.dropna(subset=main_cols, inplace=True)
+            
+            if len(df) > 2:
+                # --- DÖNEM HESABI ---
+                son_row = df.iloc[-1] # En güncel veri
+                
+                lookback = 1
+                if donem_tipi == "3 Ay": lookback = 3
+                elif donem_tipi == "6 Ay": lookback = 6
+                elif donem_tipi == "1 Yıl": lookback = 12
+                elif donem_tipi == "Yılbaşından Bugüne (YTD)":
+                    lookback = datetime.now().month
+                    if len(df) < lookback: lookback = len(df) - 1
+                
+                idx = -(lookback + 1)
+                if abs(idx) > len(df): idx = 0
+                ilk_row = df.iloc[idx]
+                
+                # --- HESAPLAMA ---
+                # Sütun adları bazen değişebilir, "contains" ile bulalım
+                def get_val(row, code_part):
+                    try:
+                        col = [c for c in row.index if code_part in c][0]
+                        return float(row[col])
+                    except: return 0.0
+
+                t_son = get_val(son_row, "TP_FG_J0")
+                t_ilk = get_val(ilk_row, "TP_FG_J0")
+                
+                u_son = get_val(son_row, "TP_TUFE1YI_K1")
+                u_ilk = get_val(ilk_row, "TP_TUFE1YI_K1")
+                
+                h_son = get_val(son_row, "TP_HKFE01_I1")
+                h_ilk = get_val(ilk_row, "TP_HKFE01_I1")
+                
+                def calc(n, o):
+                    if o == 0: return 0.0
+                    return ((n - o) / o) * 100
+
+                result["TUFE"] = round(calc(t_son, t_ilk), 2)
+                result["UFE"] = round(calc(u_son, u_ilk), 2)
+                result["HUFE"] = round(calc(h_son, h_ilk), 2)
+                
+                result["Status"] = True
+                result["Msg"] = f"Dönem: {ilk_row['Tarih']} ➡️ {son_row['Tarih']}"
+                return result
+            else:
+                result["Msg"] = "Yetersiz Veri (Satır Sayısı Az)"
+        else:
+            result["Msg"] = f"TCMB Hata Kodu: {response.status_code}"
+
+    except Exception as e:
+        result["Msg"] = f"Bağlantı Hatası: {str(e)}"
+        
+    return result
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -65,31 +146,27 @@ with st.sidebar:
     
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
+    
+    # TCMB ÇEK
+    with st.spinner("TCMB Verisi İndiriliyor..."):
+        tcmb_data = get_tcmb_csv_bypass(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try:
-        sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except:
-        sozlesme_tutari = 0.0
+    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
+    except: sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ ÇEKME (SAĞLAM MOD)
+# 2. YAHOO VERİ
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
-    tickers = { 
-        "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", 
-        "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" 
-    }
+    tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
     data_dict = {}
     hata = False
     try:
-        # Hata vermesin diye thread safe indirme
         df = yf.download(list(tickers.values()), period=periyot, progress=False)['Close']
-        
-        if df.empty: 
-            hata = True
+        if df.empty: hata = True
         else:
             for key, symbol in tickers.items():
                 try:
@@ -103,24 +180,18 @@ def piyasa_verisi_al(periyot):
                     else: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
                 except: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
             
-            # Gram Altın
             if "ONS_ALTIN" in data_dict and "USDTRY" in data_dict:
                 g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
                 g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
                 g_deg = ((g_son - g_ilk) / g_ilk) * 100 if g_ilk > 0 else 0
                 data_dict["GRAM_ALTIN_TL"] = {"ilk": g_ilk, "son": g_son, "degisim": g_deg}
-    except: 
-        hata = True
-        
+    except: hata = True
     return data_dict, hata
 
 piyasa, hata = piyasa_verisi_al(selected_period)
-
-# Hata durumunda boş sözlük oluştur (Çökmemesi için)
-if hata or not piyasa:
-    piyasa = {}
-    for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL", "ABD_TAHVIL"]:
-        piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
+if hata:
+    for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL"]:
+        if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
@@ -175,20 +246,19 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & İŞÇİLİK (MANUEL GİRİŞE DÖNÜŞ)
+# 5. ENFLASYON & İŞÇİLİK
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
-with c_inf_status: st.info("✍️ Değerleri Manuel Giriniz")
-
-# TÜİK Linki
-st.link_button("🔗 TÜİK Güncel Veriler", "https://data.tuik.gov.tr/Search/Search?text=t%C3%BCfe")
+with c_inf_status:
+    if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
+    else: st.warning(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-tufe = ec1.number_input("TÜFE %", value=1.95, key=f"t_{donem_secimi}")
-ufe = ec2.number_input("ÜFE %", value=2.10, key=f"u_{donem_secimi}")
-h_ufe = ec3.number_input("H-ÜFE %", value=2.50, key=f"h_{donem_secimi}")
+tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
+ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
+h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
 iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{donem_secimi}")
 abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
 ozel_oran = (tufe + ufe) / 2
@@ -238,7 +308,7 @@ else:
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    # HATA VERMEYEN GÜVENLİ TABLO
+    # HATA ÇÖZÜMÜ (Safe Format)
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
@@ -248,5 +318,4 @@ else:
             data["Etki %"].append((deg*agr)/100)
             
     df = pd.DataFrame(data)
-    # Sadece sayısal kolonlara format uyguluyoruz (ValueError Fix)
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
