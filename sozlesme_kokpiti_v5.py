@@ -16,7 +16,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     MY_API_KEY = st.secrets["EVDS_KEY"]
 except:
-    # Buraya kendi API anahtarınızı yazın
     MY_API_KEY = "Uol1kIOQos" 
 
 # --- Sayfa Ayarları ---
@@ -58,7 +57,6 @@ def safe_float(val):
 @st.cache_data(ttl=3600)
 def guncel_akaryakit_cek():
     """Doviz.com İstanbul Avrupa Yakası Fiyatlarını Çeker"""
-    # URL GÜNCELLENDİ: Doğrudan İstanbul Avrupa sayfasına gidiyoruz
     url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     fiyatlar = {"benzin": 0.0, "motorin": 0.0}
@@ -67,31 +65,24 @@ def guncel_akaryakit_cek():
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
-            # İlk tabloyu bul
             table = soup.find('table')
             if table:
-                # Tablonun gövdesindeki (tbody) ilk satırı (tr) al
                 tbody = table.find('tbody')
                 if tbody:
                     rows = tbody.find_all('tr')
-                    # İlk satır genelde Petrol Ofisi veya Opet olur, onu baz alalım
                     if rows:
                         first_row = rows[0] 
                         cols = first_row.find_all('td')
-                        # Yapı: [0] İsim, [1] Benzin, [2] Motorin
                         if len(cols) >= 3:
-                            # "₺" işaretini ve virgülleri temizle
                             raw_benzin = cols[1].get_text().replace('₺', '').strip().replace(',', '.')
                             raw_motorin = cols[2].get_text().replace('₺', '').strip().replace(',', '.')
-                            
                             fiyatlar["benzin"] = float(raw_benzin)
                             fiyatlar["motorin"] = float(raw_motorin)
     except Exception as e:
-        print(f"Yakıt Hatası: {e}")
         pass
     return fiyatlar
 
-# --- 2. TCMB MOTORU (DÖVİZ ARTIK BURADAN) ---
+# --- 2. TCMB MOTORU (ENFLASYON + DÖVİZ) ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {
@@ -125,18 +116,6 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
         
-        # Enflasyon Satırlarını Bul
-        # (Kodun kısalığı için detaylı period filtreleme mantığını özetliyoruz)
-        # ... (Önceki mantıkla aynı) ...
-        # Ancak Döviz için GÜNLÜK veriye ihtiyacımız var, TCMB Enflasyonu AYLIK verir.
-        # Bu yüzden EVDS kütüphanesi dövizleri ay sonu/başı getirebilir. 
-        # Daha kesin çözüm: Enflasyonu ayrı, dövizi ayrı işlemek yerine 
-        # buradaki aylık veriyi kullanabiliriz veya Yahoo'dan sadece trend alabiliriz.
-        # AMA en doğrusu: TCMB serileri AYLIK ortalama veya son değer olarak gelir bu sorguda.
-        
-        # Basitleştirilmiş Çözüm: Enflasyon verilerini alalım
-        # Döviz verilerini ayrıca çekmek daha güvenli olurdu ama EVDS tek sorguda hallediyor.
-        
         # Kolon Eşleştirme (Bazen _ bazen . döner)
         cols = raw_df.columns
         def find_col(k): return next((c for c in cols if k in c.replace("_", ".")), None)
@@ -152,22 +131,33 @@ def get_tcmb_data(api_key, start_date, end_date):
         row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
         
         # Fallback
-        if row_start.empty: row_start = raw_df.iloc[[0]]
+        if row_start.empty: 
+             mask = raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)
+             if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
+             else: row_start = raw_df.iloc[[0]]
+
         if row_end.empty: row_end = raw_df.iloc[[-1]]
 
-        def get_v(r, c): return float(r[c].values[0]) if c and not r[c].isnull().all() else 0.0
+        def get_v(r, c): return float(r[c].values[0]) if c and pd.notna(r[c].values[0]) else 0.0
 
         # Enflasyon Hesapla
-        res["TUFE"] = ((get_v(row_end, c_tufe) - get_v(row_start, c_tufe)) / get_v(row_start, c_tufe) * 100) if get_v(row_start, c_tufe) else 0
-        res["UFE"] = ((get_v(row_end, c_ufe) - get_v(row_start, c_ufe)) / get_v(row_start, c_ufe) * 100) if get_v(row_start, c_ufe) else 0
-        res["HUFE"] = ((get_v(row_end, c_hufe) - get_v(row_start, c_hufe)) / get_v(row_start, c_hufe) * 100) if get_v(row_start, c_hufe) else 0
-        
+        tufe_s, tufe_e = get_v(row_start, c_tufe), get_v(row_end, c_tufe)
+        ufe_s, ufe_e = get_v(row_start, c_ufe), get_v(row_end, c_ufe)
+        hufe_s, hufe_e = get_v(row_start, c_hufe), get_v(row_end, c_hufe)
+
+        def calc(n, o): return ((n-o)/o)*100 if o!=0 else 0.0
+
+        res["TUFE"] = round(calc(tufe_e, tufe_s), 2)
+        res["UFE"] = round(calc(ufe_e, ufe_s), 2)
+        res["HUFE"] = round(calc(hufe_e, hufe_s), 2)
+
         # Döviz Değerlerini Kaydet (TCMB Resmi Kur)
+        # Not: EVDS'den gelen veri aylık/günlük karışıksa en yakın değeri alır
         res["USD_ILK"], res["USD_SON"] = get_v(row_start, c_usd), get_v(row_end, c_usd)
         res["EUR_ILK"], res["EUR_SON"] = get_v(row_start, c_eur), get_v(row_end, c_eur)
         
-        if res["USD_ILK"] > 0: res["USD_DEG"] = ((res["USD_SON"] - res["USD_ILK"]) / res["USD_ILK"]) * 100
-        if res["EUR_ILK"] > 0: res["EUR_DEG"] = ((res["EUR_SON"] - res["EUR_ILK"]) / res["EUR_ILK"]) * 100
+        if res["USD_ILK"] > 0: res["USD_DEG"] = calc(res["USD_SON"], res["USD_ILK"])
+        if res["EUR_ILK"] > 0: res["EUR_DEG"] = calc(res["EUR_SON"], res["EUR_ILK"])
 
         res["Status"] = True
         res["Msg"] = "TCMB Verileri Alındı"
@@ -179,8 +169,6 @@ def get_tcmb_data(api_key, start_date, end_date):
 # --- 3. PIYASA VERISI (SADECE BRENT VE ONS ALTIN) ---
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(d_start, d_end):
-    # SADECE ONS ve BRENT (Para birimlerini TCMB'den alacağız)
-    # Altın için 'XAUUSD=X' (Spot Altın) kullanıyoruz, 'GC=F' (Vadeli) yerine.
     tickers = { "ONS_ALTIN": "XAUUSD=X", "BRENT_PETROL": "BZ=F" }
     data_dict = {"ONS_ALTIN": {"ilk":0,"son":0}, "BRENT_PETROL": {"ilk":0,"son":0,"degisim":0}}
     
@@ -197,7 +185,6 @@ def piyasa_verisi_al(d_start, d_end):
                     if len(seri) > 0:
                         data_dict[key]["ilk"] = float(seri.iloc[0])
                         data_dict[key]["son"] = float(seri.iloc[-1])
-                        # Brent için değişim hesapla (Altın TL hesabına gidecek)
                         if key == "BRENT_PETROL" and data_dict[key]["ilk"] > 0:
                             data_dict[key]["degisim"] = ((data_dict[key]["son"] - data_dict[key]["ilk"]) / data_dict[key]["ilk"]) * 100
                 except: pass
