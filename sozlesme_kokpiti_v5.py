@@ -34,6 +34,8 @@ st.markdown("""
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     .badge-live { background-color: #27AE60; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; vertical-align: middle; }
+    /* Tarih Seçici Genişlik Ayarı */
+    div[data-testid="stDateInput"] { width: 100% !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -75,12 +77,9 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- 2. CANLI PİYASA VERİSİ (SON FİYATLAR - BIGPARA) ---
+# --- 2. CANLI PİYASA VERİSİ ---
 @st.cache_data(ttl=300)
 def canli_piyasa_cek():
-    """
-    Yahoo'nun gecikmeli veya hatalı güncel verisi yerine Bigpara'yı kullanır.
-    """
     base_url = "https://bigpara.hurriyet.com.tr"
     targets = {
         "USD": "/doviz/dolar/",
@@ -117,9 +116,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         
-        # Gelecek tarihli sorgu hatasını önlemek için bugünü geçme
-        if end_date > date.today():
-            end_q = date.today().strftime("%d-%m-%Y")
+        if end_date > date.today(): end_q = date.today().strftime("%d-%m-%Y")
 
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         
@@ -132,7 +129,6 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_end = pd.Period(end_date, freq='M')
         max_date = raw_df['Tarih_Dt'].max()
         
-        # Eğer seçilen bitiş tarihi veriden büyükse, eldeki en son veriye çek
         if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
 
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
@@ -170,7 +166,7 @@ def get_tcmb_data(api_key, start_date, end_date):
     except Exception as e: res["Msg"] = f"Hata: {str(e)}"
     return res
 
-# --- 4. YENİ: TCMB KAYITLI GRAM ALTIN (ESKİ TARİH) ---
+# --- 4. YENİ: TCMB KAYITLI GRAM ALTIN ---
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
@@ -179,7 +175,6 @@ def get_evds_gold_history(api_key, d_start):
         evds = evdsAPI(api_key)
         s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
         e_date_str = d_start.strftime("%d-%m-%Y")
-        
         series = ["TP.MK.KUL.YTL"]
         df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
         if df is not None and not df.empty:
@@ -192,115 +187,103 @@ def get_evds_gold_history(api_key, d_start):
     return price
 
 # ============================================================================
-# SOL MENÜ (REVİZE EDİLMİŞ)
+# SOL MENÜ
 # ============================================================================
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
-    st.header("📅 Tarih Aralığı")
+    st.info("ℹ️ Tarih seçimi, 13'' ekranlarda görünüm kolaylığı sağlamak için ana ekrana taşınmıştır.")
     
-    today = date.today()
-    default_start = today - relativedelta(years=1)
-    
-    # Yıl seçimi için geniş aralık
-    min_select = date(2000, 1, 1)
-    max_select = date(2030, 12, 31)
-    
-    start_date = st.date_input("Başlangıç Tarihi", value=default_start, min_value=min_select, max_value=max_select)
-    end_date = st.date_input("Bitiş Tarihi (Güncel)", value=today, min_value=min_select, max_value=max_select)
-    
-    if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
-    
-    with st.spinner("Veriler Toplanıyor..."):
-        tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
-        yakit_data = guncel_akaryakit_cek()
-        canli_veri = canli_piyasa_cek()
-        evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
-
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: sozlesme_tutari = 0.0
-    
-    d_key = f"{start_date}_{end_date}"
+
+# ============================================================================
+# ANA EKRAN - ÜST KISIM (TARİH SEÇİMİ)
+# ============================================================================
+# 13 inç ekranda Sidebar dar kaldığı için ana ekrana alıyoruz.
+st.markdown("#### 📅 Sözleşme Tarih Aralığı")
+
+c_date1, c_date2 = st.columns(2)
+
+today = date.today()
+default_start = today - relativedelta(years=1)
+min_select = date(2000, 1, 1)
+max_select = date(2030, 12, 31)
+
+with c_date1:
+    start_date = st.date_input(
+        "Başlangıç Tarihi", 
+        value=default_start, 
+        min_value=min_select, 
+        max_value=max_select,
+        format="DD.MM.YYYY" # Yılın net görünmesi için format
+    )
+
+with c_date2:
+    end_date = st.date_input(
+        "Bitiş Tarihi (Güncel)", 
+        value=today, 
+        min_value=min_select, 
+        max_value=max_select,
+        format="DD.MM.YYYY"
+    )
+
+if start_date >= end_date:
+    st.error("Hata: Başlangıç < Bitiş olmalı!")
+
+# Widget Key
+d_key = f"{start_date}_{end_date}"
+
+# VERİ ÇEKME İŞLEMLERİ
+with st.spinner("Piyasa Verileri Taranıyor..."):
+    tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
+    yakit_data = guncel_akaryakit_cek()
+    canli_veri = canli_piyasa_cek()
+    evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
 
 # ============================================================================
 # 5. PİYASA VERİSİ (GARANTİLİ - TEK TEK İNDİRME)
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
-    """
-    Her ticker'ı ayrı ayrı indirir. Karışıklığı %100 önler.
-    """
-    # Yahoo End Date bugünü geçemez, hata verir. Gelecek seçilse bile bugüne çekiyoruz.
     y_end = d_end
-    if y_end > date.today():
-        y_end = date.today()
+    if y_end > date.today(): y_end = date.today()
 
-    # Ticker Listesi: (Bizim Key, Yahoo Symbol)
-    symbol_map = [
-        ("USDTRY", "TRY=X"), 
-        ("EURTRY", "EURTRY=X"), 
-        ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), 
-        ("BRENT_PETROL", "BZ=F"), 
-        ("ABD_TAHVIL", "^TNX")
-    ]
+    symbol_map = [("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
+                  ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")]
     
     data_dict = {}
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            # TEK Ticker İndir (Karışıklık yok)
-            # progress=False konsol kirliliğini önler
             df = yf.download(symbol, start=d_start, end=y_end + timedelta(days=1), progress=False)
-            
-            # Yahoo yeni versiyonda bazen MultiIndex döner, bazen dönmez.
-            # Sadece 'Close' sütununu alıp Series'e çevirelim.
             if isinstance(df, pd.DataFrame):
-                if 'Close' in df.columns:
-                    seri = df['Close']
-                else:
-                    # Tek kolon dönerse direkt odur
-                    seri = df.iloc[:, 0]
-            else:
-                seri = df # Zaten series ise
+                seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
+            else: seri = df 
 
-            # Series temizliği
             seri = seri.dropna()
-            
             if len(seri) > 0:
-                ilk = float(seri.iloc[0]) # Başlangıç tarihindeki değer
-                son = float(seri.iloc[-1]) # Yahoo'daki en son değer (Yedek)
-
-        except Exception as e:
-            # Hata olursa 0 geç
-            pass
+                ilk = float(seri.iloc[0])
+                son = float(seri.iloc[-1])
+        except: pass
         
-        # --- CANLI VERİ OVERRIDE (ÖNCELİK) ---
-        # Eğer canlı veri (Bigpara) varsa, Yahoo'nun SON verisini ez.
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-        
-        # Gram Altın henüz hesaplanmadı, aşağıda.
         
         degisim = 0.0
         if ilk > 0: degisim = ((son - ilk) / ilk) * 100
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # --- GRAM ALTIN ÖZEL HESAP ---
-    # 1. Başlangıç: EVDS
+    # GRAM ALTIN HESABI
     gold_ilk = evds_gold_start
     if gold_ilk == 0:
-        # Fallback: Ons * USD
         ons_ilk = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
         usd_ilk = data_dict.get("USDTRY", {}).get("ilk", 0)
-        if ons_ilk > 0 and usd_ilk > 0:
-            gold_ilk = (ons_ilk / 31.1035) * usd_ilk
+        if ons_ilk > 0 and usd_ilk > 0: gold_ilk = (ons_ilk / 31.1035) * usd_ilk
 
-    # 2. Bitiş: Canlı
     gold_son = live_data.get("ALTIN", 0)
     if gold_son == 0:
-        # Fallback
         ons_son = data_dict.get("ONS_ALTIN", {}).get("son", 0)
         usd_son = data_dict.get("USDTRY", {}).get("son", 0)
         gold_son = (ons_son / 31.1035) * usd_son
@@ -309,17 +292,15 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     if gold_ilk > 0: g_deg = ((gold_son - gold_ilk) / gold_ilk) * 100
     
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
-    
     return data_dict
 
-# Fonksiyonu çalıştır
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
 # ============================================================================
 st.title("📱 Finansal Sözleşme Kokpiti")
-st.caption(f"Aralık: {start_date.strftime('%d.%m.%Y')} ➡️ {end_date.strftime('%d.%m.%Y')}")
+st.markdown("---")
 
 def kutu(col, baslik, key, ikon):
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
@@ -332,17 +313,12 @@ def kutu(col, baslik, key, ikon):
             renk = "pozitif" if deg >= 0 else "negatif"
             st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
             
-            is_live = False
-            if key == "GRAM_ALTIN_TL" and canli_veri.get("ALTIN", 0) > 0: is_live = True
-            if key == "USDTRY" and canli_veri.get("USD", 0) > 0: is_live = True
-            if key == "EURTRY" and canli_veri.get("EUR", 0) > 0: is_live = True
+            ek_bilgi = ""
+            if key == "GRAM_ALTIN_TL" and canli_veri.get("ALTIN", 0) > 0: ek_bilgi = " (Canlı)"
+            elif (key == "USDTRY" or key == "EURTRY") and canli_veri.get("USD", 0) > 0: ek_bilgi = " (Canlı)"
             
-            ek_bilgi = " (Canlı Piyasa)" if is_live else ""
-            if key == "GRAM_ALTIN_TL" and evds_gold_ilk > 0: ek_bilgi += " | TCMB Ref."
-
             st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
             if ek_bilgi: st.markdown(f"<div style='font-size:10px; color:#27AE60; text-align:right;'>{ek_bilgi}</div>", unsafe_allow_html=True)
-
         st.markdown("</div>", unsafe_allow_html=True)
     return deg
 
@@ -352,15 +328,9 @@ d_eur = kutu(k2, "EUR/TL", "EURTRY", "💶")
 d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
 d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-# ENERJİ
-st.markdown("---")
-col_link, _ = st.columns([1,3])
-col_link.link_button("⛽ Petrol Ofisi Arşiv", "https://www.petrolofisi.com.tr/arsiv-fiyatlari")
-
 st.markdown("### 🛢️ Enerji")
 e1, e2, e3, e4 = st.columns(4)
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
-ref_tahmin = d_brent + d_usd
 
 oto_benzin = yakit_data.get("benzin", 0.0)
 oto_motorin = yakit_data.get("motorin", 0.0)
@@ -398,19 +368,29 @@ with c_link: st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesapla
 if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
 else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{d_key}")
-ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{d_key}")
+# --- YENİ: TÜFE+ÜFE / 2 HESAPLAMASI ---
+val_tufe = safe_float(tcmb["TUFE"])
+val_ufe = safe_float(tcmb["UFE"])
+val_mix = (val_tufe + val_ufe) / 2
+
+ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
+
+tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
+ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
+
+# Otomatik hesaplanan ortalama alanı
+ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}", help="Otomatik Hesaplanan (TÜFE+ÜFE)/2")
+
 h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
 iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{d_key}")
 abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
-ozel_oran = (tufe + ufe) / 2
 
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
 
 w1, w2, w3, w4 = st.columns(4)
-w_ozel = w1.number_input("Karma (Mix) %", value=0)
+# Eski "Karma" yerine şimdi net isimle Ortalama koyuyoruz
+w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=0)
 w_tufe = w2.number_input("Saf TÜFE %", value=30)
 w_ufe = w3.number_input("Saf ÜFE %", value=0)
 w_hufe = w4.number_input("H-ÜFE %", value=10)
@@ -427,13 +407,13 @@ w_dizel = w10.number_input("Motorin %", value=0)
 w_brent = w11.number_input("Brent %", value=0)
 w_abd = w12.number_input("ABD Enf. %", value=0)
 
-toplam = w_ozel+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
+toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
 
 if toplam != 100:
     st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı)")
 else:
     etkiler = [
-        ("Karma", safe_float(ozel_oran), safe_float(w_ozel)), 
+        ("TÜFE+ÜFE Ort.", safe_float(ort_mix_giris), safe_float(w_mix_oran)), 
         ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
         ("ÜFE", safe_float(ufe), safe_float(w_ufe)), 
         ("H-ÜFE", safe_float(h_ufe), safe_float(w_hufe)),
