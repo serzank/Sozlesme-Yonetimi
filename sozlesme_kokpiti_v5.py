@@ -75,41 +75,40 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- YENİ: WEB SCRAPING: CANLI GRAM ALTIN ---
-@st.cache_data(ttl=600)
-def canli_gram_altin_cek():
-    """Bigpara üzerinden Gram Altın Satış Fiyatını çeker"""
-    url = "https://bigpara.hurriyet.com.tr/altin/gram-altin-fiyati/"
+# --- YENİ: GENİŞLETİLMİŞ CANLI PİYASA (USD, EUR, ALTIN) ---
+@st.cache_data(ttl=300)
+def canli_piyasa_cek():
+    """
+    Bigpara üzerinden USD, EUR ve Gram Altın Satış Fiyatlarını çeker.
+    Bu yöntem Yahoo'daki 'TRY=X' ile 'EURTRY=X' karışıklığını önler.
+    """
+    base_url = "https://bigpara.hurriyet.com.tr"
+    targets = {
+        "USD": "/doviz/dolar/",
+        "EUR": "/doviz/euro/",
+        "ALTIN": "/altin/gram-altin-fiyati/"
+    }
     headers = {'User-Agent': 'Mozilla/5.0'}
-    fiyat = 0.0
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, "html.parser")
-            # Bigpara'da ilgili class yapısı (Genelde 'kurBox' içindeki value)
-            # Sayfa yapısına göre direkt text arayalım
-            # Genelde üstteki büyük gösterge:
-            box = soup.find("span", {"class": "value up"}) 
-            if not box: box = soup.find("span", {"class": "value down"})
-            if not box: box = soup.find("span", {"class": "value"}) # Sabitse
-            
-            if box:
-                raw_price = box.get_text().strip().replace(".", "").replace(",", ".")
-                fiyat = float(raw_price)
-    except Exception as e:
-        # Yedek kaynak: Doviz.com
+    sonuclar = {"USD": 0.0, "EUR": 0.0, "ALTIN": 0.0}
+    
+    for key, slug in targets.items():
         try:
-            url2 = "https://www.doviz.com/altin/gram-altin"
-            r2 = requests.get(url2, headers=headers, timeout=10)
-            s2 = BeautifulSoup(r2.content, "html.parser")
-            # data-socket-key="gram-altin" olan div
-            div = s2.find("div", {"data-socket-key": "gram-altin"})
-            if div:
-                raw = div.get_text().strip().replace(".", "").replace(",", ".")
-                fiyat = float(raw)
-        except: pass
-        
-    return fiyat
+            url = base_url + slug
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, "html.parser")
+                # Bigpara detay sayfasındaki fiyat kutusu
+                box = soup.find("span", {"class": "value up"}) 
+                if not box: box = soup.find("span", {"class": "value down"})
+                if not box: box = soup.find("span", {"class": "value"})
+                
+                if box:
+                    raw = box.get_text().strip().replace(".", "").replace(",", ".")
+                    sonuclar[key] = float(raw)
+        except:
+            pass
+            
+    return sonuclar
 
 # --- 2. TCMB MOTORU ---
 @st.cache_data(ttl=3600)
@@ -186,7 +185,8 @@ with st.sidebar:
     with st.spinner("Veriler Toplanıyor..."):
         tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
         yakit_data = guncel_akaryakit_cek()
-        canli_gram = canli_gram_altin_cek() # YENİ FONKSİYON
+        # HEPSİNİ CANLI ÇEK
+        canli_veri = canli_piyasa_cek()
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -196,56 +196,106 @@ with st.sidebar:
     d_key = f"{start_date}_{end_date}"
 
 # ============================================================================
-# 2. PİYASA VERİSİ (HİBRİT: YAHOO + SCRAPING)
+# 2. PİYASA VERİSİ (HİBRİT DÜZELTİLMİŞ)
 # ============================================================================
 @st.cache_data(ttl=600)
-def piyasa_verisi_al(d_start, d_end, live_gold_val):
+def piyasa_verisi_al(d_start, d_end, live_data):
+    # 'TRY=X' Dolar, 'EURTRY=X' Euro. İsim çakışmasını önleyeceğiz.
     tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
     data_dict = {}
     for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
     try:
-        df = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        # Ticker listesini indir
+        raw_data = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
         
-        if not df.empty:
-            for key, symbol in tickers.items():
-                try:
-                    c_name = [c for c in df.columns if symbol in str(c)]
-                    if not c_name: continue
-                    seri = df[c_name[0]]
-                    if len(seri) > 0:
-                        ilk = float(seri.iloc[0])
-                        son = float(seri.iloc[-1])
-                        if ilk > 0:
-                            degisim = ((son - ilk) / ilk) * 100
-                            data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
-                except: pass
+        # --- SORUN ÇÖZÜCÜ: VERİYİ DOĞRU OKUMA ---
+        # Eğer tek ticker gelirse raw_data Series olur, çoklu gelirse DataFrame
+        # DataFrame ise sütun isimlerine tam eşleşme ile bakacağız.
+        
+        for key, symbol in tickers.items():
+            ilk, son = 0.0, 0.0
             
-            # --- GRAM ALTIN MANTIĞI ---
-            # 1. Yahoo'dan gelen eski usul hesaplama (Başlangıç verisi için mecburen bunu kullanacağız)
-            y_son = 0.0
-            y_ilk = 0.0
-            
-            if data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
-                y_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
-                y_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
-            
-            # 2. Eğer Canlı Scrape Başarılıysa SON veriyi ez
-            final_son = live_gold_val if live_gold_val > 0 else y_son
-            
-            # Değişimi tekrar hesapla
-            g_deg = 0.0
-            if y_ilk > 0:
-                g_deg = ((final_son - y_ilk) / y_ilk) * 100
+            # 1. Yahoo'dan Tarihsel Veriyi Al
+            try:
+                # Kolon bulma mantığı (Substring hatasını önle)
+                if isinstance(raw_data, pd.DataFrame):
+                    # Sütunlarda tam eşleşme ara veya MultiIndex kontrol et
+                    col_found = None
+                    if symbol in raw_data.columns:
+                        col_found = raw_data[symbol]
+                    else:
+                        # Bazen kolonlar karışık gelebilir, tekrar dene
+                        for c in raw_data.columns:
+                            # 'TRY=X' in 'EURTRY=X' -> True olur, bunu engelle
+                            # Sadece stringin sonu symbol ile bitiyorsa veya eşitse
+                            if str(c) == symbol:
+                                col_found = raw_data[c]
+                                break
+                    
+                    if col_found is not None:
+                        col_found = col_found.fillna(method='ffill').fillna(method='bfill')
+                        if len(col_found) > 0:
+                            ilk = float(col_found.iloc[0])
+                            son = float(col_found.iloc[-1]) # Fallback
                 
-            data_dict["GRAM_ALTIN_TL"] = {"ilk": y_ilk, "son": final_son, "degisim": g_deg}
+                elif isinstance(raw_data, pd.Series):
+                    # Tek bir veri geldiyse (Nadir ama mümkün)
+                    # Sadece isim tutuyorsa al
+                    if raw_data.name == symbol:
+                        ilk = float(raw_data.iloc[0])
+                        son = float(raw_data.iloc[-1])
+            except: pass
             
-    except: pass
+            # 2. CANLI VERİ İLE EZ (OVERRIDE)
+            # Eğer canlı veri geldiyse SON değeri ondan al, Yahoo'dan sadece İLK değeri kullan.
+            if key == "USDTRY" and live_data.get("USD", 0) > 0:
+                son = live_data["USD"]
+            elif key == "EURTRY" and live_data.get("EUR", 0) > 0:
+                son = live_data["EUR"]
+            elif key == "GRAM_ALTIN_TL":
+                 pass # Aşağıda özel hesaplanacak
+                 
+            # 3. Değişim Hesapla
+            degisim = 0.0
+            if ilk > 0:
+                degisim = ((son - ilk) / ilk) * 100
+                
+            data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
+
+        # --- GRAM ALTIN ÖZEL HESAP ---
+        # Başlangıç (Eski) değerini Yahoo Ons * Yahoo Dolar ile buluyoruz
+        # Bitiş (Yeni) değerini ise direkt CANLI veriden alıyoruz.
+        
+        y_ons_ilk = data_dict["ONS_ALTIN"]["ilk"]
+        y_usd_ilk = data_dict["USDTRY"]["ilk"]
+        
+        gold_ilk = 0.0
+        if y_ons_ilk > 0 and y_usd_ilk > 0:
+            gold_ilk = (y_ons_ilk / 31.1035) * y_usd_ilk
+            
+        gold_son = 0.0
+        # Canlı veri varsa öncelik onda
+        if live_data.get("ALTIN", 0) > 0:
+            gold_son = live_data["ALTIN"]
+        else:
+            # Yoksa formülden git
+            gold_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
+            
+        gold_deg = 0.0
+        if gold_ilk > 0:
+            gold_deg = ((gold_son - gold_ilk) / gold_ilk) * 100
+            
+        data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": gold_deg}
+
+    except Exception as e:
+        print(e)
+        pass
+        
     return data_dict
 
-# Fonksiyona canlı değeri parametre olarak atıyoruz
-piyasa = piyasa_verisi_al(start_date, end_date, canli_gram)
+# Fonksiyona canlı paketi gönderiyoruz
+piyasa = piyasa_verisi_al(start_date, end_date, canli_veri)
 if "GRAM_ALTIN_TL" not in piyasa: 
     piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
@@ -265,9 +315,14 @@ def kutu(col, baslik, key, ikon):
         else:
             renk = "pozitif" if deg >= 0 else "negatif"
             st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
-            # Canlı veri uyarısı (Altın için)
-            ek_bilgi = ""
-            if key == "GRAM_ALTIN_TL" and canli_gram > 0: ek_bilgi = " (Canlı Piyasa)"
+            
+            # Canlı veri uyarısı
+            is_live = False
+            if key == "GRAM_ALTIN_TL" and canli_veri.get("ALTIN", 0) > 0: is_live = True
+            if key == "USDTRY" and canli_veri.get("USD", 0) > 0: is_live = True
+            if key == "EURTRY" and canli_veri.get("EUR", 0) > 0: is_live = True
+            
+            ek_bilgi = " (Canlı Piyasa)" if is_live else ""
             
             st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
             if ek_bilgi: st.markdown(f"<div style='font-size:10px; color:#27AE60; text-align:right;'>{ek_bilgi}</div>", unsafe_allow_html=True)
