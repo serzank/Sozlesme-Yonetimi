@@ -4,5 +4,7 @@ pandas
 yfinance
 evds
 XlsxWriter
+beautifulsoup4
+requests
 
 
