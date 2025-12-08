@@ -5,10 +5,10 @@ import requests
 import urllib3
 from datetime import datetime
 
-# SSL Hatalarını Kapat (Firewall için)
+# SSL Hatalarını ve Uyarılarını Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- API ANAHTARI ---
+# --- SİZİN API ANAHTARINIZ ---
 MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
@@ -25,6 +25,7 @@ st.markdown("""
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -35,71 +36,48 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (HİBRİT GÜVENLİK) ---
+# --- TCMB VERİ MOTORU (ÇÖKME KORUMALI) ---
 @st.cache_data(ttl=3600)
-def get_inflation_hybrid(donem_tipi):
-    """
-    Önce API'yi dener. Hata alırsa (406 vs) gömülü yedeği kullanır.
-    Böylece sistem ASLA çökmez.
-    """
-    # 1. ACİL DURUM VERİ SETİ (API Çalışmazsa Burası Devreye Girer)
-    # Son 1 yılın yaklaşık endeks değerleridir (Güncellenebilir)
-    # Tarih formatı: YYYY-AA
-    backup_data = [
-        {"Tarih": "2024-01", "TP_FG_J0": 1980.50, "TP_TUFE1YI_K1": 2500.00, "TP_HKFE01_I1": 1500.00},
-        {"Tarih": "2024-06", "TP_FG_J0": 2300.00, "TP_TUFE1YI_K1": 2900.00, "TP_HKFE01_I1": 1900.00},
-        {"Tarih": "2024-12", "TP_FG_J0": 2900.00, "TP_TUFE1YI_K1": 3400.00, "TP_HKFE01_I1": 2400.00},
-        {"Tarih": "2025-01", "TP_FG_J0": 3000.00, "TP_TUFE1YI_K1": 3500.00, "TP_HKFE01_I1": 2500.00},
-        {"Tarih": "2025-02", "TP_FG_J0": 3100.00, "TP_TUFE1YI_K1": 3600.00, "TP_HKFE01_I1": 2600.00}
-    ]
+def get_tcmb_safe(donem_tipi):
+    # Varsayılan "Güvenli" Değerler
+    safe_result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     
-    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    df = pd.DataFrame()
-
-    # --- PLAN A: CANLI API BAĞLANTISI ---
     try:
-        # Son 24 ayı iste
+        # Tarih Aralığı (Geniş tutuyoruz ki veri kesin olsun)
+        # Bitiş: Bugün, Başlangıç: 5 Yıl önce
         end_date = datetime.now().strftime("%d-%m-%Y")
-        start_date = (datetime.now() - pd.DateOffset(months=24)).strftime("%d-%m-%Y")
+        start_date = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
         
-        # URL (JSON Formatı - CSV 406 verdiği için JSON'a geçtik)
+        # URL (JSON Formatı)
         series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
         url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json&key={MY_API_KEY}"
         
-        # Header (Tarayıcı Maskesi)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "application/json",
-            "key": MY_API_KEY # Bazı endpointler key'i header'da ister
-        }
-        
-        r = requests.get(url, headers=headers, verify=False, timeout=5)
+        # Request
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, verify=False, timeout=10)
         
         if r.status_code == 200:
-            data_json = r.json()
-            if "items" in data_json:
-                df = pd.DataFrame(data_json["items"])
-                # Temizlik
-                for col in ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                result["Msg"] = "✅ Canlı (API)"
-    except:
-        pass # Hata olursa sessizce PLAN B'ye geç
-
-    # --- PLAN B: YEDEK VERİ KULLANIMI ---
-    if df.empty:
-        df = pd.DataFrame(backup_data)
-        result["Msg"] = "⚠️ Yedek Veri (API Hatası)"
-
-    # --- HESAPLAMA MOTORU ---
-    if not df.empty:
-        try:
-            # Boşları at
-            df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
-            son_veri = df.iloc[-1]
+            js = r.json()
+            # items anahtarı var mı?
+            if "items" not in js: return safe_result
             
-            # Dönem Belirleme
+            df = pd.DataFrame(js["items"])
+            
+            # Sütunları Temizle ve Sayıya Çevir
+            cols = ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']
+            for col in cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Boşları temizle
+            df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
+            
+            # KORUMA: Eğer temizlik sonrası satır kalmadıysa çık
+            if len(df) < 2: return safe_result
+            
+            # --- DÖNEM SEÇİMİ ---
+            son_row = df.iloc[-1]
+            
             lookback = 1
             if donem_tipi == "3 Ay": lookback = 3
             elif donem_tipi == "6 Ay": lookback = 6
@@ -108,34 +86,30 @@ def get_inflation_hybrid(donem_tipi):
                 lookback = datetime.now().month
                 if len(df) < lookback: lookback = len(df) - 1
             
+            # KORUMA: İndeks taşmasını engelle
             idx = -(lookback + 1)
             if abs(idx) > len(df): idx = 0
             
-            ilk_veri = df.iloc[idx]
+            ilk_row = df.iloc[idx]
             
+            # Hesapla
             def calc(n, o):
-                try: 
-                    return ((float(n) - float(o)) / float(o)) * 100
-                except: return 0.0
+                if o == 0: return 0.0
+                return ((n - o) / o) * 100
 
-            # Kod Kontrolü (API'den gelen isim bazen değişebilir)
-            def get_val(row, kod):
-                if kod in row: return row[kod]
-                # Yedek isim kontrolü (Nokta vs Alt Tire)
-                alt_kod = kod.replace('.', '_')
-                if alt_kod in row: return row[alt_kod]
-                return 0
-
-            result["TUFE"] = round(calc(get_val(son_veri, 'TP_FG_J0'), get_val(ilk_veri, 'TP_FG_J0')), 2)
-            result["UFE"] = round(calc(get_val(son_veri, 'TP_TUFE1YI_K1'), get_val(ilk_veri, 'TP_TUFE1YI_K1')), 2)
-            result["HUFE"] = round(calc(get_val(son_veri, 'TP_HKFE01_I1'), get_val(ilk_veri, 'TP_HKFE01_I1')), 2)
+            safe_result["TUFE"] = round(calc(son_row.get('TP_FG_J0', 0), ilk_row.get('TP_FG_J0', 0)), 2)
+            safe_result["UFE"] = round(calc(son_row.get('TP_TUFE1YI_K1', 0), ilk_row.get('TP_TUFE1YI_K1', 0)), 2)
+            safe_result["HUFE"] = round(calc(son_row.get('TP_HKFE01_I1', 0), ilk_row.get('TP_HKFE01_I1', 0)), 2)
             
-            result["Status"] = True
+            safe_result["Status"] = True
+            safe_result["Msg"] = f"Dönem: {ilk_row.get('Tarih', '-')} ➡️ {son_row.get('Tarih', '-')}"
             
-        except Exception as e:
-            result["Msg"] = f"Hesaplama Hatası: {str(e)}"
-
-    return result
+    except Exception as e:
+        # Hata olursa logla ama çökme, varsayılanı dön
+        print(f"Hata: {e}")
+        return safe_result
+        
+    return safe_result
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -149,8 +123,9 @@ with st.sidebar:
     y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
     selected_period = y_map[donem_secimi]
     
-    # ENFLASYON HESAPLA (Hibrit Mod)
-    tcmb_data = get_inflation_hybrid(donem_secimi)
+    # TCMB ÇEK
+    with st.spinner("TCMB Verisi Güncelleniyor..."):
+        tcmb_data = get_tcmb_safe(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -158,7 +133,7 @@ with st.sidebar:
     except: sozlesme_tutari = 0.0
 
 # ============================================================================
-# 2. YAHOO VERİ ÇEKME
+# 2. YAHOO VERİ
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(periyot):
@@ -253,11 +228,10 @@ st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
-    if "Canlı" in tcmb_data["Msg"]: st.success(f"{tcmb_data['Msg']}")
-    else: st.warning(f"{tcmb_data['Msg']}")
+    if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
+    else: st.warning(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-# Widget Key'leri eklendi, dönem değişince güncellensin
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
