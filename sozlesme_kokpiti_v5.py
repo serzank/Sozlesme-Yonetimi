@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import requests
-from datetime import datetime
+import io
 import urllib3
+from datetime import datetime
 
-# SSL ve Uyarıları Sustur
+# SSL Hatalarını ve Uyarılarını Sustur (Firewall Bypass İçin Şart)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- SİZİN API ANAHTARINIZ ---
@@ -22,10 +23,12 @@ st.markdown("""
     .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
     .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
     .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
-    .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
-    .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-    .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    .big-metric { font-size: 24px !important; font-weight: bold; }
+    .pozitif { color: #27AE60 !important; font-weight: bold; }
+    .negatif { color: #C0392B !important; font-weight: bold; }
+    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
+    .stLinkButton a { text-decoration: none !important; font-weight: bold !important; color: #1E3D59 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -36,75 +39,107 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (ANTI-403 MODU) ---
+# --- TCMB CSV TÜNEL MOTORU (BYPASS) ---
 @st.cache_data(ttl=3600)
-def get_inflation_smart(donem_tipi):
-    # 1. PLAN B: YEDEK VERİLER (Ocak 2025 Resmi Verileri)
-    # Eğer API hata verirse sistem bunlarla açılır, boş kalmaz.
-    backup_tufe = 1.95
-    backup_ufe = 2.10
-    backup_hufe = 2.50
-    msg = "Sunucu Erişim Engeli (Yedek Veri)"
-    status = False
-
+def get_tcmb_csv_tunnel(donem_tipi):
+    # Başlangıç
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Bağlanıyor..."}
+    
     try:
-        # API Bağlantı Denemesi (Maskeleme ile)
+        # 1. URL İNŞASI (CSV Formatı)
+        # 2020'den bugüne tüm veriyi iste
+        start_date = "01-01-2020"
         end_date = datetime.now().strftime("%d-%m-%Y")
-        start_date = (datetime.now() - pd.DateOffset(months=36)).strftime("%d-%m-%Y")
         
+        # Kodlar: TP.FG.J0 (TÜFE), TP.TUFE1YI.K1 (Yİ-ÜFE), TP.HKFE01.I1 (H-ÜFE)
+        # Not: H-ÜFE kodu bazen TP.HKFE01.I1 olarak geçer
         series = "TP.FG.J0-TP.TUFE1YI.K1-TP.HKFE01.I1"
-        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json&key={MY_API_KEY}"
         
+        # URL (CSV tipinde)
+        url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=csv&key={MY_API_KEY}"
+        
+        # 2. İSTEK (Tarayıcı Maskesi)
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://evds2.tcmb.gov.tr/"
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/csv'
         }
         
-        r = requests.get(url, headers=headers, verify=False, timeout=10)
+        # Verify=False ile SSL kontrolünü atla
+        r = requests.get(url, headers=headers, verify=False, timeout=30)
         
         if r.status_code == 200:
-            data = r.json()
-            if "items" in data:
-                df = pd.DataFrame(data["items"])
+            # Gelen metni CSV olarak oku
+            csv_data = io.StringIO(r.text)
+            df = pd.read_csv(csv_data)
+            
+            # Sütun İsimlerini Standartlaştır (Nokta -> Alt Tire)
+            df.columns = [c.replace('.', '_') for c in df.columns]
+            
+            # Tarih dışındaki sütunları sayıya çevir
+            cols_to_numeric = [c for c in df.columns if "TP" in c]
+            for col in cols_to_numeric:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Ana veri (TÜFE/ÜFE) boş olan satırları sil
+            main_cols = [c for c in df.columns if "TP_FG_J0" in c or "TP_TUFE1YI_K1" in c]
+            if main_cols:
+                df.dropna(subset=main_cols, inplace=True)
+            
+            if len(df) < 2:
+                result["Msg"] = "Veri Seti Boş Geldi"
+                return result
                 
-                # Temizlik
-                for col in ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_HKFE01_I1']:
-                    if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
-                
-                df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
-                
-                if len(df) > 2:
-                    son = df.iloc[-1]
-                    
-                    # Dönem
-                    lookback = 1
-                    if donem_tipi == "3 Ay": lookback = 3
-                    elif donem_tipi == "6 Ay": lookback = 6
-                    elif donem_tipi == "1 Yıl": lookback = 12
-                    elif "YTD" in donem_tipi:
-                        lookback = datetime.now().month
-                        if len(df) < lookback: lookback = len(df) - 1
-                    
-                    idx = -(lookback + 1)
-                    if abs(idx) > len(df): idx = 0
-                    ilk = df.iloc[idx]
-                    
-                    def calc(n, o):
-                        try: return ((float(n) - float(o)) / float(o)) * 100
-                        except: return 0.0
+            # --- DÖNEM HESABI ---
+            son_veri = df.iloc[-1]
+            
+            lookback = 1
+            if donem_tipi == "3 Ay": lookback = 3
+            elif donem_tipi == "6 Ay": lookback = 6
+            elif donem_tipi == "1 Yıl": lookback = 12
+            elif "YTD" in donem_tipi:
+                # Yılbaşından bugüne (Tarih sütunu YYYY-AA formatındadır)
+                try:
+                    tarih_str = str(son_veri['Tarih'])
+                    ay = int(tarih_str.split('-')[1])
+                    lookback = ay if len(df) > ay else len(df)-1
+                except: lookback = 12
+            
+            idx = -(lookback + 1)
+            if abs(idx) > len(df): idx = 0
+            ilk_veri = df.iloc[idx]
+            
+            # Sütunları Bul (Esnek Arama)
+            def find_val(row, pattern):
+                col = next((c for c in row.index if pattern in c), None)
+                return float(row[col]) if col else 0.0
 
-                    backup_tufe = round(calc(son.get('TP_FG_J0', 0), ilk.get('TP_FG_J0', 0)), 2)
-                    backup_ufe = round(calc(son.get('TP_TUFE1YI_K1', 0), ilk.get('TP_TUFE1YI_K1', 0)), 2)
-                    
-                    if 'TP_HKFE01_I1' in df.columns:
-                        backup_hufe = round(calc(son.get('TP_HKFE01_I1', 0), ilk.get('TP_HKFE01_I1', 0)), 2)
-                    
-                    msg = f"Canlı: {ilk['Tarih']} -> {son['Tarih']}"
-                    status = True
-    except:
-        pass # Hata olursa varsayılanları kullan
+            t_son = find_val(son_veri, "TP_FG_J0")
+            t_ilk = find_val(ilk_veri, "TP_FG_J0")
+            
+            u_son = find_val(son_veri, "TP_TUFE1YI_K1")
+            u_ilk = find_val(ilk_veri, "TP_TUFE1YI_K1")
+            
+            h_son = find_val(son_veri, "TP_HKFE01_I1")
+            h_ilk = find_val(ilk_veri, "TP_HKFE01_I1")
+            
+            def calc(n, o):
+                if o == 0: return 0.0
+                return ((n - o) / o) * 100
 
-    return {"TUFE": backup_tufe, "UFE": backup_ufe, "HUFE": backup_hufe, "Msg": msg, "Status": status}
+            result["TUFE"] = round(calc(t_son, t_ilk), 2)
+            result["UFE"] = round(calc(u_son, u_ilk), 2)
+            result["HUFE"] = round(calc(h_son, h_ilk), 2)
+            
+            result["Status"] = True
+            result["Msg"] = f"Canlı Veri: {ilk_veri.get('Tarih','?')} ➡️ {son_veri.get('Tarih','?')}"
+            
+        else:
+            result["Msg"] = f"Sunucu Hatası: {r.status_code}"
+            
+    except Exception as e:
+        result["Msg"] = f"Hata: {str(e)}"
+        
+    return result
 
 # ============================================================================
 # 1. SOL MENÜ
@@ -119,8 +154,8 @@ with st.sidebar:
     selected_period = y_map[donem_secimi]
     
     # TCMB ÇEK
-    with st.spinner("Veriler Güncelleniyor..."):
-        tcmb = get_inflation_smart(donem_secimi)
+    with st.spinner("TCMB Verisi İndiriliyor..."):
+        tcmb_data = get_tcmb_csv_tunnel(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -223,14 +258,13 @@ st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
 with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
-    if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
-    else: st.warning(f"⚠️ {tcmb['Msg']}")
+    if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
+    else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-# Varsayılanlar API'den veya Yedekten gelir
-tufe = ec1.number_input("TÜFE %", value=tcmb["TUFE"], key=f"t_{donem_secimi}")
-ufe = ec2.number_input("ÜFE %", value=tcmb["UFE"], key=f"u_{donem_secimi}")
-h_ufe = ec3.number_input("H-ÜFE %", value=tcmb["HUFE"], key=f"h_{donem_secimi}")
+tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
+ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
+h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
 iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{donem_secimi}")
 abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
 ozel_oran = (tufe + ufe) / 2
