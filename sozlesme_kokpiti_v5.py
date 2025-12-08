@@ -507,166 +507,138 @@ def piyasa_verisi_al(d_start, d_end):
 
 
 
-piyasa = piyasa_verisi_al(start_date, end_date)
+2. PİYASA VERİSİ (HİBRİT: YAHOO + SCRAPING)
+# ============================================================================
+@st.cache_data(ttl=600)
+def piyasa_verisi_al(d_start, d_end, live_gold_val):
+    tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
+    data_dict = {}
+    for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
+    try:
+        df = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
+        df = df.fillna(method='ffill').fillna(method='bfill')
+        
+        if not df.empty:
+            for key, symbol in tickers.items():
+                try:
+                    c_name = [c for c in df.columns if symbol in str(c)]
+                    if not c_name: continue
+                    seri = df[c_name[0]]
+                    if len(seri) > 0:
+                        ilk = float(seri.iloc[0])
+                        son = float(seri.iloc[-1])
+                        if ilk > 0:
+                            degisim = ((son - ilk) / ilk) * 100
+                            data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
+                except: pass
+            
+            # --- GRAM ALTIN MANTIĞI ---
+            # 1. Yahoo'dan gelen eski usul hesaplama (Başlangıç verisi için mecburen bunu kullanacağız)
+            y_son = 0.0
+            y_ilk = 0.0
+            
+            if data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
+                y_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
+                y_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
+            
+            # 2. Eğer Canlı Scrape Başarılıysa SON veriyi ez
+            final_son = live_gold_val if live_gold_val > 0 else y_son
+            
+            # Değişimi tekrar hesapla
+            g_deg = 0.0
+            if y_ilk > 0:
+                g_deg = ((final_son - y_ilk) / y_ilk) * 100
+                
+            data_dict["GRAM_ALTIN_TL"] = {"ilk": y_ilk, "son": final_son, "degisim": g_deg}
+            
+    except: pass
+    return data_dict
+
+# Fonksiyona canlı değeri parametre olarak atıyoruz
+piyasa = piyasa_verisi_al(start_date, end_date, canli_gram)
 if "GRAM_ALTIN_TL" not in piyasa: 
-
     piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
-
-
 # ============================================================================
-
 # 3. GÖSTERGE PANELİ
-
 # ============================================================================
-
 st.title("📱 Finansal Sözleşme Kokpiti")
-
 st.caption(f"Aralık: {start_date.strftime('%d.%m.%Y')} ➡️ {end_date.strftime('%d.%m.%Y')}")
 
-
-
 def kutu(col, baslik, key, ikon):
-
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
-
     ilk, son, deg = safe_float(val["ilk"]), safe_float(val["son"]), safe_float(val["degisim"])
-
     w_key = f"{key}_{d_key}"
-
     with col:
-
         st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; margin-bottom:5px;'><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div>", unsafe_allow_html=True)
-
         if son == 0: deg = st.number_input(f"{baslik} %", value=0.0, step=0.1, key=w_key)
-
         else:
-
             renk = "pozitif" if deg >= 0 else "negatif"
-
             st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
-
+            # Canlı veri uyarısı (Altın için)
+            ek_bilgi = ""
+            if key == "GRAM_ALTIN_TL" and canli_gram > 0: ek_bilgi = " (Canlı Piyasa)"
+            
             st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
+            if ek_bilgi: st.markdown(f"<div style='font-size:10px; color:#27AE60; text-align:right;'>{ek_bilgi}</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
-
     return deg
 
-
-
 k1, k2, k3, k4 = st.columns(4)
-
 d_usd = kutu(k1, "USD/TL", "USDTRY", "💵")
-
 d_eur = kutu(k2, "EUR/TL", "EURTRY", "💶")
-
 d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
-
 d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-
-
 # ENERJİ
-
 st.markdown("---")
-
 col_link, _ = st.columns([1,3])
-
 col_link.link_button("⛽ Petrol Ofisi Arşiv", "https://www.petrolofisi.com.tr/arsiv-fiyatlari")
 
-
-
 st.markdown("### 🛢️ Enerji")
-
 e1, e2, e3, e4 = st.columns(4)
-
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
-
 ref_tahmin = d_brent + d_usd
 
-
-
-# Yakıt Verileri (Otomatik + Manuel Override)
-
 oto_benzin = yakit_data.get("benzin", 0.0)
-
 oto_motorin = yakit_data.get("motorin", 0.0)
 
-
-
 with e2:
-
     badge = f"<span class='badge-live'>CANLI: {oto_benzin} TL</span>" if oto_benzin > 0 else ""
-
     st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b> {badge}", unsafe_allow_html=True)
-
     b_eski = st.number_input("Eski (TL)", value=42.0, key=f"bo_{d_key}")
-
-    # Eğer canlı veri varsa onu varsayılan yap
-
     def_bn = oto_benzin if oto_benzin > 0 else 44.0
-
     b_yeni = st.number_input("Yeni (TL)", value=def_bn, key=f"bn_{d_key}")
-
-    
-
     d_benzin = 0.0
-
     if b_eski > 0: d_benzin = ((b_yeni-b_eski)/b_eski)*100
-
     st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
-
-
 with e3:
-
     badge_m = f"<span class='badge-live'>CANLI: {oto_motorin} TL</span>" if oto_motorin > 0 else ""
-
     st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b> {badge_m}", unsafe_allow_html=True)
-
     m_eski = st.number_input("Eski (TL)", value=43.0, key=f"mo_{d_key}")
-
     def_mn = oto_motorin if oto_motorin > 0 else 45.0
-
     m_yeni = st.number_input("Yeni (TL)", value=def_mn, key=f"mn_{d_key}")
-
-    
-
     d_dizel = 0.0
-
     if m_eski > 0: d_dizel = ((m_yeni-m_eski)/m_eski)*100
-
     st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
-
-
 
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
-
-
 # ============================================================================
-
-# 5. ENFLASYON
-
+# 5. ENFLASYON & HESAPLAMA
 # ============================================================================
-
 st.markdown("---")
-
-# Tab yapısı kaldırıldı, Link Butonu eklendi
 c_header, c_link = st.columns([3, 1])
-
-with c_header:
-    st.subheader("⚡ Enflasyon Verileri (Otomatik Hesap)")
-
-with c_link:
-    st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesaplama-serzan.streamlit.app/")
+with c_header: st.subheader("⚡ Enflasyon Verileri (Otomatik Hesap)")
+with c_link: st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesaplama-serzan.streamlit.app/")
 
 if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
 else: st.warning(f"⚠️ {tcmb['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-# Safe Float ile koruma
 tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{d_key}")
 ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{d_key}")
 h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
@@ -674,149 +646,69 @@ iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=
 abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
 ozel_oran = (tufe + ufe) / 2
 
-# ============================================================================
-
-# 6. SEPET VE HESAPLAMA
-
-# ============================================================================
-
 st.markdown("---")
-
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
 
-
-
 w1, w2, w3, w4 = st.columns(4)
-
 w_ozel = w1.number_input("Karma (Mix) %", value=0)
-
 w_tufe = w2.number_input("Saf TÜFE %", value=30)
-
 w_ufe = w3.number_input("Saf ÜFE %", value=0)
-
 w_hufe = w4.number_input("H-ÜFE %", value=10)
 
-
-
 w5, w6, w7, w8 = st.columns(4)
-
 w_iscilik = w5.number_input("İşçilik %", value=30)
-
 w_usd = w6.number_input("USD %", value=20)
-
 w_eur = w7.number_input("EUR %", value=10)
-
 w_altin = w8.number_input("Altın %", value=0)
 
-
-
 w9, w10, w11, w12 = st.columns(4)
-
 w_benzin = w9.number_input("Benzin %", value=0)
-
 w_dizel = w10.number_input("Motorin %", value=0)
-
 w_brent = w11.number_input("Brent %", value=0)
-
 w_abd = w12.number_input("ABD Enf. %", value=0)
-
-
 
 toplam = w_ozel+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
 
-
-
 if toplam != 100:
-
     st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı)")
-
 else:
-
-    # NaN HATASI ÇÖZÜMÜ: Her değişkeni safe_float() ile sar
-
     etkiler = [
-
         ("Karma", safe_float(ozel_oran), safe_float(w_ozel)), 
-
         ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
-
         ("ÜFE", safe_float(ufe), safe_float(w_ufe)), 
-
         ("H-ÜFE", safe_float(h_ufe), safe_float(w_hufe)),
-
         ("İşçilik", safe_float(iscilik), safe_float(w_iscilik)), 
-
         ("USD", safe_float(d_usd), safe_float(w_usd)), 
-
         ("EUR", safe_float(d_eur), safe_float(w_eur)), 
-
         ("Altın", safe_float(d_gram), safe_float(w_altin)),
-
         ("Benzin", safe_float(d_benzin), safe_float(w_benzin)), 
-
         ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
-
         ("Brent", safe_float(d_brent), safe_float(w_brent)), 
-
         ("ABD Enf", safe_float(abd_enf), safe_float(w_abd))
-
     ]
-
     
-
-    # Matematiksel Hesaplama (Sıfır hata garantisi)
-
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
-
     fark = sozlesme_tutari * (zam / 100)
-
     yeni = sozlesme_tutari + fark
-
     
-
     st.markdown("---")
-
     r1, r2, r3 = st.columns(3)
-
     r1.metric("Toplam Artış", f"%{zam:.2f}")
-
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
-
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
-
     
-
     data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
-
     for ad, deg, agr in etkiler:
-
         if agr > 0:
-
             data["Kalem"].append(ad)
-
             data["Değişim %"].append(deg)
-
             data["Ağırlık %"].append(agr)
-
             data["Etki %"].append((deg*agr)/100)
-
             
-
     df = pd.DataFrame(data)
-
-    # GÜVENLİ FORMATLAMA
-
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
-
     
-
-    # Excel İndir Butonu
-
     buffer = io.BytesIO()
-
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-
         df.to_excel(writer, sheet_name='Detay', index=False)
-
     st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel")
-
