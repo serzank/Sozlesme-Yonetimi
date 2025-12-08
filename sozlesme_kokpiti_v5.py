@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from evds import evdsAPI
-from datetime import datetime, date, timedelta
+import evds
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 import urllib3
-import numpy as np
 
 # SSL Hatalarını Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -14,7 +13,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📅")
+st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
 
 # --- CSS Tasarım ---
 st.markdown("""
@@ -46,26 +45,33 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- TCMB MOTORU (TARİH ARALIĞI MODU - DÜZELTİLDİ) ---
+# --- TCMB MOTORU (SAĞLAMLAŞTIRILMIŞ) ---
 @st.cache_data(ttl=3600)
-def get_tcmb_date_range(api_key, start_d, end_d):
-    # Başlangıç
-    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+def get_tcmb_data(api_key, ref_date, donem_str):
+    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor"}
     
-    if not api_key: return res
-
     try:
-        evds_api = evds.evdsAPI(api_key)
+        # Import hatasını önlemek için tam referans
+        tcmb_service = evds.evdsAPI(api_key)
         
-        # API için tarih formatı (DD-MM-YYYY)
-        # Geniş aralık çekelim ki "o gün veri yoktu" demesin
-        q_start = (start_d - relativedelta(months=2)).strftime("%d-%m-%Y")
-        q_end = (end_d + relativedelta(months=1)).strftime("%d-%m-%Y")
+        target_date = ref_date
         
-        # Kodlar: TP.FG.J0 (TÜFE), TP.TUFE1YI.T1 (Yİ-ÜFE), TP.HKFE01.I1 (H-ÜFE)
+        # Dönem Hesabı
+        if donem_str == "1 Ay": past_date = target_date - relativedelta(months=1)
+        elif donem_str == "3 Ay": past_date = target_date - relativedelta(months=3)
+        elif donem_str == "6 Ay": past_date = target_date - relativedelta(months=6)
+        elif donem_str == "1 Yıl": past_date = target_date - relativedelta(months=12)
+        elif "YTD" in donem_str: past_date = date(target_date.year - 1, 12, 1)
+        else: past_date = target_date - relativedelta(months=1)
+        
+        # API Sorgusu
+        start_q = (past_date - relativedelta(months=2)).strftime("%d-%m-%Y")
+        end_q = target_date.strftime("%d-%m-%Y")
+        
+        # Kodlar: TP.FG.J0 (TÜFE), TP.TUFE1YI.T1 (Yİ-ÜFE)
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         
-        raw_df = evds_api.get_data(series, startdate=q_start, enddate=q_end)
+        raw_df = tcmb_service.get_data(series, startdate=start_q, enddate=end_q)
         
         if raw_df is None or raw_df.empty:
             res["Msg"] = "API Boş Döndü"
@@ -73,113 +79,89 @@ def get_tcmb_date_range(api_key, start_d, end_d):
             
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
         
-        # HEDEF AYLARI BELİRLE (Period)
-        p_start = pd.Period(start_d, freq='M')
-        p_end = pd.Period(end_d, freq='M')
+        # Period Eşleştirme
+        target_p = pd.Period(target_date, freq='M')
+        past_p = pd.Period(past_date, freq='M')
         
-        # Gelecek tarihi seçtiysek son veriye çek
-        max_date = raw_df['Tarih_Dt'].max()
-        if p_end > pd.Period(max_date, freq='M'):
-            p_end = pd.Period(max_date, freq='M')
-            
-        # Satırları Bul
-        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
-        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
+        row_now = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == target_p]
+        row_old = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == past_p]
         
-        # Fallback: Eğer tam başlangıç ayı yoksa bir sonrakini dene
-        if row_start.empty:
-            mask = raw_df['Tarih_Dt'] >= pd.to_datetime(start_d)
-            if mask.any():
-                row_start = raw_df.loc[mask].iloc[[0]]
-                p_start = pd.Period(row_start['Tarih_Dt'].values[0], freq='M')
+        # Fallback
+        if row_now.empty: row_now = raw_df.iloc[[-1]]
+        if row_old.empty: row_old = raw_df.iloc[[0]]
         
-        # Fallback: Bitiş ayı yoksa bir öncekini dene
-        if row_end.empty:
-            row_end = raw_df.iloc[[-1]]
-            p_end = pd.Period(row_end['Tarih_Dt'].values[0], freq='M')
-        
-        if row_start.empty or row_end.empty:
-            res["Msg"] = "Tarih Aralığı Bulunamadı"
-            return res
-
-        # Sütun İsim Kontrolü
-        cols = raw_df.columns
-        c_t = "TP_FG_J0" if "TP_FG_J0" in cols else "TP.FG.J0"
-        c_u = "TP_TUFE1YI_T1" if "TP_TUFE1YI_T1" in cols else "TP.TUFE1YI.T1"
-        c_h = "TP_HKFE01_I1" if "TP_HKFE01_I1" in cols else "TP.HKFE01.I1"
-        
-        def get_val(row, c):
-            if c in row.columns and pd.notna(row[c].values[0]):
-                return float(row[c].values[0])
+        # Değer Alma (Güvenli)
+        def get_val(row, col_list):
+            for c in col_list:
+                if c in row.columns and pd.notna(row[c].values[0]):
+                    return float(row[c].values[0])
             return 0.0
 
-        t_start = get_val(row_start, c_t)
-        t_end = get_val(row_end, c_t)
+        # Sütun isimleri (Nokta veya Alt Tire olabilir)
+        tufe_cols = ["TP_FG_J0", "TP.FG.J0"]
+        ufe_cols = ["TP_TUFE1YI_T1", "TP.TUFE1YI.T1"]
+        hufe_cols = ["TP_HKFE01_I1", "TP.HKFE01.I1"]
+
+        val_t_now = get_val(row_now, tufe_cols)
+        val_t_old = get_val(row_old, tufe_cols)
         
-        u_start = get_val(row_start, c_u)
-        u_end = get_val(row_end, c_u)
+        val_u_now = get_val(row_now, ufe_cols)
+        val_u_old = get_val(row_old, ufe_cols)
         
-        h_start = get_val(row_start, c_h)
-        h_end = get_val(row_end, c_h)
+        val_h_now = get_val(row_now, hufe_cols)
+        val_h_old = get_val(row_old, hufe_cols)
         
         def calc(n, o):
             if o == 0: return 0.0
             return ((n - o) / o) * 100
             
-        res["TUFE"] = round(calc(t_end, t_start), 2)
-        res["UFE"] = round(calc(u_end, u_start), 2)
-        res["HUFE"] = round(calc(h_end, h_start), 2)
+        res["TUFE"] = round(calc(val_t_now, val_t_old), 2)
+        res["UFE"] = round(calc(val_u_now, val_u_old), 2)
+        res["HUFE"] = round(calc(val_h_now, val_h_old), 2)
         
         res["Status"] = True
-        res["Msg"] = f"{p_start} ➡️ {p_end}"
+        res["Msg"] = f"{past_p} ➡️ {target_p}"
         
     except Exception as e:
         res["Msg"] = f"Hata: {str(e)}"
         
     return res
 
-
 # ============================================================================
-# 1. SOL MENÜ (TARİH SEÇİCİ)
+# SOL MENÜ
 # ============================================================================
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
-    st.header("📅 Tarih Aralığı")
+    st.header("⚙️ Ayarlar")
     
-    # 1. TARİH SEÇİMİ
+    donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
+    
     today = date.today()
-    default_start = today - relativedelta(years=1)
+    ref_date = today.replace(day=1) - relativedelta(months=1)
     
-    start_date = st.date_input("Başlangıç Tarihi", value=default_start)
-    end_date = st.date_input("Bitiş Tarihi (Güncel)", value=today)
-    
-    if start_date >= end_date:
-        st.error("Hata: Başlangıç, Bitişten küçük olmalı!")
-    
-    # VERİ ÇEK (Artık fonksiyon ismi doğru)
-    with st.spinner("Veriler Hesaplanıyor..."):
-        tcmb = get_tcmb_date_range(MY_API_KEY, start_date, end_date)
+    with st.spinner("TCMB Verisi..."):
+        tcmb = get_tcmb_data(MY_API_KEY, ref_date, donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: sozlesme_tutari = 0.0
     
-    # Widget Key için tarih stringi
-    d_key = f"{start_date}_{end_date}"
+    y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
+    selected_period = y_map[donem_secimi]
 
 # ============================================================================
-# 2. YAHOO VERİ (TARİHLİ)
+# 2. YAHOO VERİ
 # ============================================================================
 @st.cache_data(ttl=600)
-def piyasa_verisi_al(d_start, d_end):
+def piyasa_verisi_al(periyot):
     tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
     data_dict = {}
-    
+    # Boş şablon
     for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
     try:
-        df = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
+        df = yf.download(list(tickers.values()), period=periyot, progress=False)['Close']
         df = df.fillna(method='ffill').fillna(method='bfill')
         
         if not df.empty:
@@ -188,15 +170,13 @@ def piyasa_verisi_al(d_start, d_end):
                     c_name = [c for c in df.columns if symbol in str(c)]
                     if not c_name: continue
                     seri = df[c_name[0]]
-                    if len(seri) > 0:
-                        ilk = float(seri.iloc[0])
-                        son = float(seri.iloc[-1])
+                    if len(seri) > 1:
+                        ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
                         if ilk > 0:
                             degisim = ((son - ilk) / ilk) * 100
                             data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
                 except: pass
             
-            # Gram Altın
             if data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
                 g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
                 g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
@@ -207,20 +187,20 @@ def piyasa_verisi_al(d_start, d_end):
     except: pass
     return data_dict
 
-piyasa = piyasa_verisi_al(start_date, end_date)
+piyasa = piyasa_verisi_al(selected_period)
 if "GRAM_ALTIN_TL" not in piyasa: 
     piyasa["GRAM_ALTIN_TL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
 
 # ============================================================================
 # 3. GÖSTERGE PANELİ
 # ============================================================================
-st.title("📱 Finans & Sözleşme Kokpiti")
-st.caption(f"Aralık: {start_date.strftime('%d.%m.%Y')} ➡️ {end_date.strftime('%d.%m.%Y')}")
+st.title("📱 Finans Kokpiti")
+st.caption(f"Veri Dönemi: {donem_secimi}")
 
 def kutu(col, baslik, key, ikon):
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
     ilk, son, deg = safe_float(val["ilk"]), safe_float(val["son"]), safe_float(val["degisim"])
-    w_key = f"{key}_{d_key}"
+    w_key = f"{key}_{donem_secimi}"
     with col:
         st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; margin-bottom:5px;'><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div>", unsafe_allow_html=True)
         if son == 0: deg = st.number_input(f"{baslik} %", value=0.0, step=0.1, key=w_key)
@@ -249,16 +229,16 @@ ref_tahmin = d_brent + d_usd
 
 with e2:
     st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b><br><span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>", unsafe_allow_html=True)
-    b_eski = st.number_input("Eski", value=42.0, key=f"bo_{d_key}")
-    b_yeni = st.number_input("Yeni", value=44.0, key=f"bn_{d_key}")
+    b_eski = st.number_input("Eski", value=42.0, key=f"bo_{donem_secimi}")
+    b_yeni = st.number_input("Yeni", value=44.0, key=f"bn_{donem_secimi}")
     d_benzin = 0.0
     if b_eski > 0: d_benzin = ((b_yeni-b_eski)/b_eski)*100
     st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
 with e3:
     st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b><br><span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>", unsafe_allow_html=True)
-    m_eski = st.number_input("Eski", value=43.0, key=f"mo_{d_key}")
-    m_yeni = st.number_input("Yeni", value=45.0, key=f"mn_{d_key}")
+    m_eski = st.number_input("Eski", value=43.0, key=f"mo_{donem_secimi}")
+    m_yeni = st.number_input("Yeni", value=45.0, key=f"mn_{donem_secimi}")
     d_dizel = 0.0
     if m_eski > 0: d_dizel = ((m_yeni-m_eski)/m_eski)*100
     st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
@@ -279,11 +259,11 @@ with tab1:
 
     ec1, ec2, ec3, ec4, ec5 = st.columns(5)
     # Safe Float ile koruma
-    tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{d_key}")
-    ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{d_key}")
-    h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
-    iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{d_key}")
-    abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
+    tufe = ec1.number_input("TÜFE %", value=safe_float(tcmb["TUFE"]), key=f"t_{donem_secimi}")
+    ufe = ec2.number_input("ÜFE %", value=safe_float(tcmb["UFE"]), key=f"u_{donem_secimi}")
+    h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{donem_secimi}")
+    iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{donem_secimi}")
+    abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{donem_secimi}")
     ozel_oran = (tufe + ufe) / 2
 
 with tab2:
@@ -291,7 +271,7 @@ with tab2:
     st.components.v1.iframe("https://tufehesaplama-serzan.streamlit.app/", height=500, scrolling=True)
 
 # ============================================================================
-# 6. SEPET VE HESAPLAMA
+# 6. SEPET VE HESAPLAMA (GÜVENLİ MOD)
 # ============================================================================
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
@@ -335,7 +315,7 @@ else:
         ("ABD Enf", safe_float(abd_enf), safe_float(w_abd))
     ]
     
-    # Matematiksel Hesaplama
+    # Matematiksel Hesaplama (Sıfır hata garantisi)
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
     yeni = sozlesme_tutari + fark
@@ -355,5 +335,5 @@ else:
             data["Etki %"].append((deg*agr)/100)
             
     df = pd.DataFrame(data)
-    # HATA DÜZELTME: Sadece sayısal kolonlara format uygula
+    # GÜVENLİ FORMATLAMA
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
