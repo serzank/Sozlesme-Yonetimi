@@ -4,77 +4,38 @@ import yfinance as yf
 import evds
 from datetime import datetime
 
-# --- API ANAHTARI (Sabitlendi) ---
+# --- API ANAHTARI (SABİTLENDİ) ---
 MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="🚀")
 
-# --- CSS Tasarım (Mobil & Dark Mode Uyumlu) ---
+# --- CSS Tasarım ---
 st.markdown("""
     <style>
-    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    
-    /* Kutu Tasarımı */
-    .kutu, .kutu-enerji { 
-        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-    }
-    
-    /* Finans Kutusu Renkleri */
-    .kutu { 
-        background-color: #f8f9fa !important; 
-        border-left: 6px solid #1E3D59 !important; 
-    }
-    
-    /* Enerji Kutusu Renkleri */
-    .kutu-enerji { 
-        background-color: #fffcf5 !important; 
-        border-left: 6px solid #F39C12 !important; 
-    }
-    
-    /* KRİTİK: Yazı Renklerini Zorla Koyu Yap (Dark Mode Sorununu Çözer) */
-    .kutu, .kutu-enerji, .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { 
-        color: #1E3D59 !important; 
-    }
-    
-    /* Pozitif/Negatif Renkler */
+    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
+    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
+    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-    
-    /* Tahmin Etiketi */
-    .prediction-tag { 
-        font-size: 11px; 
-        background-color: #e8f5e9 !important; 
-        color: #2e7d32 !important; 
-        padding: 2px 6px; 
-        border-radius: 4px; 
-        font-weight: bold; 
-        display: inline-block; 
-        margin-bottom: 4px; 
-    }
-    
-    /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
-    
-    /* Input Alanı Başlıkları */
+    .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- YARDIMCI FONKSİYON ---
 def tr_fmt(deger):
     if isinstance(deger, (int, float)):
         s = "{:,.2f}".format(deger)
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (v30.0 - GENİŞ TARAMA) ---
+# --- TCMB VERİ MOTORU (KURŞUN GEÇİRMEZ MOD) ---
 @st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, donem_tipi):
-    # Varsayılan Değerler (Sıfır değil, en son bilinen yaklaşık değerler - Hata olursa boş kalmasın)
-    # Ancak önceliğimiz API'den güncelini çekmek.
     result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor..."}
     
     if not api_key: return result
@@ -82,13 +43,13 @@ def get_tcmb_data(api_key, donem_tipi):
     try:
         api = evds.evdsAPI(api_key)
         
-        # STRATEJİ: Son 60 ayı çek. Tarih hatasını yok et.
+        # STRATEJİ: Son 60 ayı çek (5 Yıl). Bu sayede "veri yok" hatası imkansızlaşır.
         end = datetime.now().strftime("%d-%m-%Y")
         start = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
         
-        # Kodlar: 
+        # KODLAR (DÜZELTİLDİ):
         # TÜFE: TP.FG.J0
-        # Yİ-ÜFE: TP.TUFE1YI.K1 (Doğru kod K1'dir)
+        # Yİ-ÜFE: TP.TUFE1YI.K1 (T1 yerine K1 kullanıldı - Doğrusu budur)
         # H-ÜFE: TP.HKFE01.I1
         series = ['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1']
         
@@ -106,9 +67,7 @@ def get_tcmb_data(api_key, donem_tipi):
             return result
             
         # --- DÖNEM HESABI ---
-        # df.iloc[-1] bize veritabanındaki EN SON (En Güncel) veriyi verir.
-        # Tarih girmeye gerek yok, Python en sonu bulur.
-        son_row = df.iloc[-1] 
+        son_row = df.iloc[-1] # En son açıklanan veri (Örn: Kasım/Aralık 2025)
         
         lookback = 1
         if donem_tipi == "3 Ay": lookback = 3
@@ -236,7 +195,6 @@ d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
 # ENERJİ
 st.markdown("---")
-# PETROL OFİSİ LİNKİ EKLENDİ
 col_link, _ = st.columns([1,3])
 col_link.link_button("⛽ Petrol Ofisi Arşiv", "https://www.petrolofisi.com.tr/arsiv-fiyatlari")
 
@@ -262,7 +220,7 @@ with e3:
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON & İŞÇİLİK
+# 5. ENFLASYON (DİNAMİK + K1 KODU)
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
@@ -272,7 +230,6 @@ with c_inf_status:
     else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-# Widget Key'leri eklendi, dönem değişince güncellensin
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
