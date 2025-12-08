@@ -1,167 +1,78 @@
 import streamlit as st
-
 import pandas as pd
-
 import yfinance as yf
-
 from evds import evdsAPI
-
 from datetime import datetime, date, timedelta
-
 from dateutil.relativedelta import relativedelta
-
 import urllib3
-
 import requests
-
 from bs4 import BeautifulSoup
-
 import io
 
-
-
 # SSL Hatalarını Sustur
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-
-
 # --- AYARLAR ---
-
 try:
-
     MY_API_KEY = st.secrets["EVDS_KEY"]
-
 except:
-
     MY_API_KEY = "Uol1kIOQos" 
 
-
-
 # --- Sayfa Ayarları ---
-
 st.set_page_config(page_title="SK - Procurement Specialist", layout="wide", page_icon="🛡️")
 
-
-
 # --- CSS Tasarım ---
-
 st.markdown("""
-
     <style>
-
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-
     .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-
     .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
-
     .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
-
     .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { color: #1E3D59 !important; }
-
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
-
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
-
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
-
     div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
-
     .badge-live { background-color: #27AE60; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; vertical-align: middle; }
-
     </style>
-
     """, unsafe_allow_html=True)
 
-
-
 # --- YARDIMCI FONKSİYONLAR ---
-
 def tr_fmt(deger):
-
     try:
-
         if pd.isna(deger) or deger is None: deger = 0.0
-
         s = "{:,.2f}".format(float(deger))
-
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
-
     except: return "0,00"
 
-
-
 def safe_float(val):
-
     try:
-
         if val is None: return 0.0
-
         if pd.isna(val): return 0.0
-
         return float(val)
-
     except: return 0.0
 
-
-
-# --- 1. WEB SCRAPING: AKARYAKIT MODÜLÜ ---
-
+# --- 1. WEB SCRAPING: AKARYAKIT ---
 @st.cache_data(ttl=3600)
-
 def guncel_akaryakit_cek():
-
-    """Doviz.com İstanbul Avrupa Yakası Fiyatlarını Çeker"""
-
     url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
-
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-
+    headers = {'User-Agent': 'Mozilla/5.0'}
     fiyatlar = {"benzin": 0.0, "motorin": 0.0}
-
-    
-
     try:
-
         response = requests.get(url, headers=headers, timeout=10)
-
         if response.status_code == 200:
-
             soup = BeautifulSoup(response.content, "html.parser")
-
-            # Tabloyu bul (Genelde ilk tablo)
-
             table = soup.find('table')
-
             if table:
-
-                tbody = table.find('tbody')
-
-                if tbody:
-
-                    rows = tbody.find_all('tr')
-
-                    if rows:
-
-                        # İlk satırı al (Genelde büyük dağıtıcılar en üsttedir)
-
-                        cols = rows[0].find_all('td')
-
-                        if len(cols) >= 3:
-
-                            # 2. kolon Benzin, 3. kolon Motorin (Sıra değişebilir, siteye göre fix)
-
-                            raw_benzin = cols[1].get_text().replace('₺', '').strip().replace(',', '.')
-
-                            raw_motorin = cols[2].get_text().replace('₺', '').strip().replace(',', '.')
-
-                            fiyatlar["benzin"] = float(raw_benzin)
-
-                            fiyatlar["motorin"] = float(raw_motorin)
-
+                rows = table.find('tbody').find_all('tr')
+                if rows:
+                    cols = rows[0].find_all('td')
+                    if len(cols) >= 3:
+                        raw_benzin = cols[1].get_text().replace('₺', '').strip().replace(',', '.')
+                        raw_motorin = cols[2].get_text().replace('₺', '').strip().replace(',', '.')
+                        fiyatlar["benzin"] = float(raw_benzin)
+                        fiyatlar["motorin"] = float(raw_motorin)
     except: pass
-
     return fiyatlar
 
 # --- YENİ: WEB SCRAPING: CANLI GRAM ALTIN ---
@@ -200,314 +111,92 @@ def canli_gram_altin_cek():
         
     return fiyat
 
-
-# --- 2. TCMB MOTORU (SİZİN TARİH ARALIĞI MANTIĞINIZ) ---
-
+# --- 2. TCMB MOTORU ---
 @st.cache_data(ttl=3600)
-
 def get_tcmb_data(api_key, start_date, end_date):
-
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-
-    
-
     if not api_key: return res
-
-
-
     try:
-
         evds_service = evdsAPI(api_key)
-
-        
-
-        # API Sorgusu İçin Tarih Aralığı (Geniş tutalım)
-
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
-
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
-
-        
-
-        # Kodlar: TP.FG.J0 (TÜFE), TP.TUFE1YI.T1 (Yİ-ÜFE), TP.HKFE01.I1 (H-ÜFE)
-
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
-
-        
-
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
-
         
-
         if raw_df is None or raw_df.empty:
-
             res["Msg"] = "API Boş Döndü"
-
             return res
-
             
-
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
-
-        
-
-        # Period Eşleştirme
-
         p_start = pd.Period(start_date, freq='M')
-
         p_end = pd.Period(end_date, freq='M')
-
-        
-
-        # Geleceği seçerse son veriye çek
-
         max_date = raw_df['Tarih_Dt'].max()
-
-        if p_end > pd.Period(max_date, freq='M'):
-
-            p_end = pd.Period(max_date, freq='M')
-
-
-
-        # Satırları Bul
+        if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
 
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
-
         row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
-
         
-
-        # Fallback: Eğer tam başlangıç ayı yoksa
-
         if row_start.empty:
-
             mask = raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)
-
             if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
+            else: row_start = raw_df.iloc[[0]]
 
-            else: row_start = raw_df.iloc[[0]] # En baş
-
-
-
-        if row_end.empty: row_end = raw_df.iloc[[-1]] # En son
-
+        if row_end.empty: row_end = raw_df.iloc[[-1]]
         
-
-        # Değerleri Al
-
         def get_val(row, codes):
-
-            # Sütun isimleri bazen değişebilir (Nokta/Alt Tire)
-
             for c in codes:
-
-                if c in row.columns and pd.notna(row[c].values[0]):
-
-                    return float(row[c].values[0])
-
+                if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
             return 0.0
-
             
-
         cols_t = ["TP_FG_J0", "TP.FG.J0"]
-
         cols_u = ["TP_TUFE1YI_T1", "TP.TUFE1YI.T1"]
-
         cols_h = ["TP_HKFE01_I1", "TP.HKFE01.I1"]
 
-
-
-        t_start = get_val(row_start, cols_t)
-
-        t_end = get_val(row_end, cols_t)
-
+        t_start, t_end = get_val(row_start, cols_t), get_val(row_end, cols_t)
+        u_start, u_end = get_val(row_start, cols_u), get_val(row_end, cols_u)
+        h_start, h_end = get_val(row_start, cols_h), get_val(row_end, cols_h)
         
-
-        u_start = get_val(row_start, cols_u)
-
-        u_end = get_val(row_end, cols_u)
-
-        
-
-        h_start = get_val(row_start, cols_h)
-
-        h_end = get_val(row_end, cols_h)
-
-        
-
         def calc(n, o):
-
             if o == 0: return 0.0
-
             return ((n - o) / o) * 100
-
             
-
         res["TUFE"] = round(calc(t_end, t_start), 2)
-
         res["UFE"] = round(calc(u_end, u_start), 2)
-
         res["HUFE"] = round(calc(h_end, h_start), 2)
-
-        
-
         res["Status"] = True
-
         res["Msg"] = f"{p_start} ➡️ {p_end}"
-
-        
-
-    except Exception as e:
-
-        res["Msg"] = f"Hata: {str(e)}"
-
-        
-
+    except Exception as e: res["Msg"] = f"Hata: {str(e)}"
     return res
 
-
-
 # ============================================================================
-
-# SOL MENÜ (TARİH SEÇİCİ)
-
+# SOL MENÜ
 # ============================================================================
-
 with st.sidebar:
-
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
-
     st.header("📅 Tarih Aralığı")
-
     
-
     today = date.today()
-
     default_start = today - relativedelta(years=1)
-
     
-
     start_date = st.date_input("Başlangıç Tarihi", value=default_start)
-
     end_date = st.date_input("Bitiş Tarihi (Güncel)", value=today)
-
     
-
-    if start_date >= end_date:
-
-        st.error("Hata: Başlangıç < Bitiş olmalı!")
-
+    if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
     
-
-    with st.spinner("Tüm Veriler Çekiliyor (TCMB + Yakıt + Piyasa)..."):
-
-        # 1. TCMB Enflasyon
-
+    with st.spinner("Veriler Toplanıyor..."):
         tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
-
-        # 2. Web'den Yakıt
-
         yakit_data = guncel_akaryakit_cek()
-
-
+        canli_gram = canli_gram_altin_cek() # YENİ FONKSİYON
 
     st.markdown("---")
-
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-
     try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-
     except: sozlesme_tutari = 0.0
-
     
-
-    # Widget Key için tarih stringi
-
     d_key = f"{start_date}_{end_date}"
 
-
-
 # ============================================================================
-
-# 2. YAHOO VERİ (TARİHLİ)
-
-# ============================================================================
-
-@st.cache_data(ttl=600)
-
-def piyasa_verisi_al(d_start, d_end):
-
-    tickers = { "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", "ONS_ALTIN": "GC=F", "BRENT_PETROL": "BZ=F", "ABD_TAHVIL": "^TNX" }
-
-    data_dict = {}
-
-    for k in tickers: data_dict[k] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
-
-
-
-    try:
-
-        # Yahoo'ya tarih aralığını veriyoruz (+1 gün ekle ki son günü de alsın)
-
-        df = yf.download(list(tickers.values()), start=d_start, end=d_end + timedelta(days=1), progress=False)['Close']
-
-        df = df.fillna(method='ffill').fillna(method='bfill')
-
-        
-
-        if not df.empty:
-
-            for key, symbol in tickers.items():
-
-                try:
-
-                    c_name = [c for c in df.columns if symbol in str(c)]
-
-                    if not c_name: continue
-
-                    seri = df[c_name[0]]
-
-                    if len(seri) > 0:
-
-                        ilk = float(seri.iloc[0]) # Seçilen Başlangıçtaki kur
-
-                        son = float(seri.iloc[-1]) # Seçilen Bitişteki kur
-
-                        if ilk > 0:
-
-                            degisim = ((son - ilk) / ilk) * 100
-
-                            data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
-
-                except: pass
-
-            
-
-    # --- GRAM ALTIN MANTIĞI ---
-            # 1. Yahoo'dan gelen eski usul hesaplama (Başlangıç verisi için mecburen bunu kullanacağız)
-            y_son = 0.0
-            y_ilk = 0.0
-            
-            if data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
-                y_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
-                y_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
-            
-            # 2. Eğer Canlı Scrape Başarılıysa SON veriyi ez
-            final_son = live_gold_val if live_gold_val > 0 else y_son
-            
-            # Değişimi tekrar hesapla
-            g_deg = 0.0
-            if y_ilk > 0:
-                g_deg = ((final_son - y_ilk) / y_ilk) * 100
-                
-            data_dict["GRAM_ALTIN_TL"] = {"ilk": y_ilk, "son": final_son, "degisim": g_deg}
-            
-    except: pass
-    return data_dict
-
-
-
-2. PİYASA VERİSİ (HİBRİT: YAHOO + SCRAPING)
+# 2. PİYASA VERİSİ (HİBRİT: YAHOO + SCRAPING)
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al(d_start, d_end, live_gold_val):
