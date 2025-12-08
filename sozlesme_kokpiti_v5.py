@@ -363,14 +363,32 @@ if not df_sorted.empty and zam > 0:
 
 # TABLO & EXCEL
 st.markdown("---")
+# Veri setini oluşturuyoruz
 df = pd.DataFrame([{"Kalem":e[0], "Değişim %":e[1], "Ağırlık %":e[2], "Etki %":(e[1]*e[2])/100} for e in etkiler if e[2]>0])
+
 t1, t2 = st.columns([3, 1])
-with t1: st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
+with t1:
+    # DÜZELTME BURADA: Formatı genel değil, sütun bazlı veriyoruz
+    st.dataframe(df.style.format({
+        "Değişim %": "{:.2f}", 
+        "Ağırlık %": "{:.0f}", 
+        "Etki %": "{:.2f}"
+    }), use_container_width=True)
 
 with t2:
     st.write("")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Detay', index=False)
-        pd.DataFrame({'Bilgi': ['Tarih', 'Eski', 'Yeni', 'Fark'], 'Deger': [f"{start_date} - {end_date}", sozlesme_tutari, yeni, fark]}).to_excel(writer, sheet_name='Ozet', index=False)
-    st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis_{start_date}_{end_date}.xlsx", mime="application/vnd.ms-excel", type="primary")
+        pd.DataFrame({
+            'Bilgi': ['Tarih', 'Eski', 'Yeni', 'Fark'], 
+            'Deger': [f"{start_date} - {end_date}", sozlesme_tutari, yeni, fark]
+        }).to_excel(writer, sheet_name='Ozet', index=False)
+    
+    st.download_button(
+        "📥 Excel Raporu İndir", 
+        data=buffer.getvalue(), 
+        file_name=f"Hakedis_{start_date}_{end_date}.xlsx", 
+        mime="application/vnd.ms-excel", 
+        type="primary"
+    )
