@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import requests
+import evds
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 import urllib3
-from datetime import datetime
 
-# SSL Hatalarını ve Uyarılarını Sustur
+# SSL ve Uyarıları Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- SİZİN API ANAHTARINIZ ---
@@ -36,88 +37,94 @@ def tr_fmt(deger):
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
     return "0,00"
 
-# --- TCMB VERİ MOTORU (ÇOKLU ÜFE ARAMA MODU) ---
+# --- TCMB VERİ MOTORU (SİZİN MANTIĞINIZLA ENTEGRE) ---
 @st.cache_data(ttl=3600)
-def get_inflation_data(donem_tipi):
-    # Varsayılan değerler
-    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor..."}
+def get_tcmb_data_user_logic(api_key, donem_etiketi):
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Bekleniyor"}
     
-    # URL Hazırla (TP.FG.J0=TÜFE, TP.TUFE1YI.K1=Yİ-ÜFE, TP.TUFE1YI.T1=Alternatif ÜFE)
-    series = "TP.FG.J0-TP.TUFE1YI.K1-TP.TUFE1YI.T1-TP.HKFE01.I1"
-    end_date = datetime.now().strftime("%d-%m-%Y")
-    start_date = (datetime.now() - pd.DateOffset(months=60)).strftime("%d-%m-%Y")
-    
-    url = f"https://evds2.tcmb.gov.tr/service/evds/series={series}&startDate={start_date}&endDate={end_date}&type=json&key={MY_API_KEY}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
+    if not api_key: return result
 
     try:
-        r = requests.get(url, headers=headers, verify=False, timeout=15)
+        evds_api = evds.evdsAPI(api_key)
         
-        if r.status_code == 200:
-            data_json = r.json()
-            if "items" in data_json:
-                df = pd.DataFrame(data_json["items"])
-                
-                # Temizlik ve Sayısallaştırma
-                cols_to_check = ['TP_FG_J0', 'TP_TUFE1YI_K1', 'TP_TUFE1YI_T1', 'TP_HKFE01_I1']
-                for col in cols_to_check:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                
-                # En azından TÜFE sütunu dolu olanları al
-                df.dropna(subset=['TP_FG_J0'], inplace=True)
-                
-                if len(df) > 2:
-                    son_row = df.iloc[-1]
-                    
-                    # Dönem Seçimi
-                    lookback = 1
-                    if donem_tipi == "3 Ay": lookback = 3
-                    elif donem_tipi == "6 Ay": lookback = 6
-                    elif donem_tipi == "1 Yıl": lookback = 12
-                    elif "YTD" in donem_tipi:
-                        lookback = datetime.now().month
-                        if len(df) < lookback: lookback = len(df) - 1
-                    
-                    idx = -(lookback + 1)
-                    if abs(idx) > len(df): idx = 0
-                    ilk_row = df.iloc[idx]
-                    
-                    def calc(n, o):
-                        try: return ((float(n) - float(o)) / float(o)) * 100
-                        except: return 0.0
+        # 1. REFERANS TARİHLERİ BELİRLE (Dateutil ile)
+        today = date.today()
+        # Enflasyon verisi bir önceki ayın 3'ünde açıklanır. Garanti olsun diye geçen ayı baz alalım.
+        target_date = today.replace(day=1) - relativedelta(months=1)
+        
+        # Geçmiş Tarihi Hesapla
+        if donem_etiketi == "1 Ay": past_date = target_date - relativedelta(months=1)
+        elif donem_etiketi == "3 Ay": past_date = target_date - relativedelta(months=3)
+        elif donem_etiketi == "6 Ay": past_date = target_date - relativedelta(months=6)
+        elif donem_etiketi == "1 Yıl": past_date = target_date - relativedelta(months=12)
+        elif "YTD" in donem_etiketi: past_date = date(target_date.year - 1, 12, 1)
+        else: past_date = target_date - relativedelta(months=1)
 
-                    # 1. TÜFE HESABI
-                    result["TUFE"] = round(calc(son_row.get('TP_FG_J0', 0), ilk_row.get('TP_FG_J0', 0)), 2)
-                    
-                    # 2. ÜFE HESABI (Kritik Düzeltme: K1 yoksa T1'i dene)
-                    ufe_son = son_row.get('TP_TUFE1YI_K1')
-                    ufe_ilk = ilk_row.get('TP_TUFE1YI_K1')
-                    
-                    # Eğer K1 (Yurt İçi) boşsa, T1 (Toplam) verisini al
-                    if pd.isna(ufe_son) or ufe_son == 0:
-                        ufe_son = son_row.get('TP_TUFE1YI_T1', 0)
-                        ufe_ilk = ilk_row.get('TP_TUFE1YI_T1', 0)
-                        
-                    result["UFE"] = round(calc(ufe_son, ufe_ilk), 2)
-                    
-                    # 3. H-ÜFE HESABI
-                    h_son = son_row.get('TP_HKFE01_I1', 0)
-                    h_ilk = ilk_row.get('TP_HKFE01_I1', 0)
-                    if pd.notna(h_son) and h_son != 0:
-                        result["HUFE"] = round(calc(h_son, h_ilk), 2)
-                    
-                    result["Status"] = True
-                    result["Msg"] = f"Dönem: {ilk_row.get('Tarih')} -> {son_row.get('Tarih')}"
-            else:
-                result["Msg"] = "API Yanıtı Boş (Key Kontrol)"
-        else:
-            result["Msg"] = f"Hata Kodu: {r.status_code}"
+        # 2. VERİYİ ÇEK (Geniş Aralık)
+        # Sadece ihtiyacımız olan aralığı değil, biraz öncesini ve sonrasını da çekelim ki period eşleşsin
+        start_q = (past_date - relativedelta(months=2)).strftime("%d-%m-%Y")
+        end_q = datetime.now().strftime("%d-%m-%Y")
+        
+        # Kodlar: TÜFE, Yİ-ÜFE (K1), H-ÜFE
+        series = ["TP.FG.J0", "TP.TUFE1YI.K1", "TP.HKFE01.I1"]
+        
+        df = evds_api.get_data(series, startdate=start_q, enddate=end_q)
+        
+        if df is None or df.empty:
+            result["Msg"] = "API Boş Döndü"
+            return result
             
+        # 3. TARİH EŞLEŞTİRME (SİZİN YÖNTEMİNİZ)
+        df['Tarih_Dt'] = pd.to_datetime(df['Tarih'], format='%Y-%m')
+        
+        # Hedef ve Geçmiş Periyotlar
+        target_p = pd.Period(target_date, freq='M')
+        past_p = pd.Period(past_date, freq='M')
+        
+        # Satırları Bul
+        row_now = df[df['Tarih_Dt'].dt.to_period('M') == target_p]
+        row_old = df[df['Tarih_Dt'].dt.to_period('M') == past_p]
+        
+        # Eğer tam o ay yoksa (henüz açıklanmadıysa), bir önceki ayı dene
+        if row_now.empty:
+            target_p = target_p - 1
+            row_now = df[df['Tarih_Dt'].dt.to_period('M') == target_p]
+            
+        if row_now.empty or row_old.empty:
+            result["Msg"] = f"Tarih Eşleşmedi ({past_p} - {target_p})"
+            return result
+            
+        # 4. HESAPLAMA
+        def extract_val(row, col_name):
+            val = row[col_name].values[0]
+            return float(val) if pd.notna(val) else 0.0
+
+        # Sütun isimleri bazen nokta bazen alt tire gelir, kontrol edelim
+        cols = df.columns
+        c_tufe = "TP_FG_J0" if "TP_FG_J0" in cols else "TP.FG.J0"
+        c_ufe = "TP_TUFE1YI_K1" if "TP_TUFE1YI_K1" in cols else "TP.TUFE1YI.K1"
+        c_hufe = "TP_HKFE01_I1" if "TP_HKFE01_I1" in cols else "TP.HKFE01.I1"
+
+        tufe_now = extract_val(row_now, c_tufe)
+        tufe_old = extract_val(row_old, c_tufe)
+        
+        ufe_now = extract_val(row_now, c_ufe)
+        ufe_old = extract_val(row_old, c_ufe)
+        
+        h_now = extract_val(row_now, c_hufe) if c_hufe in cols else 0
+        h_old = extract_val(row_old, c_hufe) if c_hufe in cols else 0
+        
+        def calc(n, o):
+            if o == 0: return 0.0
+            return ((n - o) / o) * 100
+
+        result["TUFE"] = round(calc(tufe_now, tufe_old), 2)
+        result["UFE"] = round(calc(ufe_now, ufe_old), 2)
+        result["HUFE"] = round(calc(h_now, h_old), 2)
+        
+        result["Status"] = True
+        result["Msg"] = f"Dönem: {past_p} ➡️ {target_p}"
+        
     except Exception as e:
         result["Msg"] = f"Hata: {str(e)}"
         
@@ -136,7 +143,7 @@ with st.sidebar:
     selected_period = y_map[donem_secimi]
     
     # TCMB ÇEK
-    tcmb_data = get_inflation_data(donem_secimi)
+    tcmb_data = get_tcmb_data_user_logic(MY_API_KEY, donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -243,6 +250,7 @@ with c_inf_status:
     else: st.warning(f"⚠️ {tcmb_data['Msg']}")
 
 ec1, ec2, ec3, ec4, ec5 = st.columns(5)
+# DİNAMİK VERİ: API'den gelen veriyi default value olarak ata
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"], key=f"t_{donem_secimi}")
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"], key=f"u_{donem_secimi}")
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"], key=f"h_{donem_secimi}")
