@@ -2,23 +2,53 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import evds
-from datetime import datetime, date
+from datetime import datetime
+
+# --- API ANAHTARI (Sisteme Gömüldü) ---
+MY_API_KEY = "Uol1kIOQos"
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="⛽")
+st.set_page_config(page_title="SK - Procurement", layout="wide", page_icon="📱")
 
-# --- CSS Tasarım ---
+# --- CSS Tasarım (Mobil & Dark Mode Fix) ---
 st.markdown("""
     <style>
+    /* Logo */
     .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
-    .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
-    .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
-    .kutu *, .kutu-enerji * { color: #1E3D59 !important; }
+    
+    /* Kutu Genel */
+    .kutu, .kutu-enerji { 
+        padding: 15px; border-radius: 10px; margin-bottom: 12px; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    }
+    
+    /* Finans Kutusu */
+    .kutu { 
+        background-color: #f8f9fa !important; 
+        border-left: 6px solid #1E3D59 !important; 
+    }
+    
+    /* Enerji Kutusu */
+    .kutu-enerji { 
+        background-color: #fffcf5 !important; 
+        border-left: 6px solid #F39C12 !important; 
+    }
+    
+    /* Yazı Renklerini Zorla Koyu Yap (Dark Mode Sorununu Çözer) */
+    .kutu *, .kutu-enerji *, .kutu b, .kutu-enerji b { 
+        color: #1E3D59 !important; 
+    }
+    
+    /* Özel Renkler */
     .pozitif { color: #27AE60 !important; font-weight: bold; font-size: 18px; }
     .negatif { color: #C0392B !important; font-weight: bold; font-size: 18px; }
     .prediction-tag { font-size: 11px; background-color: #e8f5e9 !important; color: #2e7d32 !important; padding: 3px 6px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 4px; }
+    
+    /* Link Butonları */
     .stLinkButton a { color: #1E3D59 !important; font-weight: bold !important; text-decoration: none; }
+    
+    /* Input Alanı Başlıkları */
+    div[data-testid="stNumberInput"] label { font-size: 13px !important; color: #333 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -27,90 +57,75 @@ def tr_fmt(deger):
     if isinstance(deger, (int, float)):
         s = "{:,.2f}".format(deger)
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
-    return deger
+    return "0,00"
 
-# --- TCMB GENİŞ ARALIKLI VERİ ÇEKME (v15.0) ---
+# --- TCMB VERİ MOTORU (GÜÇLENDİRİLMİŞ) ---
 @st.cache_data(ttl=3600)
-def get_dynamic_inflation(api_key, donem_adi):
-    # Varsayılan
-    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": ""}
+def get_tcmb_data(donem_tipi):
+    result = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Başlatılıyor..."}
     
-    if not api_key:
-        result["Msg"] = "Anahtar Yok"
-        return result
-
     try:
-        evds_api = evds.evdsAPI(api_key)
+        api = evds.evdsAPI(MY_API_KEY)
         
-        # STRATEJİ DEĞİŞİKLİĞİ: Son 24 ayı komple çek, Python ile filtrele.
-        # Bu yöntem "tarih bulunamadı" hatasını engeller.
-        end_date = datetime.now().strftime("%d-%m-%Y")
-        start_date = (datetime.now() - pd.DateOffset(months=24)).strftime("%d-%m-%Y")
+        # Son 3 yılın verisini çek (Garantili Yöntem)
+        end = datetime.now().strftime("%d-%m-%Y")
+        start = (datetime.now() - pd.DateOffset(months=36)).strftime("%d-%m-%Y")
         
-        # Kodlar: TÜFE, Yİ-ÜFE, H-ÜFE
-        series = ['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1']
-        df = evds_api.get_data(series, startdate=start_date, enddate=end_date)
+        # TP.FG.J0 = TÜFE
+        # TP.TUFE1YI.K1 = Yİ-ÜFE
+        # TP.HKFE01.I1 = H-ÜFE (Hizmet)
+        df = api.get_data(['TP.FG.J0', 'TP.TUFE1YI.K1', 'TP.HKFE01.I1'], startdate=start, enddate=end)
         
         if df is None or df.empty:
-            result["Msg"] = "API Bağlandı ama veri boş"
+            result["Msg"] = "TCMB yanıt vermedi."
             return result
             
-        # Sadece TÜFE ve ÜFE dolu olan satırları al (H-ÜFE bazen eksik olabilir, onu ayrı tut)
-        df_clean = df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1']).copy()
+        # Boş verileri temizle
+        df.dropna(subset=['TP_FG_J0', 'TP_TUFE1YI_K1'], inplace=True)
         
-        if len(df_clean) < 2:
-            result["Msg"] = "Yetersiz Veri (Satır < 2)"
+        if len(df) < 2:
+            result["Msg"] = "Veri yetersiz."
             return result
-
-        # --- DÖNEM SEÇİMİ ---
-        # Veriler sondan başa doğru (En son tarih en altta)
-        son_veri = df_clean.iloc[-1]
+            
+        # --- DÖNEM HESABI ---
+        son_row = df.iloc[-1]
         
-        # Kaç ay geriye gideceğiz?
+        # Geriye dönük kaç ay gideceğiz?
         lookback = 1
-        if donem_adi == "3 Ay": lookback = 3
-        elif donem_adi == "6 Ay": lookback = 6
-        elif donem_adi == "1 Yıl": lookback = 12
-        elif donem_adi == "Yılbaşından Bugüne (YTD)":
-            bugun_ay = datetime.now().month
-            # Yılbaşından beri geçen ay sayısı (Ocak=1 ise lookback=1)
-            lookback = bugun_ay if len(df_clean) >= bugun_ay else len(df_clean)-1
-
-        # İndeks Hesaplama (Listeden taşmamak için kontrol)
-        if lookback >= len(df_clean):
-            ilk_veri = df_clean.iloc[0] # Yeterince veri yoksa en başı al
-        else:
-            ilk_veri = df_clean.iloc[-(lookback + 1)] 
+        if donem_tipi == "3 Ay": lookback = 3
+        elif donem_tipi == "6 Ay": lookback = 6
+        elif donem_tipi == "1 Yıl": lookback = 12
+        elif donem_tipi == "Yılbaşından Bugüne (YTD)":
+            lookback = datetime.now().month
+            if len(df) < lookback: lookback = len(df) - 1
+            
+        # Listeden taşmamak için kontrol
+        idx = -(lookback + 1)
+        if abs(idx) > len(df): idx = 0 
         
-        # --- HESAPLAMA ---
-        # ((Yeni - Eski) / Eski) * 100
+        ilk_row = df.iloc[idx]
         
-        # 1. TÜFE
-        try:
-            t_son = float(son_veri['TP_FG_J0'])
-            t_ilk = float(ilk_veri['TP_FG_J0'])
-            result["TUFE"] = round(((t_son - t_ilk) / t_ilk) * 100, 2)
-        except: result["TUFE"] = 0.0
+        # Oran Hesaplama
+        def calc_change(now, old):
+            try:
+                return ((float(now) - float(old)) / float(old)) * 100
+            except:
+                return 0.0
 
-        # 2. ÜFE
-        try:
-            u_son = float(son_veri['TP_TUFE1YI_K1'])
-            u_ilk = float(ilk_veri['TP_TUFE1YI_K1'])
-            result["UFE"] = round(((u_son - u_ilk) / u_ilk) * 100, 2)
-        except: result["UFE"] = 0.0
+        result["TUFE"] = round(calc_change(son_row['TP_FG_J0'], ilk_row['TP_FG_J0']), 2)
+        result["UFE"] = round(calc_change(son_row['TP_TUFE1YI_K1'], ilk_row['TP_TUFE1YI_K1']), 2)
         
-        # 3. H-ÜFE (Hata verirse 0 geç)
+        # H-ÜFE bazen boş gelebilir
         try:
-            # H-ÜFE verisi bazen ana tabloda NaN olabilir, orijinal df'den kontrol edelim
-            h_series = df['TP_HKFE01.I1'].dropna()
-            if len(h_series) > lookback:
-                h_son = float(h_series.iloc[-1])
-                h_ilk = float(h_series.iloc[-(lookback + 1)])
-                result["HUFE"] = round(((h_son - h_ilk) / h_ilk) * 100, 2)
-        except: result["HUFE"] = 0.0
-
+            if 'TP_HKFE01.I1' in df.columns:
+                h_now = df['TP_HKFE01.I1'].iloc[-1]
+                h_old = df['TP_HKFE01.I1'].iloc[idx]
+                result["HUFE"] = round(calc_change(h_now, h_old), 2)
+        except:
+            result["HUFE"] = 0.0
+            
         result["Status"] = True
-        result["Msg"] = f"Veri: {ilk_veri['Tarih']} - {son_veri['Tarih']}"
+        result["Msg"] = f"Dönem: {ilk_row['Tarih']} - {son_row['Tarih']}"
         
     except Exception as e:
         result["Msg"] = f"Hata: {str(e)}"
@@ -124,28 +139,21 @@ with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
     st.header("⚙️ Ayarlar")
     
-    tcmb_key = st.text_input("TCMB API Anahtarı:", type="password", placeholder="Anahtarı buraya yapıştırın...")
-    
-    st.markdown("---")
     donem_secimi = st.selectbox("Analiz Dönemi:", ["1 Ay", "3 Ay", "6 Ay", "Yılbaşından Bugüne (YTD)", "1 Yıl"], index=0)
     
-    # ENFLASYON ÇEKME (Yeni Fonksiyon)
-    if tcmb_key:
-        with st.spinner("TCMB Verisi Taranıyor..."):
-            tcmb_data = get_dynamic_inflation(tcmb_key, donem_secimi)
-    else:
-        tcmb_data = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Anahtar Yok"}
-
-    period_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
-    selected_period = period_map[donem_secimi]
+    # YAHOO DÖNEM MAP
+    y_map = {"1 Ay": "1mo", "3 Ay": "3mo", "6 Ay": "6mo", "Yılbaşından Bugüne (YTD)": "ytd", "1 Yıl": "1y"}
+    selected_period = y_map[donem_secimi]
+    
+    # TCMB VERİSİNİ ÇEK
+    with st.spinner("TCMB Verisi Alınıyor..."):
+        tcmb_data = get_tcmb_data(donem_secimi)
 
     st.markdown("---")
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     try:
-        temiz_tutar = tutar_giris.replace(".", "").replace(",", ".")
-        sozlesme_tutari = float(temiz_tutar)
+        sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except:
-        st.error("Lütfen geçerli bir sayı giriniz")
         sozlesme_tutari = 0.0
 
 # ============================================================================
@@ -161,17 +169,15 @@ def piyasa_verisi_al(periyot):
     hata = False
     try:
         df = yf.download(list(tickers.values()), period=periyot, progress=False)['Close']
-        if df.empty:
-            hata = True
+        if df.empty: hata = True
         else:
             for key, symbol in tickers.items():
                 try:
-                    col_name = symbol
-                    if col_name not in df.columns:
-                        col_temp = [c for c in df.columns if symbol in str(c)]
-                        if col_temp: col_name = col_temp[0]
-                        else: continue
-                    seri = df[col_name].dropna()
+                    # Sütun adı bulma
+                    c_name = [c for c in df.columns if symbol in str(c)]
+                    if not c_name: continue
+                    
+                    seri = df[c_name[0]].dropna()
                     if len(seri) > 1:
                         ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
                         degisim = ((son - ilk) / ilk) * 100
@@ -179,6 +185,7 @@ def piyasa_verisi_al(periyot):
                     else: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
                 except: data_dict[key] = {"ilk": 0, "son": 0, "degisim": 0}
             
+            # Gram Altın
             if "ONS_ALTIN" in data_dict and "USDTRY" in data_dict:
                 g_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
                 g_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
@@ -189,7 +196,6 @@ def piyasa_verisi_al(periyot):
 
 piyasa, hata = piyasa_verisi_al(selected_period)
 if hata:
-    st.warning("⚠️ Yahoo verisi alınamadı.")
     for d in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "BRENT_PETROL", "GRAM_ALTIN_TL"]:
         if d not in piyasa: piyasa[d] = {"ilk": 0, "son": 0, "degisim": 0}
 
@@ -197,30 +203,18 @@ if hata:
 # 3. GÖSTERGE PANELİ
 # ============================================================================
 st.title("📱 Finans Kokpiti")
-st.markdown(f"**Dönem:** {donem_secimi}")
+st.caption(f"Veri Dönemi: {donem_secimi}")
 
 def kutu(col, baslik, key, ikon):
     val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
     ilk, son, deg = val["ilk"], val["son"], val["degisim"]
     with col:
-        st.markdown(f"""
-        <div class='kutu'>
-            <div style='display:flex; align-items:center; margin-bottom:5px;'>
-                <span style='font-size:20px; margin-right:8px;'>{ikon}</span>
-                <b style='font-size:16px;'>{baslik}</b>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if son == 0: deg = st.number_input(f"{baslik} (%)", value=0.0, step=0.1, key=key)
+        st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; margin-bottom:5px;'><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div>", unsafe_allow_html=True)
+        if son == 0: deg = st.number_input(f"{baslik} %", value=0.0, step=0.1, key=key)
         else:
-            renk_class = "pozitif" if deg >= 0 else "negatif"
+            renk = "pozitif" if deg >= 0 else "negatif"
             st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
-            st.markdown(f"""
-                <div style='display:flex; justify-content:space-between; align-items:baseline;'>
-                    <span style='font-size:22px; font-weight:bold; color:#1E3D59 !important;'>{tr_fmt(son)}</span>
-                    <span class='{renk_class}'>%{deg:+.2f}</span>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
     return deg
 
@@ -230,130 +224,100 @@ d_eur = kutu(k2, "EUR/TL", "EURTRY", "💶")
 d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
 d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-# ============================================================================
-# 4. ENERJİ
-# ============================================================================
+# ENERJİ
 st.markdown("---")
-col_link_fuel, _ = st.columns([1,3])
-col_link_fuel.link_button("⛽ Petrol Ofisi Arşiv", "https://www.petrolofisi.com.tr/arsiv-fiyatlari")
-
-st.markdown("### 🛢️ Enerji")
 e1, e2, e3, e4 = st.columns(4)
-
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
 ref_tahmin = d_brent + d_usd
 
 with e2:
-    st.markdown(f"""
-    <div class='kutu-enerji'>
-        <div style='display:flex; align-items:center;'>
-             <span style='font-size:20px; margin-right:8px;'>⛽</span> <b>Benzin</b>
-        </div>
-        <span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>
-    """, unsafe_allow_html=True)
-    b_eski = st.number_input("Eski (TL)", value=42.0, step=0.5, key="b_o")
-    b_yeni = st.number_input("Yeni (TL)", value=44.0, step=0.5, key="b_n")
-    if b_eski > 0: d_benzin = ((b_yeni - b_eski) / b_eski) * 100
-    else: d_benzin = 0.0
-    renk_class = "pozitif" if d_benzin >= 0 else "negatif"
-    st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b><br><span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>", unsafe_allow_html=True)
+    b_eski = st.number_input("Eski", value=42.0, key="b_o")
+    b_yeni = st.number_input("Yeni", value=44.0, key="b_n")
+    d_benzin = ((b_yeni-b_eski)/b_eski)*100 if b_eski>0 else 0
+    st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
 with e3:
-    st.markdown(f"""
-    <div class='kutu-enerji'>
-        <div style='display:flex; align-items:center;'>
-             <span style='font-size:20px; margin-right:8px;'>🚛</span> <b>Motorin</b>
-        </div>
-        <span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>
-    """, unsafe_allow_html=True)
-    m_eski = st.number_input("Eski (TL)", value=43.0, step=0.5, key="m_o")
-    m_yeni = st.number_input("Yeni (TL)", value=45.0, step=0.5, key="m_n")
-    if m_eski > 0: d_dizel = ((m_yeni - m_eski) / m_eski) * 100
-    else: d_dizel = 0.0
-    renk_class = "pozitif" if d_dizel >= 0 else "negatif"
-    st.markdown(f"<div style='text-align:right;'><span class='{renk_class}'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b><br><span class='prediction-tag'>Tahmin: %{ref_tahmin:.1f}</span>", unsafe_allow_html=True)
+    m_eski = st.number_input("Eski", value=43.0, key="m_o")
+    m_yeni = st.number_input("Yeni", value=45.0, key="m_n")
+    d_dizel = ((m_yeni-m_eski)/m_eski)*100 if m_eski>0 else 0
+    st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
 kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# 5. ENFLASYON (DİNAMİK + GENİŞ ARALIK)
+# 5. ENFLASYON & İŞÇİLİK
 # ============================================================================
 st.markdown("---")
 c_inf_title, c_inf_status = st.columns([2, 2])
-with c_inf_title:
-    st.markdown("### 📈 Enflasyon & Sepet")
+with c_inf_title: st.markdown("### 📈 Enflasyon & İşçilik")
 with c_inf_status:
-    if tcmb_data["Status"]:
-        st.success(f"✅ {tcmb_data['Msg']}")
-    else:
-        # Hata mesajını daha detaylı göster
-        st.error(f"⚠️ {tcmb_data['Msg']}")
+    if tcmb_data["Status"]: st.success(f"✅ {tcmb_data['Msg']}")
+    else: st.error(f"⚠️ {tcmb_data['Msg']}")
 
-ec1, ec2, ec3, ec4 = st.columns(4)
-
-# Değerleri Otomatik Doldur
+ec1, ec2, ec3, ec4, ec5 = st.columns(5)
 tufe = ec1.number_input("TÜFE %", value=tcmb_data["TUFE"])
 ufe = ec2.number_input("ÜFE %", value=tcmb_data["UFE"])
 h_ufe = ec3.number_input("H-ÜFE %", value=tcmb_data["HUFE"])
-abd_enf = ec4.number_input("ABD Enf.%", value=0.4)
+iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari ücret artışı")
+abd_enf = ec5.number_input("ABD Enf.%", value=0.4)
 ozel_oran = (tufe + ufe) / 2
 
+# ============================================================================
+# 6. SEPET
+# ============================================================================
 st.markdown("---")
 st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
 
-w1, w2, w3 = st.columns(3)
-w_ozel = w1.number_input("Karma (Mix) %", value=0)
-w_tufe = w2.number_input("Saf TÜFE %", value=40)
+w1, w2, w3, w4 = st.columns(4)
+w_ozel = w1.number_input("Karma (TÜFE+ÜFE)/2 %", value=0)
+w_tufe = w2.number_input("Saf TÜFE %", value=30)
 w_ufe = w3.number_input("Saf ÜFE %", value=0)
+w_hufe = w4.number_input("H-ÜFE %", value=10)
 
-w4, w5, w6 = st.columns(3)
-w_hufe = w4.number_input("H-ÜFE %", value=20)
-w_usd = w5.number_input("USD %", value=20)
-w_eur = w6.number_input("EUR %", value=10)
+w5, w6, w7, w8 = st.columns(4)
+w_iscilik = w5.number_input("İşçilik %", value=30)
+w_usd = w6.number_input("USD %", value=20)
+w_eur = w7.number_input("EUR %", value=10)
+w_altin = w8.number_input("Altın %", value=0)
 
-w7, w8, w9 = st.columns(3)
-w_benzin = w7.number_input("Benzin %", value=0)
-w_dizel = w8.number_input("Motorin %", value=10)
-w_brent = w9.number_input("Brent %", value=0)
-w_altin = st.number_input("Altın %", value=0)
+w9, w10, w11, w12 = st.columns(4)
+w_benzin = w9.number_input("Benzin %", value=0)
+w_dizel = w10.number_input("Motorin %", value=0)
+w_brent = w11.number_input("Brent %", value=0)
+w_abd = w12.number_input("ABD Enf. %", value=0)
 
-toplam_agirlik = w_ozel+w_tufe+w_ufe+w_hufe+w_usd+w_eur+w_brent+w_benzin+w_dizel+w_altin
+toplam = w_ozel+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
 
-if toplam_agirlik != 100:
-    st.error(f"⚠️ Toplam: %{toplam_agirlik}")
+if toplam != 100:
+    st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı)")
 else:
-    etki_ozel = w_ozel * ozel_oran
-    etki_tufe = w_tufe * tufe
-    etki_ufe = w_ufe * ufe
-    etki_hufe = w_hufe * h_ufe
-    etki_usd = w_usd * d_usd
-    etki_eur = w_eur * d_eur
-    etki_brent = w_brent * d_brent
-    etki_benzin = w_benzin * d_benzin
-    etki_dizel = w_dizel * d_dizel
-    etki_altin = w_altin * d_gram 
+    # Hesaplama
+    etkiler = [
+        ("Karma", ozel_oran, w_ozel), ("TÜFE", tufe, w_tufe), ("ÜFE", ufe, w_ufe), ("H-ÜFE", h_ufe, w_hufe),
+        ("İşçilik", iscilik, w_iscilik), ("USD", d_usd, w_usd), ("EUR", d_eur, w_eur), ("Altın", d_gram, w_altin),
+        ("Benzin", d_benzin, w_benzin), ("Motorin", d_dizel, w_dizel), ("Brent", d_brent, w_brent), ("ABD Enf", abd_enf, w_abd)
+    ]
     
-    zam = (etki_ozel + etki_tufe + etki_ufe + etki_hufe + etki_usd + etki_eur + etki_brent + etki_benzin + etki_dizel + etki_altin) / 100
+    zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
-    yeni_tutar = sozlesme_tutari + fark
+    yeni = sozlesme_tutari + fark
     
-    st.success(f"YENİ TUTAR: {tr_fmt(yeni_tutar)} TL")
-    st.info(f"Fark: {tr_fmt(fark)} TL (+%{zam:.2f})")
+    st.markdown("---")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Toplam Artış", f"%{zam:.2f}")
+    r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
+    r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    data = {
-        "Kalem": ["TÜFE+ÜFE/2", "TÜFE", "ÜFE", "H-ÜFE", "Dolar", "Euro", "Brent", "Benzin", "Motorin", "Altın"],
-        "Değişim %": [ozel_oran, tufe, ufe, h_ufe, d_usd, d_eur, d_brent, d_benzin, d_dizel, d_gram],
-        "Ağırlık %": [w_ozel, w_tufe, w_ufe, w_hufe, w_usd, w_eur, w_brent, w_benzin, w_dizel, w_altin]
-    }
+    # Tablo
+    data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
+    for ad, deg, agr in etkiler:
+        if agr > 0:
+            data["Kalem"].append(ad)
+            data["Değişim %"].append(deg)
+            data["Ağırlık %"].append(agr)
+            data["Etki %"].append((deg*agr)/100)
+            
     df = pd.DataFrame(data)
-    df = df[df["Ağırlık %"] > 0]
-    df["Etki %"] = (df["Değişim %"] * df["Ağırlık %"]) / 100
-    
-    st.dataframe(
-        df.style.format({
-            "Değişim %": "{:.2f}",
-            "Ağırlık %": "{:.0f}",
-            "Etki %": "{:.2f}"
-        }),
-        use_container_width=True
-    )
+    st.dataframe(df.style.format("{:.2f}"), use_container_width=True)
