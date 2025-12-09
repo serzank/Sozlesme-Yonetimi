@@ -10,8 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 import io
 
-# --- KÜTÜPHANE KONTROLÜ (HATA ÖNLEYİCİ) ---
-# Sir, Streamlit Cloud'da çökmemesi için bu güvenlik bloğunu tekrar aktif ettim.
+# --- KÜTÜPHANE KONTROLÜ ---
 try:
     import matplotlib.pyplot as plt
     HAS_MATPLOTLIB = True
@@ -33,13 +32,12 @@ try:
 except:
     MY_API_KEY = "Uol1kIOQos" 
 
-# --- Sayfa Ayarları ---
-st.set_page_config(page_title="SK - Procurement Specialist", layout="wide", page_icon="🛡️")
+# --- Sayfa Ayarları (COST NEXUS GÜNCELLEMESİ) ---
+st.set_page_config(page_title="Cost Nexus | Financial Node", layout="wide", page_icon="💠")
 
 # --- CSS Tasarım ---
 st.markdown("""
     <style>
-    .logo-text { font-size: 22px !important; font-weight: 900 !important; color: #D91E18 !important; font-family: sans-serif; margin-bottom: 20px; }
     .kutu, .kutu-enerji { padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .kutu { background-color: #f8f9fa !important; border-left: 6px solid #1E3D59 !important; color: #1E3D59 !important; }
     .kutu-enerji { background-color: #fffcf5 !important; border-left: 6px solid #F39C12 !important; color: #1E3D59 !important; }
@@ -51,14 +49,39 @@ st.markdown("""
     .badge-live { background-color: #27AE60; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; vertical-align: middle; }
     .badge-tcmb { background-color: #1E3D59; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; vertical-align: middle; margin-left: 5px; }
     .badge-est { background-color: #F39C12; color: white !important; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold; vertical-align: middle; margin-left: 5px; }
-    /* Tarih Seçici Genişlik Ayarı */
     div[data-testid="stDateInput"] { width: 100% !important; }
-    /* Buton Ayarları */
     .stButton button { width: 100%; border-radius: 5px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- YARDIMCI FONKSİYONLAR ---
+def render_svg_logo():
+    """Cost Nexus Logosunu SVG olarak çizer (Financial Node Konsepti)"""
+    return """
+    <svg width="280" height="70" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:#1E3D59;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#2C3E50;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      
+      <path d="M40 35 L70 35" stroke="#27AE60" stroke-width="2" />
+      <path d="M40 35 L30 15" stroke="#27AE60" stroke-width="1" />
+      <path d="M40 35 L30 55" stroke="#27AE60" stroke-width="1" />
+      
+      <polygon points="40,15 57,25 57,45 40,55 23,45 23,25" fill="#1E3D59" stroke="#27AE60" stroke-width="2" />
+      
+      <text x="32" y="42" font-family="Arial" font-weight="bold" font-size="20" fill="#fff">₺</text>
+      
+      <text x="75" y="32" font-family="Verdana" font-weight="bold" font-size="22" fill="#1E3D59">COST</text>
+      <text x="75" y="52" font-family="Verdana" font-weight="bold" font-size="22" fill="#27AE60">NEXUS</text>
+      
+      <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-style="italic">procure</text>
+      <text x="160" y="52" font-family="Arial" font-size="10" fill="#888" font-style="italic">vision</text>
+    </svg>
+    """
+
 def tr_fmt(deger):
     try:
         if pd.isna(deger) or deger is None: deger = 0.0
@@ -80,7 +103,6 @@ def get_auto_weights(contract_type):
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
         "benzin": 0, "dizel": 0, "brent": 0, "abd": 0
     }
-    
     if contract_type == "Personel Taşımacılık":
         w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
     elif contract_type == "Yiyecek-İçecek Hizmetleri":
@@ -239,11 +261,14 @@ def get_evds_fuel_history(api_key, d_start):
     return res
 
 # ============================================================================
-# SOL MENÜ
+# SOL MENÜ (LOGO VE AYARLAR)
 # ============================================================================
 with st.sidebar:
-    st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
-    st.info("ℹ️ Verilerin birleşim noktasına hoşgeldiniz.")
+    # --- COST NEXUS LOGO (SVG) ---
+    st.markdown(render_svg_logo(), unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
+    
+    st.info("ℹ️ Tarih seçimi, 13'' ekranlarda görünüm kolaylığı sağlamak için ana ekrana taşınmıştır.")
     st.markdown("---")
     
     sozlesme_tipi = st.selectbox(
@@ -260,7 +285,8 @@ with st.sidebar:
 # ============================================================================
 # ANA EKRAN - ÜST KISIM (AKILLI TARİH SEÇİMİ)
 # ============================================================================
-st.markdown("#### 📅 Sözleşme Tarih Aralığı")
+# Başlığı kaldırdım çünkü Logo zaten "Cost Nexus" diyor
+# st.markdown("#### 📅 Sözleşme Tarih Aralığı")
 
 # --- JARVIS OTOMATİK TARİH MODÜLÜ ---
 if 'ss_start' not in st.session_state:
@@ -269,10 +295,10 @@ if 'ss_end' not in st.session_state:
     st.session_state.ss_end = date.today()
 
 def set_quick_date(months):
-    # Bitiş tarihini baz alarak başlangıç tarihini geriye çeker
     st.session_state.ss_start = st.session_state.ss_end - relativedelta(months=months)
 
 with st.container(border=True): 
+    st.markdown("##### 📅 Tarih Aralığı Seçimi")
     c_date1, c_date2 = st.columns(2)
     
     with c_date1:
@@ -295,7 +321,7 @@ if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
 # VERİ ÇEKME
-with st.spinner("Jarvis Veritabanlarını Tarıyor..."):
+with st.spinner("Cost Nexus Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
@@ -352,7 +378,7 @@ piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 # ============================================================================
 # GÖSTERGE PANELİ
 # ============================================================================
-st.title("📱 Cost Nexus")
+st.title("💠 Cost Nexus: Financial Node")
 
 with st.container(border=True):
     st.subheader("📊 Piyasa Göstergeleri")
@@ -566,5 +592,3 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
-
-
