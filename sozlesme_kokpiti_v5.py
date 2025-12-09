@@ -243,7 +243,7 @@ def get_evds_fuel_history(api_key, d_start):
 # ============================================================================
 with st.sidebar:
     st.markdown('<div class="logo-text">SK - Procurement<br>Specialist</div>', unsafe_allow_html=True)
-    st.info("ℹ️ Tarih seçimi, 13'' ekranlarda görünüm kolaylığı sağlamak için ana ekrana taşınmıştır.")
+    st.info("ℹ️ Verilerin birleşim noktasına hoşgeldiniz.")
     st.markdown("---")
     
     sozlesme_tipi = st.selectbox(
@@ -566,4 +566,5 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
+
 
