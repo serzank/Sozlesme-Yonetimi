@@ -56,6 +56,54 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
+# --- YENİ: SÖZLEŞME AĞIRLIK MANTIĞI ---
+def get_auto_weights(contract_type):
+    """Sözleşme türüne göre varsayılan ağırlıkları döndürür."""
+    # Varsayılan (Sıfırlanmış)
+    w = {
+        "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
+        "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
+        "benzin": 0, "dizel": 0, "brent": 0, "abd": 0
+    }
+    
+    if contract_type == "Personel Taşımacılık":
+        # Genelde: Akaryakıt + İşçilik + Bakım(TÜFE)
+        w["dizel"] = 35
+        w["iscilik"] = 40
+        w["tufe"] = 25
+        
+    elif contract_type == "Yiyecek-İçecek Hizmetleri":
+        # Genelde: Gıda(TÜFE/Gıda Endeksi) + İşçilik + Enerji
+        w["tufe"] = 40 # Gıda temsili
+        w["iscilik"] = 40
+        w["hufe"] = 10 # Enerji/Lojistik temsili
+        w["usd"] = 10  # İthal ürünler
+        
+    elif contract_type == "Yazılım / Lisans":
+        # Genelde: Döviz endeksli
+        w["usd"] = 60
+        w["eur"] = 20
+        w["tufe"] = 20 # Yerel destek
+        
+    elif contract_type == "Bilişim Sarf (Donanım)":
+        # Genelde: Full Döviz
+        w["usd"] = 100
+        
+    elif contract_type == "Güvenlik Hizmetleri":
+        # Genelde: Çok yüksek işçilik
+        w["iscilik"] = 85
+        w["tufe"] = 10 # Kıyafet/Teçhizat
+        w["hufe"] = 5
+        
+    else: # Manuel Giriş (Varsayılan Örnek)
+        w["tufe"] = 30
+        w["iscilik"] = 30
+        w["usd"] = 20
+        w["eur"] = 10
+        w["hufe"] = 10
+        
+    return w
+
 # --- 1. WEB SCRAPING: GÜNCEL AKARYAKIT ---
 @st.cache_data(ttl=3600)
 def guncel_akaryakit_cek():
@@ -191,15 +239,10 @@ def get_evds_gold_history(api_key, d_start):
 # --- 5. YENİ: TCMB KAYITLI AKARYAKIT FİYATLARI (GENİŞLETİLMİŞ) ---
 @st.cache_data(ttl=3600)
 def get_evds_fuel_history(api_key, d_start):
-    """
-    EVDS'den geçmiş tarihli Benzin (TP.AK.U95) ve Motorin (TP.AK.MTR) fiyatlarını çeker.
-    Aralık 30 güne çıkarıldı, veri bulunamazsa 0 döner (sonra proxy devreye girer).
-    """
     res = {"benzin": 0.0, "motorin": 0.0}
     if not api_key: return res
     try:
         evds = evdsAPI(api_key)
-        # Akaryakıt verileri bazen haftalık/aylık girilir, 30 gün geriye bak
         s_date_str = (d_start - timedelta(days=30)).strftime("%d-%m-%Y")
         e_date_str = d_start.strftime("%d-%m-%Y")
         
@@ -207,13 +250,11 @@ def get_evds_fuel_history(api_key, d_start):
         
         df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
         if df is not None and not df.empty:
-            # Benzin
             cols_b = [c for c in df.columns if "TP_AK_U95" in c or "TP.AK.U95" in c]
             if cols_b:
                 s_b = pd.to_numeric(df[cols_b[0]], errors='coerce').dropna()
                 if not s_b.empty: res["benzin"] = float(s_b.iloc[-1])
             
-            # Motorin
             cols_m = [c for c in df.columns if "TP_AK_MTR" in c or "TP.AK.MTR" in c]
             if cols_m:
                 s_m = pd.to_numeric(df[cols_m[0]], errors='coerce').dropna()
@@ -229,9 +270,18 @@ with st.sidebar:
     st.info("ℹ️ Tarih seçimi, 13'' ekranlarda görünüm kolaylığı sağlamak için ana ekrana taşınmıştır.")
     
     st.markdown("---")
+    # YENİ: SÖZLEŞME TÜRÜ SEÇİMİ
+    sozlesme_tipi = st.selectbox(
+        "📄 Sözleşme Türü",
+        ["Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri"]
+    )
+    
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: sozlesme_tutari = 0.0
+    
+    # Seçilen tipe göre ağırlıkları çek
+    auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
 # ANA EKRAN - ÜST KISIM (TARİH SEÇİMİ)
@@ -363,22 +413,33 @@ d_eur = kutu(k2, "EUR/TL", "EURTRY", "💶")
 d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
 d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
+# --- YENİ: GRAFİK ALANI ---
+with st.expander("📈 Sözleşme Dönemi Kur Grafiği (USD/TRY)", expanded=True):
+    try:
+        # Grafik için veri çek
+        g_end = end_date if end_date <= date.today() else date.today()
+        df_grafik = yf.download("TRY=X", start=start_date, end=g_end + timedelta(days=1), progress=False)
+        if not df_grafik.empty:
+            # Sadece 'Close' verisini al ve temizle
+            chart_data = df_grafik['Close'] if 'Close' in df_grafik.columns else df_grafik.iloc[:,0]
+            st.line_chart(chart_data)
+        else:
+            st.info("Grafik için veri bulunamadı.")
+    except:
+        st.warning("Grafik oluşturulurken bağlantı hatası.")
+
 st.markdown("### 🛢️ Enerji")
 e1, e2, e3, e4 = st.columns(4)
 d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
 
 # --- HİBRİT AKARYAKIT MODÜLÜ (EVDS + PROXY) ---
-# 1. Yeni Fiyatlar (Zorunlu)
 benzin_yeni_val = yakit_guncel.get("benzin", 0.0) if yakit_guncel.get("benzin", 0) > 0 else 44.0
 motorin_yeni_val = yakit_guncel.get("motorin", 0.0) if yakit_guncel.get("motorin", 0) > 0 else 45.0
 
-# 2. Eski Fiyatlar (Akıllı Mantık)
 is_proxy = False
-# A. EVDS'den geldiyse direkt onu al
 if evds_fuel_ilk["benzin"] > 0:
     benzin_eski_val = evds_fuel_ilk["benzin"]
     motorin_eski_val = evds_fuel_ilk["motorin"]
-# B. EVDS yoksa, USD Değişimine göre proxy (tahmin) hesapla
 else:
     is_proxy = True
     usd_ilk = piyasa["USDTRY"]["ilk"]
@@ -388,7 +449,6 @@ else:
         benzin_eski_val = round(benzin_yeni_val * ratio, 2)
         motorin_eski_val = round(motorin_yeni_val * ratio, 2)
     else:
-        # Dolar da yoksa mecburen manuel default
         benzin_eski_val = 42.0
         motorin_eski_val = 43.0
 
@@ -396,7 +456,6 @@ with e2:
     badge = f"<span class='badge-live'>CANLI: {benzin_yeni_val} TL</span>" if yakit_guncel.get("benzin", 0) > 0 else ""
     st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b> {badge}", unsafe_allow_html=True)
     
-    # Etiket Dinamiği
     if not is_proxy: etiket_b = "Eski (TL) <span class='badge-tcmb'>✅ TCMB Arşiv</span>"
     else: etiket_b = "Eski (TL) <span class='badge-est'>⚠️ USD Bazlı Tahmin</span>"
     st.markdown(f"<label style='font-size:13px;'>{etiket_b}</label>", unsafe_allow_html=True)
@@ -440,7 +499,6 @@ with c_link: st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesapla
 if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
 else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-# --- TÜFE+ÜFE / 2 HESAPLAMASI ---
 val_tufe = safe_float(tcmb["TUFE"])
 val_ufe = safe_float(tcmb["UFE"])
 val_mix = (val_tufe + val_ufe) / 2
@@ -449,39 +507,37 @@ ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
 
 tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
 ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
-
-# Otomatik hesaplanan ortalama alanı
 ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}", help="Otomatik Hesaplanan (TÜFE+ÜFE)/2")
-
 h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
 iscilik = ec4.number_input("İşçilik %", value=0.0, help="Asgari Ücret", key=f"i_{d_key}")
 abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
 
 st.markdown("---")
-st.markdown("#### ⚖️ Sepet Ağırlıkları (Toplam 100 olmalı)")
+st.markdown("#### ⚖️ Sepet Ağırlıkları (Sözleşme Tipine Göre Otomatik)")
 
+# YENİ: OTOMATİK VALUE ATAMALARI (auto_weights kullanarak)
 w1, w2, w3, w4 = st.columns(4)
-w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=0)
-w_tufe = w2.number_input("Saf TÜFE %", value=30)
-w_ufe = w3.number_input("Saf ÜFE %", value=0)
-w_hufe = w4.number_input("H-ÜFE %", value=10)
+w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
+w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
+w_ufe = w3.number_input("Saf ÜFE %", value=auto_weights["ufe"])
+w_hufe = w4.number_input("H-ÜFE %", value=auto_weights["hufe"])
 
 w5, w6, w7, w8 = st.columns(4)
-w_iscilik = w5.number_input("İşçilik %", value=30)
-w_usd = w6.number_input("USD %", value=20)
-w_eur = w7.number_input("EUR %", value=10)
-w_altin = w8.number_input("Altın %", value=0)
+w_iscilik = w5.number_input("İşçilik %", value=auto_weights["iscilik"])
+w_usd = w6.number_input("USD %", value=auto_weights["usd"])
+w_eur = w7.number_input("EUR %", value=auto_weights["eur"])
+w_altin = w8.number_input("Altın %", value=auto_weights["altin"])
 
 w9, w10, w11, w12 = st.columns(4)
-w_benzin = w9.number_input("Benzin %", value=0)
-w_dizel = w10.number_input("Motorin %", value=0)
-w_brent = w11.number_input("Brent %", value=0)
-w_abd = w12.number_input("ABD Enf. %", value=0)
+w_benzin = w9.number_input("Benzin %", value=auto_weights["benzin"])
+w_dizel = w10.number_input("Motorin %", value=auto_weights["dizel"])
+w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
+w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
 
 toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
 
 if toplam != 100:
-    st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı)")
+    st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı). Lütfen manuel düzeltiniz.")
 else:
     etkiler = [
         ("TÜFE+ÜFE Ort.", safe_float(ort_mix_giris), safe_float(w_mix_oran)), 
