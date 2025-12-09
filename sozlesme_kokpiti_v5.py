@@ -32,8 +32,8 @@ try:
 except:
     MY_API_KEY = "Uol1kIOQos" 
 
-# --- Sayfa Ayarları (COST NEXUS GÜNCELLEMESİ) ---
-st.set_page_config(page_title="Procurement Node | Financial Datum", layout="wide", page_icon="💠")
+# --- Sayfa Ayarları ---
+st.set_page_config(page_title="PNX | Procurement Nexus", layout="wide", page_icon="💠")
 
 # --- CSS Tasarım ---
 st.markdown("""
@@ -56,7 +56,7 @@ st.markdown("""
 
 # --- YARDIMCI FONKSİYONLAR ---
 def render_svg_logo():
-    """Cost Nexus Logosunu SVG olarak çizer (Financial Node Konsepti)"""
+    """PNX Logosunu SVG olarak çizer (Financial Node Konsepti)"""
     return """
     <svg width="280" height="70" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -72,12 +72,10 @@ def render_svg_logo():
       
       <polygon points="40,15 57,25 57,45 40,55 23,45 23,25" fill="#1E3D59" stroke="#27AE60" stroke-width="2" />
       
+      <text x="75" y="45" font-family="Verdana" font-weight="900" font-size="32" fill="#1E3D59" letter-spacing="-1">PNX</text>
       
-      <text x="75" y="32" font-family="Verdana" font-weight="bold" font-size="22" fill="#1E3D59">COST</text>
-      <text x="75" y="52" font-family="Verdana" font-weight="bold" font-size="22" fill="#27AE60">NEXUS</text>
-      
-      <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-style="bold">Procurement</text>
-      <text x="160" y="52" font-family="Arial" font-size="10" fill="#888" font-style="bold">Vision</text>
+      <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-weight="bold">PROCUREMENT</text>
+      <text x="155" y="44" font-family="Arial" font-size="10" fill="#27AE60" font-weight="bold">NEXUS</text>
     </svg>
     """
 
@@ -263,7 +261,7 @@ def get_evds_fuel_history(api_key, d_start):
 # SOL MENÜ (LOGO VE AYARLAR)
 # ============================================================================
 with st.sidebar:
-    # --- COST NEXUS LOGO (SVG) ---
+    # --- PNX LOGO (SVG - GÜNCELLENMİŞ) ---
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
@@ -284,8 +282,6 @@ with st.sidebar:
 # ============================================================================
 # ANA EKRAN - ÜST KISIM (AKILLI TARİH SEÇİMİ)
 # ============================================================================
-# Başlığı kaldırdım çünkü Logo zaten "Cost Nexus" diyor
-# st.markdown("#### 📅 Sözleşme Tarih Aralığı")
 
 # --- JARVIS OTOMATİK TARİH MODÜLÜ ---
 if 'ss_start' not in st.session_state:
@@ -320,7 +316,7 @@ if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
 # VERİ ÇEKME
-with st.spinner("Cost Nexus Veritabanlarına Bağlanıyor..."):
+with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
@@ -377,7 +373,7 @@ piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 # ============================================================================
 # GÖSTERGE PANELİ
 # ============================================================================
-st.title("💠 Procurement Node | Financial Datum")
+st.title("💠 PNX | Procurement Nexus")
 
 with st.container(border=True):
     st.subheader("📊 Piyasa Göstergeleri")
@@ -444,6 +440,51 @@ with st.container(border=True):
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
+
+# ============================================================================
+# YENİ MODÜL: PNX DÖVİZ ÇEVRİM MATRİSİ (ALIM GÜCÜ ANALİZİ)
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    st.subheader("💱 PNX Value Matrix: Alım Gücü Analizi")
+    
+    # Döviz Kurlarını Hazırla (Sıfıra bölünme hatası önlemiyle)
+    u_ilk = piyasa["USDTRY"]["ilk"] if piyasa["USDTRY"]["ilk"] > 0 else 1.0
+    u_son = piyasa["USDTRY"]["son"] if piyasa["USDTRY"]["son"] > 0 else 1.0
+    
+    e_ilk = piyasa["EURTRY"]["ilk"] if piyasa["EURTRY"]["ilk"] > 0 else 1.0
+    e_son = piyasa["EURTRY"]["son"] if piyasa["EURTRY"]["son"] > 0 else 1.0
+    
+    # Hesaplamalar
+    # USD
+    tutar_usd_baslangic = sozlesme_tutari / u_ilk
+    tutar_usd_guncel = sozlesme_tutari / u_son
+    fark_usd = tutar_usd_guncel - tutar_usd_baslangic
+    
+    # EUR
+    tutar_eur_baslangic = sozlesme_tutari / e_ilk
+    tutar_eur_guncel = sozlesme_tutari / e_son
+    fark_eur = tutar_eur_guncel - tutar_eur_baslangic
+
+    # Görsel Sunum (Kolonlar)
+    c_usd, c_eur = st.columns(2)
+    
+    with c_usd:
+        st.markdown(f"**💵 USD Bazlı Değerleme**")
+        col_u1, col_u2, col_u3 = st.columns(3)
+        col_u1.metric("Başlangıç ($)", f"{tutar_usd_baslangic:,.0f}")
+        col_u2.metric("Güncel ($)", f"{tutar_usd_guncel:,.0f}")
+        col_u3.metric("Erime ($)", f"{fark_usd:,.0f}", delta_color="normal")
+    
+    with c_eur:
+        st.markdown(f"**💶 EUR Bazlı Değerleme**")
+        col_e1, col_e2, col_e3 = st.columns(3)
+        col_e1.metric("Başlangıç (€)", f"{tutar_eur_baslangic:,.0f}")
+        col_e2.metric("Güncel (€)", f"{tutar_eur_guncel:,.0f}")
+        col_e3.metric("Erime (€)", f"{fark_eur:,.0f}", delta_color="normal")
+        
+    st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
+
 
 # ============================================================================
 # HESAPLAMA MOTORU
@@ -591,8 +632,3 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
-
-
-
-
-
