@@ -77,8 +77,8 @@ def render_svg_logo():
       <text x="75" y="32" font-family="Verdana" font-weight="bold" font-size="22" fill="#1E3D59">COST</text>
       <text x="75" y="52" font-family="Verdana" font-weight="bold" font-size="22" fill="#27AE60">NEXUS</text>
       
-      <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-style="italic">procure</text>
-      <text x="160" y="52" font-family="Arial" font-size="10" fill="#888" font-style="italic">vision</text>
+      <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-style="bold">Procurement</text>
+      <text x="160" y="52" font-family="Arial" font-size="10" fill="#888" font-style="bold">Vision</text>
     </svg>
     """
 
@@ -592,3 +592,4 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
+
