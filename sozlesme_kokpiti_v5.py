@@ -33,7 +33,7 @@ except:
     MY_API_KEY = "Uol1kIOQos" 
 
 # --- Sayfa Ayarları (COST NEXUS GÜNCELLEMESİ) ---
-st.set_page_config(page_title="Cost Nexus | Financial Node", layout="wide", page_icon="💠")
+st.set_page_config(page_title="Procurement Node | Financial Datum", layout="wide", page_icon="💠")
 
 # --- CSS Tasarım ---
 st.markdown("""
@@ -591,5 +591,6 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
+
 
 
