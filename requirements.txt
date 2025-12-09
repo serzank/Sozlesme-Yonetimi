@@ -9,5 +9,6 @@ requests
 python-dateutil
 numpy
 plotly
+matplotlib
 
 
