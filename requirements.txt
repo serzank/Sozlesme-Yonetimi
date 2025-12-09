@@ -7,5 +7,7 @@ XlsxWriter
 beautifulsoup4
 requests
 python-dateutil
+numpy
+plotly
 
 
