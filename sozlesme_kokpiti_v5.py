@@ -377,7 +377,7 @@ piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 # ============================================================================
 # GÖSTERGE PANELİ
 # ============================================================================
-st.title("💠 Cost Nexus: Financial Node")
+st.title("💠 Procurement Node | Financial Datum")
 
 with st.container(border=True):
     st.subheader("📊 Piyasa Göstergeleri")
@@ -591,6 +591,7 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
+
 
 
 
