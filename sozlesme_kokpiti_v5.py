@@ -72,7 +72,6 @@ def render_svg_logo():
       
       <polygon points="40,15 57,25 57,45 40,55 23,45 23,25" fill="#1E3D59" stroke="#27AE60" stroke-width="2" />
       
-      <text x="32" y="42" font-family="Arial" font-weight="bold" font-size="20" fill="#fff">₺</text>
       
       <text x="75" y="32" font-family="Verdana" font-weight="bold" font-size="22" fill="#1E3D59">COST</text>
       <text x="75" y="52" font-family="Verdana" font-weight="bold" font-size="22" fill="#27AE60">NEXUS</text>
@@ -592,4 +591,5 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
+
 
