@@ -95,20 +95,40 @@ def safe_float(val):
     except: return 0.0
 
 # --- SÖZLEŞME AĞIRLIK MANTIĞI ---
+# --- SÖZLEŞME AĞIRLIK MANTIĞI ---
 def get_auto_weights(contract_type):
-    # --- ASGARİ ÜCRET HESAPLAYICI ---
+    w = {
+        "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
+        "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
+        "benzin": 0, "dizel": 0, "brent": 0, "abd": 0
+    }
+    if contract_type == "Personel Taşımacılık":
+        w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
+    elif contract_type == "Yiyecek-İçecek Hizmetleri":
+        w["tufe"] = 40; w["iscilik"] = 40; w["hufe"] = 10; w["usd"] = 10
+    elif contract_type == "Yazılım / Lisans":
+        w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
+    elif contract_type == "Bilişim Sarf (Donanım)":
+        w["usd"] = 100
+    elif contract_type == "Güvenlik Hizmetleri":
+        w["iscilik"] = 85; w["tufe"] = 10; w["hufe"] = 5
+    elif contract_type == "Serzan'ın Klasiği (TÜFE+ÜFE)":
+        w["mix"] = 100
+    else: 
+        w["tufe"] = 30; w["iscilik"] = 30; w["usd"] = 20; w["eur"] = 10; w["hufe"] = 10
+    return w
+
+# --- ASGARİ ÜCRET HESAPLAYICI (YENİ EKLENEN) ---
 def get_asgari_ucret_degisim(d_start, d_end):
     """
     Seçilen tarih aralığındaki Net Asgari Ücret değişimini hesaplar.
-    Veriler resmi Resmi Gazete kararlarına dayanır.
-    2025 verisi simülasyon amaçlıdır (Kullanıcı contextine göre).
     """
     # Tarihçe: (Yürürlük Tarihi, Net Tutar TL)
     # Liste en yeniden en eskiye doğru sıralanmalıdır.
     maas_tablosu = [
-        (date(2026, 1, 1), 28732.0), # 2026 Tahmini (Gelecek Projeksiyonu için)
+        (date(2026, 1, 1), 28732.0), # 2026 Tahmini
         (date(2025, 7, 1), 22102.0), # 2025 Ara Dönem (Varsayılan)
-        (date(2025, 1, 1), 22102.0), # 2025 Ocak (Temsili TAV/Piyasa Beklentisi)
+        (date(2025, 1, 1), 22102.0), # 2025 Ocak
         (date(2024, 1, 1), 17002.12),
         (date(2023, 7, 1), 11402.32),
         (date(2023, 1, 1), 8506.80),
@@ -131,27 +151,6 @@ def get_asgari_ucret_degisim(d_start, d_end):
         degisim = ((ucret_end - ucret_start) / ucret_start) * 100
         
     return degisim, ucret_start, ucret_end
-    w = {
-        "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
-        "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
-        "benzin": 0, "dizel": 0, "brent": 0, "abd": 0
-    }
-    if contract_type == "Personel Taşımacılık":
-        w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
-    elif contract_type == "Yiyecek-İçecek Hizmetleri":
-        w["tufe"] = 40; w["iscilik"] = 40; w["hufe"] = 10; w["usd"] = 10
-    elif contract_type == "Yazılım / Lisans":
-        w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
-    elif contract_type == "Bilişim Sarf (Donanım)":
-        w["usd"] = 100
-    elif contract_type == "Güvenlik Hizmetleri":
-        w["iscilik"] = 85; w["tufe"] = 10; w["hufe"] = 5
-    elif contract_type == "Serzan'ın Klasiği (TÜFE+ÜFE)":
-        w["mix"] = 100
-    else: 
-        w["tufe"] = 30; w["iscilik"] = 30; w["usd"] = 20; w["eur"] = 10; w["hufe"] = 10
-    return w
-
 # --- VERİ ÇEKME FONKSİYONLARI ---
 @st.cache_data(ttl=3600)
 def guncel_akaryakit_cek():
@@ -815,6 +814,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
