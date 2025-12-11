@@ -62,6 +62,7 @@ st.markdown("""
 
 # --- YARDIMCI FONKSİYONLAR ---
 def render_svg_logo():
+    """PNX Logosunu SVG olarak çizer (Financial Node Konsepti)"""
     return """
     <svg width="280" height="70" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -95,8 +96,6 @@ def safe_float(val):
     except: return 0.0
 
 # --- SÖZLEŞME AĞIRLIK MANTIĞI ---
-# --- SÖZLEŞME AĞIRLIK MANTIĞI ---
-# --- SÖZLEŞME AĞIRLIK MANTIĞI ---
 def get_auto_weights(contract_type):
     w = {
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
@@ -124,11 +123,10 @@ def get_asgari_ucret_degisim(d_start, d_end):
     """
     Seçilen tarih aralığındaki Net Asgari Ücret değişimini hesaplar.
     """
-    # Tarihçe: (Yürürlük Tarihi, Net Tutar TL)
     maas_tablosu = [
-        (date(2026, 1, 1), 28732.0), # 2026 Tahmini
-        (date(2025, 7, 1), 22102.0), # 2025 Ara Dönem
-        (date(2025, 1, 1), 22102.0), # 2025 Ocak
+        (date(2026, 1, 1), 28732.0),
+        (date(2025, 7, 1), 22102.0),
+        (date(2025, 1, 1), 22102.0),
         (date(2024, 1, 1), 17002.12),
         (date(2023, 7, 1), 11402.32),
         (date(2023, 1, 1), 8506.80),
@@ -136,23 +134,157 @@ def get_asgari_ucret_degisim(d_start, d_end):
         (date(2022, 1, 1), 4253.40),
         (date(2021, 1, 1), 2825.90)
     ]
-    
     def get_val(tarih):
         for baslangic, ucret in maas_tablosu:
-            if tarih >= baslangic:
-                return ucret
+            if tarih >= baslangic: return ucret
         return 2825.90 
-        
     ucret_start = get_val(d_start)
     ucret_end = get_val(d_end)
-    
     degisim = 0.0
-    if ucret_start > 0:
-        degisim = ((ucret_end - ucret_start) / ucret_start) * 100
-        
+    if ucret_start > 0: degisim = ((ucret_end - ucret_start) / ucret_start) * 100
     return degisim, ucret_start, ucret_end
 
-# --- SEKTÖREL H-ÜFE ÇEKİCİ (YENİ) ---
+# --- VERİ ÇEKME FONKSİYONLARI (HEPSİ BURADA) ---
+@st.cache_data(ttl=3600)
+def guncel_akaryakit_cek():
+    url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    fiyatlar = {"benzin": 0.0, "motorin": 0.0}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, "html.parser")
+            table = soup.find('table')
+            if table:
+                rows = table.find('tbody').find_all('tr')
+                if rows:
+                    cols = rows[0].find_all('td')
+                    if len(cols) >= 3:
+                        raw_benzin = cols[1].get_text().replace('₺', '').strip().replace(',', '.')
+                        raw_motorin = cols[2].get_text().replace('₺', '').strip().replace(',', '.')
+                        fiyatlar["benzin"] = float(raw_benzin)
+                        fiyatlar["motorin"] = float(raw_motorin)
+    except: pass
+    return fiyatlar
+
+@st.cache_data(ttl=300)
+def canli_piyasa_cek():
+    base_url = "https://bigpara.hurriyet.com.tr"
+    targets = { "USD": "/doviz/dolar/", "EUR": "/doviz/euro/", "ALTIN": "/altin/gram-altin-fiyati/" }
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    sonuclar = {"USD": 0.0, "EUR": 0.0, "ALTIN": 0.0}
+    for key, slug in targets.items():
+        try:
+            url = base_url + slug
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, "html.parser")
+                box = soup.find("span", {"class": "value up"}) 
+                if not box: box = soup.find("span", {"class": "value down"})
+                if not box: box = soup.find("span", {"class": "value"})
+                if box:
+                    raw = box.get_text().strip().replace(".", "").replace(",", ".")
+                    sonuclar[key] = float(raw)
+        except: pass
+    return sonuclar
+
+@st.cache_data(ttl=3600)
+def get_tcmb_data(api_key, start_date, end_date):
+    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+    if not api_key: return res
+    try:
+        evds_service = evdsAPI(api_key)
+        start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
+        end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
+        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
+        if end_date > date.today(): end_q = date.today().strftime("%d-%m-%Y")
+
+        raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
+        if raw_df is None or raw_df.empty:
+            res["Msg"] = "API Boş Döndü"
+            return res
+            
+        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
+        p_start = pd.Period(start_date, freq='M')
+        p_end = pd.Period(end_date, freq='M')
+        max_date = raw_df['Tarih_Dt'].max()
+        if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
+
+        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
+        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
+        
+        if row_start.empty:
+            mask = raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)
+            if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
+            else: row_start = raw_df.iloc[[0]]
+
+        if row_end.empty: row_end = raw_df.iloc[[-1]]
+        
+        def get_val(row, codes):
+            for c in codes:
+                if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
+            return 0.0
+            
+        cols_t = ["TP_FG_J0", "TP.FG.J0"]
+        cols_u = ["TP_TUFE1YI_T1", "TP.TUFE1YI.T1"]
+        cols_h = ["TP_HKFE01_I1", "TP.HKFE01.I1"]
+
+        t_start, t_end = get_val(row_start, cols_t), get_val(row_end, cols_t)
+        u_start, u_end = get_val(row_start, cols_u), get_val(row_end, cols_u)
+        h_start, h_end = get_val(row_start, cols_h), get_val(row_end, cols_h)
+        
+        def calc(n, o):
+            if o == 0: return 0.0
+            return ((n - o) / o) * 100
+            
+        res["TUFE"] = round(calc(t_end, t_start), 2)
+        res["UFE"] = round(calc(u_end, u_start), 2)
+        res["HUFE"] = round(calc(h_end, h_start), 2)
+        res["Status"] = True
+        res["Msg"] = f"{p_start} ➡️ {p_end}"
+    except Exception as e: res["Msg"] = f"Hata: {str(e)}"
+    return res
+
+@st.cache_data(ttl=3600)
+def get_evds_gold_history(api_key, d_start):
+    price = 0.0
+    if not api_key: return price
+    try:
+        evds = evdsAPI(api_key)
+        s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
+        e_date_str = d_start.strftime("%d-%m-%Y")
+        series = ["TP.MK.KUL.YTL"]
+        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
+        if df is not None and not df.empty:
+             col = [c for c in df.columns if "TP" in c][0]
+             df[col] = pd.to_numeric(df[col], errors='coerce')
+             df.dropna(subset=[col], inplace=True)
+             if not df.empty: price = float(df.iloc[-1][col])
+    except: pass
+    return price
+
+@st.cache_data(ttl=3600)
+def get_evds_fuel_history(api_key, d_start):
+    res = {"benzin": 0.0, "motorin": 0.0}
+    if not api_key: return res
+    try:
+        evds = evdsAPI(api_key)
+        s_date_str = (d_start - timedelta(days=30)).strftime("%d-%m-%Y")
+        e_date_str = d_start.strftime("%d-%m-%Y")
+        series = ["TP.AK.U95", "TP.AK.MTR"]
+        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
+        if df is not None and not df.empty:
+            cols_b = [c for c in df.columns if "TP_AK_U95" in c or "TP.AK.U95" in c]
+            if cols_b:
+                s_b = pd.to_numeric(df[cols_b[0]], errors='coerce').dropna()
+                if not s_b.empty: res["benzin"] = float(s_b.iloc[-1])
+            cols_m = [c for c in df.columns if "TP_AK_MTR" in c or "TP.AK.MTR" in c]
+            if cols_m:
+                s_m = pd.to_numeric(df[cols_m[0]], errors='coerce').dropna()
+                if not s_m.empty: res["motorin"] = float(s_m.iloc[-1])
+    except: pass
+    return res
+
 @st.cache_data(ttl=3600)
 def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
     """
@@ -175,10 +307,8 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
         target_col = target_col[0]
 
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
-        
         p_start = pd.Period(d_start, freq='M')
         p_end = pd.Period(d_end, freq='M')
-        
         max_date = raw_df['Tarih_Dt'].max()
         if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
 
@@ -189,7 +319,6 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
             mask = raw_df['Tarih_Dt'] >= pd.to_datetime(d_start)
             if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
             else: return 0.0
-            
         if row_end.empty: row_end = raw_df.iloc[[-1]]
         
         val_start = pd.to_numeric(row_start[target_col].values[0], errors='coerce')
@@ -197,7 +326,6 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
         
         if val_start > 0:
             res = ((val_end - val_start) / val_start) * 100
-            
     except: pass
     return res
 # ============================================================================
@@ -754,6 +882,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
