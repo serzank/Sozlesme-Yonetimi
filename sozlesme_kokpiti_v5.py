@@ -649,7 +649,8 @@ with st.container(border=True):
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     
-    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}", help=f"Seçilen Sektör: {selected_sector}")
+    # ✅ Düzeltilmiş Satır (Key kısmına selected_sector eklendi)
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}", help=f"Seçilen Sektör: {selected_sector}")
     
     iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
@@ -912,4 +913,5 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
