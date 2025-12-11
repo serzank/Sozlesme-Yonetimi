@@ -613,13 +613,7 @@ with st.container(border=True):
         st.line_chart(chart_df, x="Tarih", y="Sözleşme Tutarı")
 
 # ============================================================================
-# JARVIS AI & YORUM MODÜLÜ
-# ============================================================================
-st.markdown("---")
-with st.container(border=True):
-    # ============================================================================
-# ============================================================================
-# JARVIS AI & YORUM MODÜLÜ (MODEL GÜNCELLENDİ: GEMINI-PRO)
+# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.2 - Gemini Pro & Fix)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -676,7 +670,7 @@ with st.container(border=True):
                         # AI Konfigürasyonu
                         genai.configure(api_key=GEMINI_API_KEY)
                         
-                        # DÜZELTME BURADA YAPILDI: 'gemini-1.5-flash' yerine 'gemini-pro' kullanıldı.
+                        # MODEL GÜNCELLEMESİ: 'gemini-pro' kullanıldı (Daha stabil)
                         model = genai.GenerativeModel('gemini-pro')
                         
                         response = model.generate_content(prompt)
