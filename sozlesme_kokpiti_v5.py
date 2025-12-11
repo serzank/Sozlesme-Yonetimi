@@ -618,7 +618,7 @@ with st.container(border=True):
         st.line_chart(chart_df, x="Tarih", y="Sözleşme Tutarı")
 
 # ============================================================================
-# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.5 - GEMINI 1.5 FLASH)
+# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.6 - FUTURE READY / 2.5 FLASH)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -636,14 +636,14 @@ with st.container(border=True):
             if not GEMINI_API_KEY:
                 st.error("⚠️ API Anahtarı Bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
             else:
-                with st.spinner("Jarvis (Gemini 1.5 Flash) verileri işliyor..."):
+                with st.spinner("Jarvis (Gemini 2.5 Flash) verileri işliyor..."):
                     try:
                         # AI Konfigürasyonu
                         genai.configure(api_key=GEMINI_API_KEY)
                         
-                        # --- TAV STANDARDI: GEMINI 1.5 FLASH ---
-                        # 0.8.5 versiyonunda en stabil çalışan model budur.
-                        model_name = "gemini-1.5-flash" 
+                        # --- TAV STANDARDI: GÜNCEL MODEL SEÇİMİ ---
+                        # Sizin listenizdeki en hızlı ve güncel model:
+                        model_name = "gemini-2.5-flash" 
                         
                         prompt = f"""
                         Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis).
@@ -684,21 +684,7 @@ with st.container(border=True):
                         st.markdown(response.text)
                         
                     except Exception as e:
-                        # HATA DURUMUNDA TANI KOYMA MODÜLÜ
                         st.error(f"Bir hata oluştu: {str(e)}")
-                        
-                        with st.expander("🛠️ Hata Ayıklama & Model Listesi (Geliştirici Modu)"):
-                            st.write("Sizin API Anahtarınız ile erişilebilen modeller şunlardır:")
-                            try:
-                                for m in genai.list_models():
-                                    if 'generateContent' in m.supported_generation_methods:
-                                        st.code(m.name)
-                            except Exception as e_list:
-                                st.write(f"Model listesi alınamadı: {e_list}")
-                            st.info("Lütfen listedeki isimlerden birini kodda 'model_name' değişkenine yazın.")
+                        st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
-
-
-
-
