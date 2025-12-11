@@ -590,30 +590,50 @@ with st.container(border=True):
     with c_manuel:
         st.link_button("🔗 TÜİK Kontrol", "https://data.tuik.gov.tr/Kategori/GetKategori?p=Enflasyon-ve-Fiyat-106")
 
-    # --- SHEET'TEN VERİ HESAPLAMA ---
+    # --- SHEET'TEN VERİ HESAPLAMA (GÜÇLENDİRİLMİŞ & DEBUG MODLU) ---
     val_hufe_final = 0.0
-    if not df_hufe.empty and selected_sector:
-        # Tarih formatlarını eşle (Yıl-Ay)
-        s_per = start_date.strftime('%Y-%m')
-        e_per = end_date.strftime('%Y-%m')
-        
-        row_s = df_hufe[df_hufe['Donem'] == s_per]
-        row_e = df_hufe[df_hufe['Donem'] == e_per]
-        
-        # Eğer tam o ay yoksa, en yakın tarihi bulma mantığı
-        if row_s.empty: # Başlangıç yoksa en yakın sonrakini al
-             future_rows = df_hufe[df_hufe['Tarih'] >= pd.to_datetime(start_date)]
-             if not future_rows.empty: row_s = future_rows.iloc[[0]]
-        
-        if row_e.empty: # Bitiş yoksa en son veriyi al
-             past_rows = df_hufe[df_hufe['Tarih'] <= pd.to_datetime(end_date)]
-             if not past_rows.empty: row_e = past_rows.iloc[[-1]]
+    
+    # Teşhis kutusunu sadece geliştirme aşamasında açık tutalım, sonra kapatabilirsiniz.
+    debug_sheet = st.expander(f"🕵️ H-ÜFE Hesaplama Detayı: {selected_sector}", expanded=False)
 
-        if not row_s.empty and not row_e.empty:
-            v1 = row_s[selected_sector].values[0]
-            v2 = row_e[selected_sector].values[0]
+    if not df_hufe.empty and selected_sector:
+        try:
+            # 1. Tarihleri Standartlaştır (Timestamp Formatına Çevir)
+            target_start = pd.to_datetime(start_date)
+            target_end = pd.to_datetime(end_date)
+            
+            # 2. En Yakın Tarihleri Bul (Matematiksel Olarak En Yakın Satır)
+            # Bu yöntem "Tam Eşleşme" aramaz, en yakın tarihi bulur. Hata payını sıfırlar.
+            
+            # Başlangıç için en yakın tarih indeksi
+            idx_start = (df_hufe['Tarih'] - target_start).abs().idxmin()
+            # Bitiş için en yakın tarih indeksi
+            idx_end = (df_hufe['Tarih'] - target_end).abs().idxmin()
+            
+            # 3. Değerleri Çek
+            row_s = df_hufe.loc[idx_start]
+            row_e = df_hufe.loc[idx_end]
+            
+            v1 = safe_float(row_s[selected_sector])
+            v2 = safe_float(row_e[selected_sector])
+            
+            d1_str = row_s['Tarih'].strftime('%d.%m.%Y')
+            d2_str = row_e['Tarih'].strftime('%d.%m.%Y')
+
+            # 4. Debugger'a Yaz (Kanıt)
+            debug_sheet.write(f"**Hedef Başlangıç:** {start_date} ➡️ **Bulunan:** {d1_str} (Değer: {v1})")
+            debug_sheet.write(f"**Hedef Bitiş:** {end_date} ➡️ **Bulunan:** {d2_str} (Değer: {v2})")
+
+            # 5. Hesapla
             if v1 > 0:
                 val_hufe_final = ((v2 - v1) / v1) * 100
+                debug_sheet.success(f"✅ Hesaplanan Değişim: %{val_hufe_final:.2f}")
+            else:
+                debug_sheet.error("Başlangıç değeri 0 olduğu için hesaplanamadı.")
+                
+        except Exception as e:
+            debug_sheet.error(f"Hesaplama Hatası: {str(e)}")
+            val_hufe_final = 0.0
 
     # --- VERİ HAZIRLIĞI ---
     val_tufe = safe_float(tcmb["TUFE"])
@@ -892,3 +912,4 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
