@@ -262,84 +262,72 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# ============================================================================
-# TEŞHİS VE TAMİR MODU: SEKTÖREL H-ÜFE ÇEKİCİ (AJANLI)
-# ============================================================================
+# --- EKSİK OLAN FUEL FONKSİYONU GERİ EKLENDİ ---
+@st.cache_data(ttl=3600)
+def get_evds_fuel_history(api_key, d_start):
+    res = {"benzin": 0.0, "motorin": 0.0}
+    if not api_key: return res
+    try:
+        evds = evdsAPI(api_key)
+        s_date_str = (d_start - timedelta(days=30)).strftime("%d-%m-%Y")
+        e_date_str = d_start.strftime("%d-%m-%Y")
+        series = ["TP.AK.U95", "TP.AK.MTR"]
+        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
+        if df is not None and not df.empty:
+            cols_b = [c for c in df.columns if "TP_AK_U95" in c or "TP.AK.U95" in c]
+            if cols_b:
+                s_b = pd.to_numeric(df[cols_b[0]], errors='coerce').dropna()
+                if not s_b.empty: res["benzin"] = float(s_b.iloc[-1])
+            cols_m = [c for c in df.columns if "TP_AK_MTR" in c or "TP.AK.MTR" in c]
+            if cols_m:
+                s_m = pd.to_numeric(df[cols_m[0]], errors='coerce').dropna()
+                if not s_m.empty: res["motorin"] = float(s_m.iloc[-1])
+    except: pass
+    return res
+
 @st.cache_data(ttl=3600)
 def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
     """
-    H-ÜFE verisini çekerken perde arkasını gösteren teşhis fonksiyonu.
+    Belirli bir EVDS serisi için değişim oranını çeker.
+    Kolon ismine bakmaksızın, veri kolonunu (Index 1) doğrudan alır.
     """
     res = 0.0
     if not api_key or not series_code: return res
-    
-    # --- AJAN PENCERESİ (DEBUGGER) ---
-    # Bu kutu sadece veriyi çekerken hatayı görmek için açılır
-    debug_box = st.expander(f"🕵️ H-ÜFE Ajanı: {series_code} (Teşhis Modu)", expanded=True)
-    
     try:
         evds_service = evdsAPI(api_key)
-        
-        # Tarih Aralığını Genişlet (Garanti Veri İçin)
-        # Bazen ayın 1'i yerine sonunu ister, veri kaçar. O yüzden -2 ay, +1 ay yapıyoruz.
-        start_q = (d_start - relativedelta(months=3)).strftime("%d-%m-%Y")
+        start_q = (d_start - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (d_end + relativedelta(months=1)).strftime("%d-%m-%Y")
         if d_end > date.today(): end_q = date.today().strftime("%d-%m-%Y")
 
-        debug_box.write(f"📡 İstek Gönderiliyor: {start_q} - {end_q}")
-
-        # EVDS'den ham veriyi iste
         raw_df = evds_service.get_data([series_code], startdate=start_q, enddate=end_q)
+        if raw_df is None or raw_df.empty: return 0.0
         
-        # --- DURUM 1: HİÇ VERİ GELMEDİ ---
-        if raw_df is None or raw_df.empty:
-            debug_box.error("❌ EVDS 'Boş Tablo' döndü! (Bu tarih aralığında veya bu kodda veri yayınlanmamış olabilir.)")
-            return 0.0
-        
-        # --- DURUM 2: VERİ GELDİ ---
-        debug_box.success("✅ Bağlantı Başarılı! Gelen Ham Veri:")
-        debug_box.dataframe(raw_df.head(5)) # İlk 5 satırı göster
-        
-        # Kolon Kontrolü
-        if len(raw_df.columns) < 2:
-            debug_box.warning("⚠️ Tablo geldi ama içinde veri kolonu yok!")
-            return 0.0
-            
-        target_col = raw_df.columns[1] # Tarihten sonraki ilk kolon
-        debug_box.info(f"🎯 Hedef Kolon Seçildi: {target_col}")
+        if len(raw_df.columns) < 2: return 0.0
+        target_col = raw_df.columns[1]
 
-        # Tarih Formatlama
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
-        
-        # Seçilen Tarihe En Yakın Veriyi Bulma
-        # Tam o ay yoksa, elimizdeki en yakın tarihi alırız.
-        df_filtered = raw_df.sort_values('Tarih_Dt')
-        
-        # Başlangıç Değeri (Seçilen tarihe en yakın geçmiş veri)
-        row_start = df_filtered[df_filtered['Tarih_Dt'] >= pd.to_datetime(d_start)].first_valid_index()
-        # Eğer tam o tarih yoksa listenin en başını al
-        if row_start is None: row_start = df_filtered.index[0] 
-        
-        # Bitiş Değeri (Seçilen tarihe en yakın veri)
-        row_end = df_filtered[df_filtered['Tarih_Dt'] <= pd.to_datetime(d_end)].last_valid_index()
-        if row_end is None: row_end = df_filtered.index[-1]
+        p_start = pd.Period(d_start, freq='M')
+        p_end = pd.Period(d_end, freq='M')
+        max_date = raw_df['Tarih_Dt'].max()
+        if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
 
-        val_start = safe_float(raw_df.loc[row_start, target_col])
-        val_end = safe_float(raw_df.loc[row_end, target_col])
+        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
+        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
         
-        tarih_s = raw_df.loc[row_start, 'Tarih']
-        tarih_e = raw_df.loc[row_end, 'Tarih']
+        if row_start.empty:
+            mask = raw_df['Tarih_Dt'] >= pd.to_datetime(d_start)
+            if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
+            else: return 0.0
+        if row_end.empty: row_end = raw_df.iloc[[-1]]
         
-        debug_box.write(f"🧮 Hesaplama: {tarih_s} ({val_start}) ➡️ {tarih_e} ({val_end})")
-
+        val_start = pd.to_numeric(row_start[target_col].values[0], errors='coerce')
+        val_end = pd.to_numeric(row_end[target_col].values[0], errors='coerce')
+        
         if val_start > 0:
             res = ((val_end - val_start) / val_start) * 100
-            
-    except Exception as e:
-        debug_box.error(f"💥 Kritik Hata: {str(e)}")
-        pass
-        
+    except: pass
     return res
+
 # ============================================================================
 # SOL MENÜ
 # ============================================================================
@@ -362,7 +350,7 @@ with st.sidebar:
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
-# ANA EKRAN - ÜST KISIM
+# ANA EKRAN - ÜST KISIM (TARİH SEÇİMİ VE VERİ ÇEKME KÖPRÜSÜ)
 # ============================================================================
 if 'ss_start' not in st.session_state:
     st.session_state.ss_start = date.today() - relativedelta(years=1)
@@ -395,8 +383,9 @@ with st.container(border=True):
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
-# --- VERİ KÖPRÜSÜ (TCMB, EVDS, WEB) ---
+# --- İŞTE EKSİK OLAN KRİTİK VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
+    # Bu satırlar olmazsa kodunuz aşağıda 'NameError' verir!
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
@@ -404,7 +393,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME
+# PİYASA VERİSİ İŞLEME (GRAFİKLER İÇİN)
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
@@ -451,7 +440,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 
 # ============================================================================
-# GÖSTERGE PANELİ
+# GÖSTERGE PANELİ (DASHBOARD)
 # ============================================================================
 st.title("💠Procurement Node | Financial Datum")
 
@@ -522,7 +511,7 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# PNX DÖVİZ ÇEVRİM MATRİSİ
+# PNX DÖVİZ ÇEVRİM MATRİSİ (VALUE MATRIX)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -877,4 +866,3 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
-
