@@ -502,10 +502,8 @@ with st.sidebar:
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
-# ANA EKRAN - ÜST KISIM (TARİH & VERİ ÇEKME & PİYASA & DASHBOARD & HESAPLAMA)
+# ANA EKRAN - ÜST KISIM (TARİH SEÇİMİ VE VERİ ÇEKME KÖPRÜSÜ)
 # ============================================================================
-
-# --- JARVIS OTOMATİK TARİH MODÜLÜ ---
 if 'ss_start' not in st.session_state:
     st.session_state.ss_start = date.today() - relativedelta(years=1)
 if 'ss_end' not in st.session_state:
@@ -537,9 +535,9 @@ with st.container(border=True):
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
-# --- KRİTİK VERİ ÇEKME BLOĞU (BURASI SİLİNDİĞİ İÇİN HATA ALIYORDUNUZ) ---
+# --- İŞTE EKSİK OLAN KRİTİK VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
-    # TCMB ve EVDS Verileri (tcmb değişkeni burada oluşur)
+    # Bu satırlar olmazsa kodunuz aşağıda 'NameError' verir!
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
@@ -547,7 +545,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME
+# PİYASA VERİSİ İŞLEME (GRAFİKLER İÇİN)
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
@@ -594,7 +592,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
 
 # ============================================================================
-# GÖSTERGE PANELİ
+# GÖSTERGE PANELİ (DASHBOARD)
 # ============================================================================
 st.title("💠Procurement Node | Financial Datum")
 
@@ -665,7 +663,7 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# PNX DÖVİZ ÇEVRİM MATRİSİ
+# PNX DÖVİZ ÇEVRİM MATRİSİ (VALUE MATRIX)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -701,8 +699,6 @@ with st.container(border=True):
         col_e3.metric("Erime (€)", f"{fark_eur:,.0f}", delta_color="normal")
         
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
-
-
 # ============================================================================
 # HESAPLAMA MOTORU (SEKTÖREL H-ÜFE & İŞÇİLİK OTO)
 # ============================================================================
@@ -1020,6 +1016,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
