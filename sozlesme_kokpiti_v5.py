@@ -285,9 +285,6 @@ def get_evds_fuel_history(api_key, d_start):
     except: pass
     return res
 
-@st.cache_data(ttl=3600)
-# --- SEKTÖREL H-ÜFE ÇEKİCİ (DEBUG MODLU & ROBUST) ---
-@st.cache_data(ttl=3600)
 # ============================================================================
 # 1. GÜNCELLEME: SEKTÖREL H-ÜFE ÇEKİCİ (KOLON İSMİNDEN BAĞIMSIZ - %100 GARANTİ)
 # ============================================================================
@@ -1037,6 +1034,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
