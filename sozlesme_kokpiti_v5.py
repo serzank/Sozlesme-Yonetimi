@@ -286,6 +286,8 @@ def get_evds_fuel_history(api_key, d_start):
     return res
 
 @st.cache_data(ttl=3600)
+# --- SEKTÖREL H-ÜFE ÇEKİCİ (DEBUG MODLU & ROBUST) ---
+@st.cache_data(ttl=3600)
 def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
     """
     Belirli bir EVDS serisi (Örn: Ulaştırma H-ÜFE) için değişim oranını çeker.
@@ -298,13 +300,29 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
         end_q = (d_end + relativedelta(months=1)).strftime("%d-%m-%Y")
         if d_end > date.today(): end_q = date.today().strftime("%d-%m-%Y")
 
+        # EVDS'den ham veriyi iste
         raw_df = evds_service.get_data([series_code], startdate=start_q, enddate=end_q)
-        if raw_df is None or raw_df.empty: return 0.0
+        
+        # --- DEBUGGER (HATA AYIKLAYICI) ---
+        # Veri gelmiyorsa ekrana uyarı basar (Geliştirme aşamasında açık kalsın)
+        if raw_df is None or raw_df.empty:
+            # st.warning(f"EVDS'den {series_code} için veri dönmedi! Tarih: {start_q}-{end_q}")
+            return 0.0
             
-        col_name = series_code.replace(".", "_")
-        target_col = [c for c in raw_df.columns if col_name in c]
-        if not target_col: return 0.0
-        target_col = target_col[0]
+        # Kolon ismini bulma (Fuzzy Match - Akıllı Eşleşme)
+        # EVDS bazen 'TP_HKFE01_H', bazen 'TP.HKFE01.H' döner. Hepsini yakalarız.
+        target_col = None
+        for col in raw_df.columns:
+            # Kodun içindeki noktaları ve alt çizgileri temizleyip kıyasla
+            clean_code = series_code.replace(".", "").replace("_", "")
+            clean_col = col.replace(".", "").replace("_", "")
+            if clean_code in clean_col:
+                target_col = col
+                break
+        
+        if not target_col:
+            # st.error(f"Kolon bulunamadı. Gelen Kolonlar: {raw_df.columns.tolist()}")
+            return 0.0
 
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
         p_start = pd.Period(d_start, freq='M')
@@ -319,6 +337,7 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
             mask = raw_df['Tarih_Dt'] >= pd.to_datetime(d_start)
             if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
             else: return 0.0
+            
         if row_end.empty: row_end = raw_df.iloc[[-1]]
         
         val_start = pd.to_numeric(row_start[target_col].values[0], errors='coerce')
@@ -326,7 +345,11 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
         
         if val_start > 0:
             res = ((val_end - val_start) / val_start) * 100
-    except: pass
+            
+    except Exception as e:
+        # st.error(f"H-ÜFE Hatası: {str(e)}")
+        pass
+        
     return res
 # ============================================================================
 # SOL MENÜ
@@ -882,6 +905,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
