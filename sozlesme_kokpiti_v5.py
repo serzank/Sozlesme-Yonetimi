@@ -62,8 +62,12 @@ st.markdown("""
 
 # --- YARDIMCI FONKSİYONLAR ---
 def render_svg_logo():
+    # GÜNCELLEME NOTU: 
+    # width="280" yerine width="100%" ve height="auto" kullanılarak responsive yapıldı.
+    # COST NEXUS font boyutu 32'den 28'e düşürülerek sığması garanti altına alındı.
+    # viewBox yüksekliği 70'ten 75'e çıkarılarak alt kısma biraz nefes payı verildi.
     return """
-    <svg width="280" height="70" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
+    <svg width="100%" height="auto" viewBox="0 0 280 75" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" style="stop-color:#1E3D59;stop-opacity:1" />
@@ -74,9 +78,10 @@ def render_svg_logo():
       <path d="M40 35 L30 15" stroke="#27AE60" stroke-width="1" />
       <path d="M40 35 L30 55" stroke="#27AE60" stroke-width="1" />
       <polygon points="40,15 57,25 57,45 40,55 23,45 23,25" fill="#1E3D59" stroke="#27AE60" stroke-width="2" />
-      <text x="75" y="45" font-family="Verdana" font-weight="900" font-size="32" fill="#1E3D59" letter-spacing="-1">COST NEXUS</text>
-      <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-weight="bold">Procurement</text>
-      <text x="155" y="44" font-family="Arial" font-size="10" fill="#27AE60" font-weight="bold">Vision</text>
+      
+      <text x="75" y="43" font-family="Verdana" font-weight="900" font-size="28" fill="#1E3D59" letter-spacing="-1">COST NEXUS</text>
+      <text x="155" y="30" font-family="Arial" font-size="10" fill="#888" font-weight="bold">Procurement</text>
+      <text x="155" y="42" font-family="Arial" font-size="10" fill="#27AE60" font-weight="bold">Vision</text>
     </svg>
     """
 
@@ -913,5 +918,6 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
