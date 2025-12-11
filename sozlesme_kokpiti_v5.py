@@ -622,6 +622,12 @@ with st.container(border=True):
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
+
+# ============================================================================
+# JARVIS AI & YORUM MODÜLÜ (MODEL GÜNCELLENDİ: GEMINI-PRO)
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
     st.markdown("### 🤖 Jarvis Finansal Yorumu")
     
     col_j1, col_j2 = st.columns([1, 4])
@@ -687,4 +693,5 @@ with st.container(border=True):
                         st.error(f"Jarvis Bağlantı Hatası: {str(e)}")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
