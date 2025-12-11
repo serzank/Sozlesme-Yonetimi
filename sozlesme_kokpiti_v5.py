@@ -31,7 +31,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     MY_API_KEY = st.secrets["EVDS_KEY"]
 except:
-    MY_API_KEY = "Uol1kIOQos" 
+    MY_API_KEY = None 
 
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_KEY"]
@@ -814,6 +814,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
