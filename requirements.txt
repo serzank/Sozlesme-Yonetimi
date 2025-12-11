@@ -10,5 +10,7 @@ python-dateutil
 numpy
 plotly
 matplotlib
+google-generativeai
+
 
 
