@@ -288,9 +288,14 @@ def get_evds_fuel_history(api_key, d_start):
 @st.cache_data(ttl=3600)
 # --- SEKTÖREL H-ÜFE ÇEKİCİ (DEBUG MODLU & ROBUST) ---
 @st.cache_data(ttl=3600)
+# ============================================================================
+# 1. GÜNCELLEME: SEKTÖREL H-ÜFE ÇEKİCİ (KOLON İSMİNDEN BAĞIMSIZ - %100 GARANTİ)
+# ============================================================================
+@st.cache_data(ttl=3600)
 def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
     """
-    Belirli bir EVDS serisi (Örn: Ulaştırma H-ÜFE) için değişim oranını çeker.
+    Belirli bir EVDS serisi için değişim oranını çeker.
+    Kolon ismine bakmaksızın, veri kolonunu (Index 1) doğrudan alır.
     """
     res = 0.0
     if not api_key or not series_code: return res
@@ -303,26 +308,14 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
         # EVDS'den ham veriyi iste
         raw_df = evds_service.get_data([series_code], startdate=start_q, enddate=end_q)
         
-        # --- DEBUGGER (HATA AYIKLAYICI) ---
-        # Veri gelmiyorsa ekrana uyarı basar (Geliştirme aşamasında açık kalsın)
-        if raw_df is None or raw_df.empty:
-            # st.warning(f"EVDS'den {series_code} için veri dönmedi! Tarih: {start_q}-{end_q}")
-            return 0.0
-            
-        # Kolon ismini bulma (Fuzzy Match - Akıllı Eşleşme)
-        # EVDS bazen 'TP_HKFE01_H', bazen 'TP.HKFE01.H' döner. Hepsini yakalarız.
-        target_col = None
-        for col in raw_df.columns:
-            # Kodun içindeki noktaları ve alt çizgileri temizleyip kıyasla
-            clean_code = series_code.replace(".", "").replace("_", "")
-            clean_col = col.replace(".", "").replace("_", "")
-            if clean_code in clean_col:
-                target_col = col
-                break
+        if raw_df is None or raw_df.empty: return 0.0
         
-        if not target_col:
-            # st.error(f"Kolon bulunamadı. Gelen Kolonlar: {raw_df.columns.tolist()}")
-            return 0.0
+        # --- KRİTİK DÜZELTME: KOLON İSMİNE BAKMA, DOĞRUDAN VERİYİ AL ---
+        # raw_df genelde şöyledir: [Tarih, TP_HKFE01_H, UNIXTIME...]
+        # Biz doğrudan 2. kolonu (Index 1) alıyoruz. İsim ne olursa olsun veri oradadır.
+        if len(raw_df.columns) < 2: return 0.0
+        
+        target_col = raw_df.columns[1] # Tarih'ten sonraki ilk kolon (Veri)
 
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
         p_start = pd.Period(d_start, freq='M')
@@ -346,11 +339,150 @@ def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
         if val_start > 0:
             res = ((val_end - val_start) / val_start) * 100
             
-    except Exception as e:
-        # st.error(f"H-ÜFE Hatası: {str(e)}")
-        pass
-        
+    except: pass
     return res
+
+
+# ============================================================================
+# 2. GÜNCELLEME: HESAPLAMA MOTORU (DOĞRU KOD EŞLEŞTİRMELERİ İLE)
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    c_header, c_link = st.columns([3, 1])
+    with c_header: st.subheader("⚡ Enflasyon & Sepet Hesabı")
+    with c_link: st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesaplama-serzan.streamlit.app/")
+
+    if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
+    else: st.warning(f"⚠️ {tcmb['Msg']}")
+
+    # --- Sektör Haritası (Sizin Listenize Göre Revize Edildi) ---
+    # TP.HKFE01 serisi ana grupları temsil eder.
+    hufe_sectors = {
+        "Genel (H-ÜFE Ortalaması)": "TP.HKFE01.I1", # Genel Endeks
+        "H - Ulaştırma ve Depolama (H49-H53)": "TP.HKFE01.H", 
+        "I - Konaklama ve Yiyecek (I55-I56)": "TP.HKFE01.I",
+        "J - Bilgi ve İletişim (J58-J63)": "TP.HKFE01.J",
+        "L - Gayrimenkul Hizmetleri (L68)": "TP.HKFE01.L",
+        "M - Mesleki, Bilimsel ve Teknik (M69-M75)": "TP.HKFE01.M",
+        "N - İdari ve Destek (Güvenlik/Temizlik N80-N81)": "TP.HKFE01.N" 
+    }
+
+    # Sözleşme tipine göre varsayılan sektörü seçme zekası
+    default_sector_index = 0
+    if sozlesme_tipi == "Personel Taşımacılık": default_sector_index = 1 # H - Ulaştırma
+    elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri": default_sector_index = 2 # I - Yiyecek
+    elif sozlesme_tipi == "Yazılım / Lisans": default_sector_index = 3 # J - Bilgi
+    elif sozlesme_tipi == "Güvenlik Hizmetleri": default_sector_index = 6 # N - İdari (Güvenlik N80 buradadır)
+
+    # --- SEÇİM ALANI ---
+    selected_sector_name = st.selectbox("📊 H-ÜFE Sektör Bazlı Endeks Seçimi:", list(hufe_sectors.keys()), index=default_sector_index)
+    selected_sector_code = hufe_sectors[selected_sector_name]
+
+    # --- VERİ HAZIRLIĞI ---
+    val_tufe = safe_float(tcmb["TUFE"])
+    val_ufe = safe_float(tcmb["UFE"])
+    val_mix = (val_tufe + val_ufe) / 2
+    
+    # İşçilik Otomasyonu
+    val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
+    iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
+
+    # Sektörel H-ÜFE Çekimi
+    if selected_sector_code == "TP.HKFE01.I1":
+        val_hufe_final = safe_float(tcmb["HUFE"])
+    else:
+        # İlerleme çubuğu (Spinner) ile kullanıcıya bilgi ver
+        with st.spinner(f"{selected_sector_name} verisi analiz ediliyor..."):
+            val_hufe_final = get_sectoral_hufe_change(MY_API_KEY, selected_sector_code, start_date, end_date)
+
+    # --- INPUT ALANLARI ---
+    ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
+    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
+    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
+    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
+    
+    # H-ÜFE Input
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}", help=f"Seçilen Sektör: {selected_sector_name}")
+    
+    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
+    abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
+    
+    # Bilgi Notları
+    if val_iscilik > 0:
+        ec4.markdown(f"<div style='font-size:10px; color:#27AE60'>ASG: {iscilik_notu}</div>", unsafe_allow_html=True)
+    if selected_sector_code != "TP.HKFE01.I1":
+        ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>{selected_sector_name[:10]}...</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("#### ⚖️ Sepet Ağırlıkları")
+
+    # --- AĞIRLIK INPUTLARI ---
+    w1, w2, w3, w4 = st.columns(4)
+    w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
+    w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
+    w_ufe = w3.number_input("Saf ÜFE %", value=auto_weights["ufe"])
+    w_hufe = w4.number_input("H-ÜFE %", value=auto_weights["hufe"])
+    
+    w5, w6, w7, w8 = st.columns(4)
+    w_iscilik = w5.number_input("İşçilik %", value=auto_weights["iscilik"])
+    w_usd = w6.number_input("USD %", value=auto_weights["usd"])
+    w_eur = w7.number_input("EUR %", value=auto_weights["eur"])
+    w_altin = w8.number_input("Altın %", value=auto_weights["altin"])
+    
+    w9, w10, w11, w12 = st.columns(4)
+    w_benzin = w9.number_input("Benzin %", value=auto_weights["benzin"])
+    w_dizel = w10.number_input("Motorin %", value=auto_weights["dizel"])
+    w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
+    w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
+
+    # --- TOPLAM KONTROLÜ VE HESAPLAMA ---
+    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
+    kalan = 100.0 - toplam
+    
+    if kalan == 0:
+        st.success(f"✅ Sepet Tamamlandı: Toplam %100")
+    elif kalan > 0:
+        st.info(f"ℹ️ Henüz %100 olmadı. Kalan Dağıtılacak Ağırlık: %{kalan:.2f}")
+    else:
+        st.error(f"⚠️ HATA: Toplam %100'ü geçti! (Mevcut: %{toplam:.2f} -> Fazlalık: %{abs(kalan):.2f})")
+    
+    etkiler = [
+        ("TÜFE+ÜFE Ort.", safe_float(ort_mix_giris), safe_float(w_mix_oran)), 
+        ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
+        ("ÜFE", safe_float(ufe), safe_float(w_ufe)), 
+        ("H-ÜFE", safe_float(h_ufe), safe_float(w_hufe)),
+        ("İşçilik", safe_float(iscilik), safe_float(w_iscilik)), 
+        ("USD", safe_float(d_usd), safe_float(w_usd)), 
+        ("EUR", safe_float(d_eur), safe_float(w_eur)), 
+        ("Altın", safe_float(d_gram), safe_float(w_altin)),
+        ("Benzin", safe_float(d_benzin), safe_float(w_benzin)), 
+        ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
+        ("Brent", safe_float(d_brent), safe_float(w_brent)), 
+        ("ABD Enf", safe_float(abd_enf), safe_float(w_abd))
+    ]
+    zam = sum([(e[1] * e[2])/100 for e in etkiler])
+    fark = sozlesme_tutari * (zam / 100)
+    yeni = sozlesme_tutari + fark
+    
+    st.markdown("---")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Toplam Artış", f"%{zam:.2f}")
+    r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
+    r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
+    
+    data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
+    for ad, deg, agr in etkiler:
+        if agr > 0:
+            data["Kalem"].append(ad); data["Değişim %"].append(deg)
+            data["Ağırlık %"].append(agr); data["Etki %"].append((deg*agr)/100)
+    df = pd.DataFrame(data)
+    st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
+    
+    if HAS_XLSX:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Detay', index=False)
+        st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
 # ============================================================================
 # SOL MENÜ
 # ============================================================================
@@ -905,6 +1037,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
