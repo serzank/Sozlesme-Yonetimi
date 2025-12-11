@@ -280,15 +280,24 @@ with st.sidebar:
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
-# ANA EKRAN - ÜST KISIM
+# ANA EKRAN - ÜST KISIM (AKILLI TARİH SEÇİMİ) - v2.0 (YTD Eklendi)
 # ============================================================================
+
+# --- JARVIS OTOMATİK TARİH MODÜLÜ ---
 if 'ss_start' not in st.session_state:
     st.session_state.ss_start = date.today() - relativedelta(years=1)
 if 'ss_end' not in st.session_state:
     st.session_state.ss_end = date.today()
 
+# Geçmişe dönük X ay ayarla
 def set_quick_date(months):
     st.session_state.ss_start = st.session_state.ss_end - relativedelta(months=months)
+
+# YENİ FONKSİYON: Sene Başına Çek (YTD)
+def set_ytd_date():
+    # Bitiş tarihinin yılı neyse, o yılın 1 Ocak tarihine gider
+    current_year = st.session_state.ss_end.year
+    st.session_state.ss_start = date(current_year, 1, 1)
 
 with st.container(border=True): 
     st.markdown("##### 📅 Tarih Aralığı Seçimi")
@@ -299,11 +308,21 @@ with st.container(border=True):
     with c_date2:
         end_date = st.date_input("Bitiş Tarihi (Güncel)", key="ss_end", format="DD.MM.YYYY")
         
-    b1, b2, b3, b4 = st.columns([1, 1, 1, 3])
-    with b1: st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
-    with b2: st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
-    with b3: st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
-    with b4: st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
+    # KISAYOL BUTONLARI (GÜNCELLENDİ)
+    # 4 Sütun yerine 5 sütunluk yapı kuruyoruz
+    b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1.2, 2.5])
+    
+    with b1: 
+        st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
+    with b2: 
+        st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
+    with b3: 
+        st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
+    with b4: 
+        # --- YENİ EKLENEN BUTON ---
+        st.button("Sene Başı", on_click=set_ytd_date, use_container_width=True, help="Başlangıç tarihini 1 Ocak'a çeker.")
+    with b5: 
+        st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
 
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
@@ -315,7 +334,6 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     canli_veri = canli_piyasa_cek()
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
-
 # ============================================================================
 # PİYASA VERİSİ
 # ============================================================================
@@ -751,5 +769,6 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
