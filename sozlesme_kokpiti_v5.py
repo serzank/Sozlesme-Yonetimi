@@ -576,47 +576,115 @@ with st.container(border=True):
         st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
 
 # ============================================================================
-# JARVIS PROJEKSİYONU
+# JARVIS PROJEKSİYONU (SENARYO ANALİZİ & BÜTÇE SİMÜLASYONU) v2.0
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
-    st.header("🔮 Jarvis Gelecek Projeksiyonu")
+    c_p1, c_p2 = st.columns([3,1])
+    with c_p1: st.header("🔮 Jarvis Gelecek Projeksiyonu & Senaryo Analizi")
+    with c_p2: st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*Tahminler bileşik faiz etkisiyle hesaplanır.</div>", unsafe_allow_html=True)
     
+    # --- AYARLAR ---
     proj_months = 12
-    proj_dates = [date.today() + relativedelta(months=i) for i in range(1, proj_months + 1)]
-    proj_dates_str = [d.strftime("%Y-%m") for d in proj_dates]
-    
-    aylik_artis_tahmini = zam / 12 if zam > 0 else 2.5 
-    if aylik_artis_tahmini < 0: aylik_artis_tahmini = 0.5
-    
-    sim_tutar = [yeni]
-    sim_kur = [piyasa["USDTRY"]["son"]]
-    
-    for i in range(proj_months - 1):
-        sim_tutar.append(sim_tutar[-1] * (1 + aylik_artis_tahmini/100))
-        sim_kur.append(sim_kur[-1] * (1 + 0.025)) 
-    
-    if HAS_MATPLOTLIB:
-        fig, ax1 = plt.subplots(figsize=(10, 4))
-        ax1.set_xlabel('Gelecek 12 Ay')
-        ax1.set_ylabel('Tahmini Sözleşme Tutarı (TL)', color='tab:blue')
-        ax1.plot(proj_dates_str, sim_tutar, color='tab:blue', marker='o', linewidth=2, label="Sözleşme Tutarı")
-        ax1.tick_params(axis='y', labelcolor='tab:blue')
-        ax1.set_xticklabels(proj_dates_str, rotation=45)
-        ax1.grid(True, alpha=0.3)
-        
-        ax2 = ax1.twinx()
-        ax2.set_ylabel('Tahmini USD Kuru', color='tab:green')
-        ax2.plot(proj_dates_str, sim_kur, color='tab:green', linestyle='--', label="USD Trendi")
-        ax2.tick_params(axis='y', labelcolor='tab:green')
-        plt.title(f"Gelecek Dönem Projeksiyonu")
-        fig.tight_layout()
-        st.pyplot(fig)
-    else:
-        st.warning("⚠️ Gelişmiş grafikler için `requirements.txt` dosyasına `matplotlib` ekleyiniz. Şimdilik basitleştirilmiş görünüm aktif.")
-        chart_df = pd.DataFrame({"Tarih": proj_dates_str, "Sözleşme Tutarı": sim_tutar, "USD Kuru": sim_kur})
-        st.line_chart(chart_df, x="Tarih", y="Sözleşme Tutarı")
+    dates = [date.today() + relativedelta(months=i) for i in range(1, proj_months + 1)]
+    dates_str = [d.strftime("%Y-%m") for d in dates]
 
+    # Baz Oran (Mevcut hesaplanan zam oranı üzerinden aylık etki)
+    # Eğer zam negatifse veya sıfırsa minimum bir enflasyon bazı alalım (Örn: Aylık %2)
+    base_monthly_inc = (zam / 12) if zam > 5 else 2.5
+    
+    col_set1, col_set2, col_set3 = st.columns(3)
+    with col_set1:
+        st.markdown("**📉 İyimser Senaryo**")
+        rate_opt = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc * 0.7, step=0.1, key="rate_opt")
+    with col_set2:
+        st.markdown("**Example: 📊 Gerçekçi Senaryo (Jarvis)**")
+        rate_base = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc, step=0.1, key="rate_base")
+    with col_set3:
+        st.markdown("**📈 Kötümser Senaryo**")
+        rate_pes = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc * 1.5, step=0.1, key="rate_pes")
+
+    # --- HESAPLAMA MOTORU ---
+    def calculate_projection(start_val, monthly_rate, months):
+        values = []
+        curr = start_val
+        for _ in range(months):
+            curr = curr * (1 + monthly_rate/100)
+            values.append(curr)
+        return values
+
+    vals_opt = calculate_projection(yeni, rate_opt, proj_months)
+    vals_base = calculate_projection(yeni, rate_base, proj_months)
+    vals_pes = calculate_projection(yeni, rate_pes, proj_months)
+    
+    # Toplam Yıllık Maliyet (Kümülatif)
+    total_opt = sum(vals_opt)
+    total_base = sum(vals_base)
+    total_pes = sum(vals_pes)
+
+    # --- KPI KARTLARI ---
+    st.markdown("##### 🗓️ 12 Aylık Toplam Tahmini Bütçe")
+    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1.metric("İyimser Toplam", f"{tr_fmt(total_opt)} TL", delta=f"Ort. Aylık: {tr_fmt(total_opt/12)}")
+    kpi2.metric("Gerçekçi Toplam", f"{tr_fmt(total_base)} TL", delta=f"Ort. Aylık: {tr_fmt(total_base/12)}", delta_color="off")
+    kpi3.metric("Kötümser Toplam", f"{tr_fmt(total_pes)} TL", delta=f"Risk Farkı: {tr_fmt(total_pes - total_base)}", delta_color="inverse")
+
+    # --- GRAFİKLER (TAB YAPISI) ---
+    tab_line, tab_bar = st.tabs(["📈 Aylık Trend Analizi", "📊 Kümülatif Bütçe Yükü"])
+
+    with tab_line:
+        if HAS_MATPLOTLIB:
+            fig, ax = plt.subplots(figsize=(10, 5))
+            
+            # Senaryo Çizgileri
+            ax.plot(dates_str, vals_pes, color='#C0392B', linestyle='--', marker='o', linewidth=2, label=f'Kötümser (%{rate_pes:.1f}/ay)')
+            ax.plot(dates_str, vals_base, color='#2980B9', marker='s', linewidth=3, label=f'Gerçekçi (%{rate_base:.1f}/ay)')
+            ax.plot(dates_str, vals_opt, color='#27AE60', linestyle='-.', marker='^', linewidth=2, label=f'İyimser (%{rate_opt:.1f}/ay)')
+            
+            # Alan Boyama (Range)
+            ax.fill_between(dates_str, vals_opt, vals_pes, color='gray', alpha=0.1)
+            
+            ax.set_title(f"Gelecek 12 Ay Fiyat Projeksiyonu (Başlangıç: {tr_fmt(yeni)} TL)", fontsize=12)
+            ax.set_ylabel("Aylık Fatura Tutarı (TL)")
+            ax.legend()
+            ax.grid(True, alpha=0.3, linestyle='--')
+            plt.xticks(rotation=45)
+            
+            # Değerleri Göster (Sadece Baş ve Son)
+            for i, val in enumerate([vals_base[0], vals_base[-1]]):
+                idx = 0 if i==0 else -1
+                ax.annotate(f"{tr_fmt(val)}", (dates_str[idx], vals_base[idx]), xytext=(0,10), textcoords='offset points', ha='center', fontsize=9, fontweight='bold', color='#2980B9')
+
+            st.pyplot(fig)
+        else:
+            st.line_chart(pd.DataFrame({"İyimser": vals_opt, "Gerçekçi": vals_base, "Kötümser": vals_pes}, index=dates_str))
+
+    with tab_bar:
+        # Kümülatif Artış Grafiği
+        if HAS_MATPLOTLIB:
+            fig2, ax2 = plt.subplots(figsize=(10, 5))
+            x = np.arange(len(dates_str))
+            width = 0.25
+            
+            # Kümülatif Veri Hazırlığı
+            cum_opt = np.cumsum(vals_opt)
+            cum_base = np.cumsum(vals_base)
+            cum_pes = np.cumsum(vals_pes)
+            
+            rects1 = ax2.bar(x - width, cum_opt, width, label='İyimser', color='#A9DFBF')
+            rects2 = ax2.bar(x, cum_base, width, label='Gerçekçi', color='#5DADE2')
+            rects3 = ax2.bar(x + width, cum_pes, width, label='Kötümser', color='#E6B0AA')
+            
+            ax2.set_ylabel('Kümülatif Toplam (TL)')
+            ax2.set_title('Yıl Sonu Toplam Maliyet Birikimi')
+            ax2.set_xticks(x)
+            ax2.set_xticklabels(dates_str, rotation=45)
+            ax2.legend()
+            ax2.grid(axis='y', alpha=0.3)
+            
+            st.pyplot(fig2)
+        else:
+             st.info("Kümülatif grafik için matplotlib gereklidir.")
 # ============================================================================
 # JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.6 - FUTURE READY / 2.5 FLASH)
 # ============================================================================
@@ -688,3 +756,4 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
