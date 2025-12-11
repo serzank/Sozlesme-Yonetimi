@@ -27,11 +27,16 @@ except ImportError:
 # SSL Hatalarını Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- AYARLAR ---
+# --- AYARLAR ve GÜVENLİK (SECRETS) ---
 try:
     MY_API_KEY = st.secrets["EVDS_KEY"]
 except:
     MY_API_KEY = "Uol1kIOQos" 
+
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_KEY"]
+except:
+    GEMINI_API_KEY = None
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="PNX | Procurement Nexus", layout="wide", page_icon="💠")
@@ -57,7 +62,6 @@ st.markdown("""
 
 # --- YARDIMCI FONKSİYONLAR ---
 def render_svg_logo():
-    """PNX Logosunu SVG olarak çizer (Financial Node Konsepti)"""
     return """
     <svg width="280" height="70" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -66,15 +70,11 @@ def render_svg_logo():
           <stop offset="100%" style="stop-color:#2C3E50;stop-opacity:1" />
         </linearGradient>
       </defs>
-      
       <path d="M40 35 L70 35" stroke="#27AE60" stroke-width="2" />
       <path d="M40 35 L30 15" stroke="#27AE60" stroke-width="1" />
       <path d="M40 35 L30 55" stroke="#27AE60" stroke-width="1" />
-      
       <polygon points="40,15 57,25 57,45 40,55 23,45 23,25" fill="#1E3D59" stroke="#27AE60" stroke-width="2" />
-      
       <text x="75" y="45" font-family="Verdana" font-weight="900" font-size="32" fill="#1E3D59" letter-spacing="-1">COST NEXUS</text>
-      
       <text x="155" y="32" font-family="Arial" font-size="10" fill="#888" font-weight="bold">Procurement</text>
       <text x="155" y="44" font-family="Arial" font-size="10" fill="#27AE60" font-weight="bold">Vision</text>
     </svg>
@@ -259,10 +259,9 @@ def get_evds_fuel_history(api_key, d_start):
     return res
 
 # ============================================================================
-# SOL MENÜ (LOGO VE AYARLAR)
+# SOL MENÜ
 # ============================================================================
 with st.sidebar:
-    # --- PNX LOGO (SVG - GÜNCELLENMİŞ) ---
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
@@ -281,10 +280,8 @@ with st.sidebar:
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
-# ANA EKRAN - ÜST KISIM (AKILLI TARİH SEÇİMİ)
+# ANA EKRAN - ÜST KISIM
 # ============================================================================
-
-# --- JARVIS OTOMATİK TARİH MODÜLÜ ---
 if 'ss_start' not in st.session_state:
     st.session_state.ss_start = date.today() - relativedelta(years=1)
 if 'ss_end' not in st.session_state:
@@ -302,16 +299,11 @@ with st.container(border=True):
     with c_date2:
         end_date = st.date_input("Bitiş Tarihi (Güncel)", key="ss_end", format="DD.MM.YYYY")
         
-    # KISAYOL BUTONLARI
     b1, b2, b3, b4 = st.columns([1, 1, 1, 3])
-    with b1:
-        st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
-    with b2:
-        st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
-    with b3:
-        st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
-    with b4:
-        st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
+    with b1: st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
+    with b2: st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
+    with b3: st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
+    with b4: st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
 
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
@@ -443,33 +435,27 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
 # ============================================================================
-# YENİ MODÜL: PNX DÖVİZ ÇEVRİM MATRİSİ (ALIM GÜCÜ ANALİZİ)
+# PNX DÖVİZ ÇEVRİM MATRİSİ
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
     st.subheader("💱 PNX Value Matrix: Alım Gücü Analizi")
     
-    # Döviz Kurlarını Hazırla (Sıfıra bölünme hatası önlemiyle)
     u_ilk = piyasa["USDTRY"]["ilk"] if piyasa["USDTRY"]["ilk"] > 0 else 1.0
     u_son = piyasa["USDTRY"]["son"] if piyasa["USDTRY"]["son"] > 0 else 1.0
     
     e_ilk = piyasa["EURTRY"]["ilk"] if piyasa["EURTRY"]["ilk"] > 0 else 1.0
     e_son = piyasa["EURTRY"]["son"] if piyasa["EURTRY"]["son"] > 0 else 1.0
     
-    # Hesaplamalar
-    # USD
     tutar_usd_baslangic = sozlesme_tutari / u_ilk
     tutar_usd_guncel = sozlesme_tutari / u_son
     fark_usd = tutar_usd_guncel - tutar_usd_baslangic
     
-    # EUR
     tutar_eur_baslangic = sozlesme_tutari / e_ilk
     tutar_eur_guncel = sozlesme_tutari / e_son
     fark_eur = tutar_eur_guncel - tutar_eur_baslangic
 
-    # Görsel Sunum (Kolonlar)
     c_usd, c_eur = st.columns(2)
-    
     with c_usd:
         st.markdown(f"**💵 USD Bazlı Değerleme**")
         col_u1, col_u2, col_u3 = st.columns(3)
@@ -488,7 +474,7 @@ with st.container(border=True):
 
 
 # ============================================================================
-# HESAPLAMA MOTORU
+# HESAPLAMA MOTORU (DİNAMİK KONTROL EKLENDİ - v1.1)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -514,67 +500,78 @@ with st.container(border=True):
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
 
+    # --- INPUT BLOKLARI ---
     w1, w2, w3, w4 = st.columns(4)
     w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
     w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
     w_ufe = w3.number_input("Saf ÜFE %", value=auto_weights["ufe"])
     w_hufe = w4.number_input("H-ÜFE %", value=auto_weights["hufe"])
+    
     w5, w6, w7, w8 = st.columns(4)
     w_iscilik = w5.number_input("İşçilik %", value=auto_weights["iscilik"])
     w_usd = w6.number_input("USD %", value=auto_weights["usd"])
     w_eur = w7.number_input("EUR %", value=auto_weights["eur"])
     w_altin = w8.number_input("Altın %", value=auto_weights["altin"])
+    
     w9, w10, w11, w12 = st.columns(4)
     w_benzin = w9.number_input("Benzin %", value=auto_weights["benzin"])
     w_dizel = w10.number_input("Motorin %", value=auto_weights["dizel"])
     w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
     w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
 
+    # --- YENİ DİNAMİK TOPLAM KONTROLÜ ---
     toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
-    zam, fark, yeni = 0.0, 0.0, 0.0
-
-    if toplam != 100: st.error(f"⚠️ Toplam Ağırlık: %{toplam} (100 olmalı).")
+    kalan = 100.0 - toplam
+    
+    # Görsel Bildirim Çubuğu
+    if kalan == 0:
+        st.success(f"✅ Sepet Tamamlandı: Toplam %100")
+    elif kalan > 0:
+        st.info(f"ℹ️ Henüz %100 olmadı. Kalan Dağıtılacak Ağırlık: %{kalan:.2f}")
     else:
-        etkiler = [
-            ("TÜFE+ÜFE Ort.", safe_float(ort_mix_giris), safe_float(w_mix_oran)), 
-            ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
-            ("ÜFE", safe_float(ufe), safe_float(w_ufe)), 
-            ("H-ÜFE", safe_float(h_ufe), safe_float(w_hufe)),
-            ("İşçilik", safe_float(iscilik), safe_float(w_iscilik)), 
-            ("USD", safe_float(d_usd), safe_float(w_usd)), 
-            ("EUR", safe_float(d_eur), safe_float(w_eur)), 
-            ("Altın", safe_float(d_gram), safe_float(w_altin)),
-            ("Benzin", safe_float(d_benzin), safe_float(w_benzin)), 
-            ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
-            ("Brent", safe_float(d_brent), safe_float(w_brent)), 
-            ("ABD Enf", safe_float(abd_enf), safe_float(w_abd))
-        ]
-        zam = sum([(e[1] * e[2])/100 for e in etkiler])
-        fark = sozlesme_tutari * (zam / 100)
-        yeni = sozlesme_tutari + fark
-        
-        st.markdown("---")
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Toplam Artış", f"%{zam:.2f}")
-        r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
-        r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
-        
-        data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
-        for ad, deg, agr in etkiler:
-            if agr > 0:
-                data["Kalem"].append(ad); data["Değişim %"].append(deg)
-                data["Ağırlık %"].append(agr); data["Etki %"].append((deg*agr)/100)
-        df = pd.DataFrame(data)
-        st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
-        
-        if HAS_XLSX:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df.to_excel(writer, sheet_name='Detay', index=False)
-            st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
+        st.error(f"⚠️ HATA: Toplam %100'ü geçti! (Mevcut: %{toplam:.2f} -> Fazlalık: %{abs(kalan):.2f})")
+    
+    # --- HESAPLAMA DEVAM EDER ---
+    etkiler = [
+        ("TÜFE+ÜFE Ort.", safe_float(ort_mix_giris), safe_float(w_mix_oran)), 
+        ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
+        ("ÜFE", safe_float(ufe), safe_float(w_ufe)), 
+        ("H-ÜFE", safe_float(h_ufe), safe_float(w_hufe)),
+        ("İşçilik", safe_float(iscilik), safe_float(w_iscilik)), 
+        ("USD", safe_float(d_usd), safe_float(w_usd)), 
+        ("EUR", safe_float(d_eur), safe_float(w_eur)), 
+        ("Altın", safe_float(d_gram), safe_float(w_altin)),
+        ("Benzin", safe_float(d_benzin), safe_float(w_benzin)), 
+        ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
+        ("Brent", safe_float(d_brent), safe_float(w_brent)), 
+        ("ABD Enf", safe_float(abd_enf), safe_float(w_abd))
+    ]
+    zam = sum([(e[1] * e[2])/100 for e in etkiler])
+    fark = sozlesme_tutari * (zam / 100)
+    yeni = sozlesme_tutari + fark
+    
+    st.markdown("---")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Toplam Artış", f"%{zam:.2f}")
+    r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
+    r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
+    
+    data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
+    for ad, deg, agr in etkiler:
+        if agr > 0:
+            data["Kalem"].append(ad); data["Değişim %"].append(deg)
+            data["Ağırlık %"].append(agr); data["Etki %"].append((deg*agr)/100)
+    df = pd.DataFrame(data)
+    st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
+    
+    if HAS_XLSX:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Detay', index=False)
+        st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
 
 # ============================================================================
-# JARVIS PROJEKSİYONU (GÜVENLİ GRAFİK MODU)
+# JARVIS PROJEKSİYONU
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -595,7 +592,6 @@ with st.container(border=True):
         sim_kur.append(sim_kur[-1] * (1 + 0.025)) 
     
     if HAS_MATPLOTLIB:
-        # --- MATPLOTLIB VARSA (HAVALI GRAFİK) ---
         fig, ax1 = plt.subplots(figsize=(10, 4))
         ax1.set_xlabel('Gelecek 12 Ay')
         ax1.set_ylabel('Tahmini Sözleşme Tutarı (TL)', color='tab:blue')
@@ -612,26 +608,71 @@ with st.container(border=True):
         fig.tight_layout()
         st.pyplot(fig)
     else:
-        # --- MATPLOTLIB YOKSA (BASİT KURTARICI GRAFİK) ---
         st.warning("⚠️ Gelişmiş grafikler için `requirements.txt` dosyasına `matplotlib` ekleyiniz. Şimdilik basitleştirilmiş görünüm aktif.")
         chart_df = pd.DataFrame({"Tarih": proj_dates_str, "Sözleşme Tutarı": sim_tutar, "USD Kuru": sim_kur})
         st.line_chart(chart_df, x="Tarih", y="Sözleşme Tutarı")
 
 # ============================================================================
-# JARVIS YORUMU
+# JARVIS AI & YORUM MODÜLÜ
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
     st.markdown("### 🤖 Jarvis Finansal Yorumu")
+    
     col_j1, col_j2 = st.columns([1, 4])
+    
+    risk_durumu = "Yüksek" if zam > 20 else "Düşük"
     with col_j1:
-        st.metric("Risk Skoru", "Düşük" if zam < 20 else "Yüksek", delta="Stabil" if zam < 20 else "Dikkat")
+        st.metric("Risk Skoru", risk_durumu, delta="Dikkat" if zam > 20 else "Stabil", delta_color="inverse")
+
     with col_j2:
-        if sozlesme_tipi == "Serzan'ın Klasiği (TÜFE+ÜFE)":
-            st.info(f"**Mod: Serzan'ın Klasiği.** (TÜFE+ÜFE)/2 dengesi ile **%{zam:.2f}** artış öngörüldü. Bu oran, TAV standartlarında tedarikçi ile 'Fair' bir el sıkışma noktasıdır.")
-        elif sozlesme_tipi == "Bilişim Sarf (Donanım)":
-            st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
+        if st.button("🧠 Yapay Zeka ile Analiz Et"):
+            if not GEMINI_API_KEY:
+                st.error("⚠️ API Anahtarı Bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
+            else:
+                with st.spinner("Jarvis piyasa verilerini ve sözleşme yapısını inceliyor..."):
+                    try:
+                        prompt = f"""
+                        Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis).
+                        Aşağıdaki verileri analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
+                        
+                        Kullanıcıya "Sir" diye hitap et. Profesyonel, net ve kurumsal bir dil kullan.
+
+                        VERİLER:
+                        - Sözleşme Tipi: {sozlesme_tipi}
+                        - Toplam Fiyat Artışı: %{zam:.2f}
+                        - Eski Tutar: {tr_fmt(sozlesme_tutari)} TL
+                        - Yeni Tutar: {tr_fmt(yeni)} TL
+                        - SEPET TOPLAM KONTROL: %{toplam} (Eğer 100 değilse kullanıcıyı uyar)
+                        
+                        PİYASA DEĞİŞİMLERİ (Dönem İçindeki Artışlar):
+                        - Dolar (USD): %{piyasa['USDTRY']['degisim']:.2f}
+                        - Euro (EUR): %{piyasa['EURTRY']['degisim']:.2f}
+                        - Enflasyon (TÜFE): %{val_tufe:.2f}
+                        - İşçilik/Asgari Ücret Etkisi: %{iscilik:.2f}
+                        - Akaryakıt (Dizel): %{d_dizel:.2f}
+                        - Altın: %{piyasa['GRAM_ALTIN_TL']['degisim']:.2f}
+                        
+                        SEPET AĞIRLIKLARI:
+                        - Döviz: %{w_usd + w_eur}
+                        - İşçilik: %{w_iscilik}
+                        - Enerji: %{w_benzin + w_dizel}
+                        - Enflasyon: %{w_tufe + w_ufe + w_mix_oran}
+
+                        YÖNERGE:
+                        Hangi kalemin (Döviz mi, Enflasyon mu, Yakıt mı?) artışa en çok sebep olduğunu tespit et. 
+                        Eğer artış piyasa ortalamasının üzerindeyse uyar, altındaysa "başarılı bir hedging" olduğunu belirt.
+                        Sonuçları madde madde değil, akıcı bir paragraf olarak sun.
+                        """
+                        
+                        genai.configure(api_key=GEMINI_API_KEY)
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        response = model.generate_content(prompt)
+                        
+                        st.success("Analiz Tamamlandı")
+                        st.markdown(response.text)
+                        
+                    except Exception as e:
+                        st.error(f"Jarvis Bağlantı Hatası: {str(e)}")
         else:
-            st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
-
-
+            st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
