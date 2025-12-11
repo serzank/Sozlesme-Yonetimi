@@ -262,7 +262,6 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- EKSİK OLAN FUEL FONKSİYONU GERİ EKLENDİ ---
 @st.cache_data(ttl=3600)
 def get_evds_fuel_history(api_key, d_start):
     res = {"benzin": 0.0, "motorin": 0.0}
@@ -548,7 +547,6 @@ with st.container(border=True):
         
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
 
-
 # ============================================================================
 # HESAPLAMA MOTORU (SEKTÖREL H-ÜFE & İŞÇİLİK OTO)
 # ============================================================================
@@ -561,25 +559,63 @@ with st.container(border=True):
     if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
     else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-    # --- Sektör Haritası ---
+    # --- Sektör Haritası (GENİŞLETİLMİŞ) ---
     hufe_sectors = {
         "Genel (H-ÜFE Ortalaması)": "TP.HKFE01.I1", 
         "H - Ulaştırma ve Depolama (H49-H53)": "TP.HKFE01.H", 
+        "  > H49 - Kara Taşımacılığı (H494)": "TP.HKFE01.H49",
+        "  > H50 - Su Yolu Taşımacılığı": "TP.HKFE01.H50",
+        "  > H51 - Hava Yolu Taşımacılığı": "TP.HKFE01.H51",
+        "  > H52 - Depolama ve Destek Hizmetleri": "TP.HKFE01.H52",
+        "  > H53 - Posta ve Kurye": "TP.HKFE01.H53",
         "I - Konaklama ve Yiyecek (I55-I56)": "TP.HKFE01.I",
         "J - Bilgi ve İletişim (J58-J63)": "TP.HKFE01.J",
+        "  > J61 - Telekomünikasyon": "TP.HKFE01.J61",
+        "  > J62 - Bilgisayar Programlama": "TP.HKFE01.J62",
+        "  > J63 - Bilgi Hizmetleri": "TP.HKFE01.J63",
         "L - Gayrimenkul Hizmetleri (L68)": "TP.HKFE01.L",
         "M - Mesleki, Bilimsel ve Teknik (M69-M75)": "TP.HKFE01.M",
-        "N - İdari ve Destek (Güvenlik/Temizlik N80-N81)": "TP.HKFE01.N" 
+        "  > M69 - Hukuk ve Muhasebe": "TP.HKFE01.M69",
+        "  > M70 - İdare Merkezi Danışmanlık": "TP.HKFE01.M70",
+        "  > M71 - Mimarlık ve Mühendislik": "TP.HKFE01.M71",
+        "  > M73 - Reklamcılık": "TP.HKFE01.M73",
+        "N - İdari ve Destek (Güvenlik/Temizlik)": "TP.HKFE01.N",
+        "  > N80 - Güvenlik Hizmetleri": "TP.HKFE01.N80",
+        "  > N81 - Binalar ve Çevre (Temizlik)": "TP.HKFE01.N81",
+        "  > N82 - Büro ve İş Destek": "TP.HKFE01.N82"
     }
 
-    default_sector_index = 0
-    if sozlesme_tipi == "Personel Taşımacılık": default_sector_index = 1
-    elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri": default_sector_index = 2
-    elif sozlesme_tipi == "Yazılım / Lisans": default_sector_index = 3
-    elif sozlesme_tipi == "Güvenlik Hizmetleri": default_sector_index = 6
+    # Sözleşme tipine göre varsayılan sektörü seçme zekası
+    # Listeye yeni elemanlar eklendiği için indexleri güncellememiz gerekir.
+    # Bu yüzden index numarası yerine 'Value' üzerinden gitmek daha güvenlidir ama
+    # selectbox index beklediği için listeye dönüştürüp index bulacağız.
+    
+    sector_keys = list(hufe_sectors.keys())
+    
+    default_index = 0
+    if sozlesme_tipi == "Personel Taşımacılık": 
+        # H49 - Kara Taşımacılığı (Index bul)
+        for i, k in enumerate(sector_keys):
+            if "H49" in k: default_index = i; break
+    elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri":
+        for i, k in enumerate(sector_keys):
+            if "I - Konaklama" in k: default_index = i; break
+    elif sozlesme_tipi == "Yazılım / Lisans":
+        for i, k in enumerate(sector_keys):
+            if "J62" in k: default_index = i; break
+    elif sozlesme_tipi == "Güvenlik Hizmetleri":
+        for i, k in enumerate(sector_keys):
+            if "N80" in k: default_index = i; break
 
     # --- SEÇİM ALANI ---
-    selected_sector_name = st.selectbox("📊 H-ÜFE Sektör Bazlı Endeks Seçimi:", list(hufe_sectors.keys()), index=default_sector_index)
+    # Manuel Link Eklemesi
+    c_link1, c_link2 = st.columns([3, 1])
+    with c_link1:
+        selected_sector_name = st.selectbox("📊 H-ÜFE Sektör Bazlı Endeks Seçimi:", sector_keys, index=default_index)
+    with c_link2:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        st.link_button("🔗 H-ÜFE Manuel Kontrol", "https://data.tuik.gov.tr/Kategori/GetKategori?p=Enflasyon-ve-Fiyat-106")
+        
     selected_sector_code = hufe_sectors[selected_sector_name]
 
     # --- VERİ HAZIRLIĞI ---
@@ -587,7 +623,6 @@ with st.container(border=True):
     val_ufe = safe_float(tcmb["UFE"])
     val_mix = (val_tufe + val_ufe) / 2
     
-    # İşçilik Otomasyonu
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
@@ -612,7 +647,7 @@ with st.container(border=True):
     if val_iscilik > 0:
         ec4.markdown(f"<div style='font-size:10px; color:#27AE60'>ASG: {iscilik_notu}</div>", unsafe_allow_html=True)
     if selected_sector_code != "TP.HKFE01.I1":
-        ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>{selected_sector_name[:10]}...</div>", unsafe_allow_html=True)
+        ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>{selected_sector_name[:15]}...</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
