@@ -502,7 +502,7 @@ with st.sidebar:
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
-# ANA EKRAN - ÜST KISIM (AKILLI TARİH SEÇİMİ) - v2.0 (YTD Eklendi)
+# ANA EKRAN - ÜST KISIM (TARİH & VERİ ÇEKME & PİYASA & DASHBOARD & HESAPLAMA)
 # ============================================================================
 
 # --- JARVIS OTOMATİK TARİH MODÜLÜ ---
@@ -511,13 +511,10 @@ if 'ss_start' not in st.session_state:
 if 'ss_end' not in st.session_state:
     st.session_state.ss_end = date.today()
 
-# Geçmişe dönük X ay ayarla
 def set_quick_date(months):
     st.session_state.ss_start = st.session_state.ss_end - relativedelta(months=months)
 
-# YENİ FONKSİYON: Sene Başına Çek (YTD)
 def set_ytd_date():
-    # Bitiş tarihinin yılı neyse, o yılın 1 Ocak tarihine gider
     current_year = st.session_state.ss_end.year
     st.session_state.ss_start = date(current_year, 1, 1)
 
@@ -530,34 +527,27 @@ with st.container(border=True):
     with c_date2:
         end_date = st.date_input("Bitiş Tarihi (Güncel)", key="ss_end", format="DD.MM.YYYY")
         
-    # KISAYOL BUTONLARI (GÜNCELLENDİ)
-    # 4 Sütun yerine 5 sütunluk yapı kuruyoruz
     b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1.2, 2.5])
-    
-    with b1: 
-        st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
-    with b2: 
-        st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
-    with b3: 
-        st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
-    with b4: 
-        # --- YENİ EKLENEN BUTON ---
-        st.button("Sene Başı", on_click=set_ytd_date, use_container_width=True, help="Başlangıç tarihini 1 Ocak'a çeker.")
-    with b5: 
-        st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
+    with b1: st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
+    with b2: st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
+    with b3: st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
+    with b4: st.button("Sene Başı", on_click=set_ytd_date, use_container_width=True, help="Başlangıç tarihini 1 Ocak'a çeker.")
+    with b5: st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
 
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
-# VERİ ÇEKME
+# --- KRİTİK VERİ ÇEKME BLOĞU (BURASI SİLİNDİĞİ İÇİN HATA ALIYORDUNUZ) ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
+    # TCMB ve EVDS Verileri (tcmb değişkeni burada oluşur)
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
+
 # ============================================================================
-# PİYASA VERİSİ
+# PİYASA VERİSİ İŞLEME
 # ============================================================================
 @st.cache_data(ttl=600)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
@@ -714,7 +704,7 @@ with st.container(border=True):
 
 
 # ============================================================================
-# HESAPLAMA MOTORU (SEKTÖREL H-ÜFE & İŞÇİLİK OTO - v2.2)
+# HESAPLAMA MOTORU (SEKTÖREL H-ÜFE & İŞÇİLİK OTO)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -722,29 +712,28 @@ with st.container(border=True):
     with c_header: st.subheader("⚡ Enflasyon & Sepet Hesabı")
     with c_link: st.link_button("🔗 Manuel Hesaplama Sitesi", "https://tufehesaplama-serzan.streamlit.app/")
 
+    # --- HATA DÜZELTME: tcmb ARTIK TANIMLI ---
     if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
     else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-    # --- Sektör Haritası (TAV İhtiyaçları) ---
+    # --- Sektör Haritası ---
     hufe_sectors = {
-        "Genel (H-ÜFE Ortalaması)": "TP.HKFE01.I1",
-        "Ulaştırma ve Depolama (Servis/Lojistik)": "TP.HKFE01.H",
-        "Konaklama ve Yiyecek (Catering)": "TP.HKFE01.I",
-        "Bilgi ve İletişim (Yazılım/IT)": "TP.HKFE01.J",
-        "İdari ve Destek (Güvenlik/Temizlik)": "TP.HKFE01.N",
-        "Mesleki, Bilimsel ve Teknik": "TP.HKFE01.M",
-        "Gayrimenkul Hizmetleri": "TP.HKFE01.L"
+        "Genel (H-ÜFE Ortalaması)": "TP.HKFE01.I1", 
+        "H - Ulaştırma ve Depolama (H49-H53)": "TP.HKFE01.H", 
+        "I - Konaklama ve Yiyecek (I55-I56)": "TP.HKFE01.I",
+        "J - Bilgi ve İletişim (J58-J63)": "TP.HKFE01.J",
+        "L - Gayrimenkul Hizmetleri (L68)": "TP.HKFE01.L",
+        "M - Mesleki, Bilimsel ve Teknik (M69-M75)": "TP.HKFE01.M",
+        "N - İdari ve Destek (Güvenlik/Temizlik N80-N81)": "TP.HKFE01.N" 
     }
 
-    # Sözleşme tipine göre varsayılan sektörü seçme zekası
     default_sector_index = 0
-    if sozlesme_tipi == "Personel Taşımacılık": default_sector_index = 1 # Ulaştırma
-    elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri": default_sector_index = 2 # Yiyecek
-    elif sozlesme_tipi == "Yazılım / Lisans": default_sector_index = 3 # IT
-    elif sozlesme_tipi == "Güvenlik Hizmetleri": default_sector_index = 4 # İdari (Güvenlik)
+    if sozlesme_tipi == "Personel Taşımacılık": default_sector_index = 1
+    elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri": default_sector_index = 2
+    elif sozlesme_tipi == "Yazılım / Lisans": default_sector_index = 3
+    elif sozlesme_tipi == "Güvenlik Hizmetleri": default_sector_index = 6
 
     # --- SEÇİM ALANI ---
-    # H-ÜFE için özel seçim kutusu
     selected_sector_name = st.selectbox("📊 H-ÜFE Sektör Bazlı Endeks Seçimi:", list(hufe_sectors.keys()), index=default_sector_index)
     selected_sector_code = hufe_sectors[selected_sector_name]
 
@@ -757,12 +746,11 @@ with st.container(border=True):
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
-    # Sektörel H-ÜFE Otomasyonu (YENİ)
-    # Eğer "Genel" seçiliyse zaten elimizde var (tcmb['HUFE']), değilse API'ye git.
+    # Sektörel H-ÜFE Çekimi
     if selected_sector_code == "TP.HKFE01.I1":
         val_hufe_final = safe_float(tcmb["HUFE"])
     else:
-        with st.spinner(f"{selected_sector_name} verisi çekiliyor..."):
+        with st.spinner(f"{selected_sector_name} verisi analiz ediliyor..."):
             val_hufe_final = get_sectoral_hufe_change(MY_API_KEY, selected_sector_code, start_date, end_date)
 
     # --- INPUT ALANLARI ---
@@ -771,17 +759,15 @@ with st.container(border=True):
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     
-    # H-ÜFE Input (Güncellendi)
     h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}", help=f"Seçilen Sektör: {selected_sector_name}")
     
     iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     
-    # Bilgi Notları (Alt Metinler)
     if val_iscilik > 0:
         ec4.markdown(f"<div style='font-size:10px; color:#27AE60'>ASG: {iscilik_notu}</div>", unsafe_allow_html=True)
     if selected_sector_code != "TP.HKFE01.I1":
-        ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>Sektör: {selected_sector_name[:15]}...</div>", unsafe_allow_html=True)
+        ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>{selected_sector_name[:10]}...</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
@@ -1034,6 +1020,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
