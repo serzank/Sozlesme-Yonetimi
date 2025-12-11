@@ -10,8 +10,8 @@ python-dateutil
 numpy
 plotly
 matplotlib
-google-generativeai>=0.7.0
-google-generativeai>=0.7.0
+google-generativeai>=0.8.3
+
 
 
 
