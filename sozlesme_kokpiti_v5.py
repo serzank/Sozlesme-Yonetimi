@@ -613,7 +613,7 @@ with st.container(border=True):
         st.line_chart(chart_df, x="Tarih", y="Sözleşme Tutarı")
 
 # ============================================================================
-# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.2 - Gemini Pro & Fix)
+# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.3 - Akıllı Model Seçici)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -631,7 +631,7 @@ with st.container(border=True):
             if not GEMINI_API_KEY:
                 st.error("⚠️ API Anahtarı Bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
             else:
-                with st.spinner("Jarvis piyasa verilerini ve sözleşme yapısını inceliyor..."):
+                with st.spinner("Jarvis bağlantı kuruyor ve modelleri deniyor..."):
                     try:
                         # Yapay Zekaya Gidecek Veri Seti (Prompt)
                         prompt = f"""
@@ -645,15 +645,14 @@ with st.container(border=True):
                         - Toplam Fiyat Artışı: %{zam:.2f}
                         - Eski Tutar: {tr_fmt(sozlesme_tutari)} TL
                         - Yeni Tutar: {tr_fmt(yeni)} TL
-                        - SEPET TOPLAM KONTROL: %{toplam} (Eğer 100 değilse kullanıcıyı uyar)
+                        - SEPET TOPLAM KONTROL: %{toplam}
                         
-                        PİYASA DEĞİŞİMLERİ (Dönem İçindeki Artışlar):
+                        PİYASA DEĞİŞİMLERİ:
                         - Dolar (USD): %{piyasa['USDTRY']['degisim']:.2f}
                         - Euro (EUR): %{piyasa['EURTRY']['degisim']:.2f}
                         - Enflasyon (TÜFE): %{val_tufe:.2f}
-                        - İşçilik/Asgari Ücret Etkisi: %{iscilik:.2f}
-                        - Akaryakıt (Dizel): %{d_dizel:.2f}
-                        - Altın: %{piyasa['GRAM_ALTIN_TL']['degisim']:.2f}
+                        - İşçilik: %{iscilik:.2f}
+                        - Akaryakıt: %{d_dizel:.2f}
                         
                         SEPET AĞIRLIKLARI:
                         - Döviz: %{w_usd + w_eur}
@@ -662,23 +661,39 @@ with st.container(border=True):
                         - Enflasyon: %{w_tufe + w_ufe + w_mix_oran}
 
                         YÖNERGE:
-                        Hangi kalemin (Döviz mi, Enflasyon mu, Yakıt mı?) artışa en çok sebep olduğunu tespit et. 
+                        Hangi kalemin artışa en çok sebep olduğunu tespit et. 
                         Eğer artış piyasa ortalamasının üzerindeyse uyar, altındaysa "başarılı bir hedging" olduğunu belirt.
-                        Sonuçları madde madde değil, akıcı bir paragraf olarak sun.
+                        Sonuçları akıcı bir paragraf olarak sun.
                         """
                         
                         # AI Konfigürasyonu
                         genai.configure(api_key=GEMINI_API_KEY)
                         
-                        # MODEL GÜNCELLEMESİ: 'gemini-pro' kullanıldı (Daha stabil)
-                        model = genai.GenerativeModel('gemini-pro')
+                        # --- AKILLI MODEL SEÇİCİ (SMART SELECTOR) ---
+                        # Sırasıyla bu modelleri dener. Hangisi çalışırsa onu kullanır.
+                        models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro"]
+                        response = None
+                        last_error = None
+                        success_model = ""
+
+                        for model_name in models_to_try:
+                            try:
+                                model = genai.GenerativeModel(model_name)
+                                response = model.generate_content(prompt)
+                                success_model = model_name
+                                break # Başarılı olduysa döngüden çık
+                            except Exception as e:
+                                last_error = e
+                                continue # Hata aldıysa sıradaki modele geç
                         
-                        response = model.generate_content(prompt)
-                        
-                        st.success("Analiz Tamamlandı")
-                        st.markdown(response.text)
+                        if response:
+                            st.success(f"Analiz Tamamlandı (Motor: {success_model})")
+                            st.markdown(response.text)
+                        else:
+                            st.error(f"Jarvis sunuculara erişemedi. (Tüm modeller denendi). Hata Detayı: {str(last_error)}")
                         
                     except Exception as e:
-                        st.error(f"Jarvis Bağlantı Hatası: {str(e)}")
+                        st.error(f"Sistem Hatası: {str(e)}")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
