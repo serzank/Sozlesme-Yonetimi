@@ -618,7 +618,7 @@ with st.container(border=True):
         st.line_chart(chart_df, x="Tarih", y="Sözleşme Tutarı")
 
 # ============================================================================
-# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.4 - OTO-PİLOT / MODEL BULUCU)
+# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.5 - GEMINI 1.5 FLASH)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -636,36 +636,15 @@ with st.container(border=True):
             if not GEMINI_API_KEY:
                 st.error("⚠️ API Anahtarı Bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
             else:
-                with st.spinner("Jarvis erişilebilir modelleri tarıyor ve en uygununu seçiyor..."):
+                with st.spinner("Jarvis (Gemini 1.5 Flash) verileri işliyor..."):
                     try:
                         # AI Konfigürasyonu
                         genai.configure(api_key=GEMINI_API_KEY)
                         
-                        # --- ADIM 1: ERİŞİLEBİLİR MODELLERİ LİSTELE ---
-                        # İsim tahmin etmek yerine, API'ye "Elünde ne var?" diye soruyoruz.
-                        available_models = []
-                        try:
-                            for m in genai.list_models():
-                                if 'generateContent' in m.supported_generation_methods:
-                                    available_models.append(m.name)
-                        except Exception as e_list:
-                            st.warning(f"Model listesi çekilemedi, varsayılan deneniyor. ({str(e_list)})")
+                        # --- TAV STANDARDI: GEMINI 1.5 FLASH ---
+                        # 0.8.5 versiyonunda en stabil çalışan model budur.
+                        model_name = "gemini-1.5-flash" 
                         
-                        # --- ADIM 2: EN İYİ MODELİ SEÇ ---
-                        # Listeden en yeni/hızlı modeli bulmaya çalışır
-                        selected_model = "models/gemini-pro" # Varsayılan (Fallback)
-                        
-                        # Öncelik sırası: 1.5 Flash -> 1.5 Pro -> Pro
-                        if any("gemini-1.5-flash" in m for m in available_models):
-                            selected_model = "gemini-1.5-flash"
-                        elif any("gemini-1.5-pro" in m for m in available_models):
-                             selected_model = "gemini-1.5-pro"
-                        elif any("gemini-pro" in m for m in available_models):
-                             selected_model = "gemini-pro"
-                        elif available_models:
-                            selected_model = available_models[0] # Hiçbiri yoksa listedeki ilkini al
-
-                        # --- ADIM 3: ANALİZİ BAŞLAT ---
                         prompt = f"""
                         Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis).
                         Aşağıdaki verileri analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
@@ -698,17 +677,28 @@ with st.container(border=True):
                         Sonuçları akıcı bir paragraf olarak sun.
                         """
                         
-                        model = genai.GenerativeModel(selected_model)
+                        model = genai.GenerativeModel(model_name)
                         response = model.generate_content(prompt)
                         
-                        st.success(f"Analiz Tamamlandı (Motor: {selected_model})")
+                        st.success(f"Analiz Tamamlandı (Motor: {model_name})")
                         st.markdown(response.text)
                         
                     except Exception as e:
-                        st.error(f"Sistem Hatası: {str(e)}")
-                        st.markdown(f"**Çözüm İpucu:** Lütfen `requirements.txt` dosyanızda `google-generativeai>=0.7.0` yazdığından emin olun.")
+                        # HATA DURUMUNDA TANI KOYMA MODÜLÜ
+                        st.error(f"Bir hata oluştu: {str(e)}")
+                        
+                        with st.expander("🛠️ Hata Ayıklama & Model Listesi (Geliştirici Modu)"):
+                            st.write("Sizin API Anahtarınız ile erişilebilen modeller şunlardır:")
+                            try:
+                                for m in genai.list_models():
+                                    if 'generateContent' in m.supported_generation_methods:
+                                        st.code(m.name)
+                            except Exception as e_list:
+                                st.write(f"Model listesi alınamadı: {e_list}")
+                            st.info("Lütfen listedeki isimlerden birini kodda 'model_name' değişkenine yazın.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
