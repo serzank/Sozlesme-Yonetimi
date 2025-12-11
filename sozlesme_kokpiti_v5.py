@@ -9,6 +9,7 @@ import urllib3
 import requests
 from bs4 import BeautifulSoup
 import io
+import google.generativeai as genai
 
 # --- KÜTÜPHANE KONTROLÜ ---
 try:
@@ -632,4 +633,5 @@ with st.container(border=True):
             st.warning(f"**Mod: Bilişim.** Tamamen döviz (%100 USD) riskindesiniz. Kurdaki yukarı yönlü hareket bütçenizi doğrudan deler.")
         else:
             st.success(f"**Genel Analiz:** Maliyetiniz **{tr_fmt(fark)} TL** arttı. Sepet ağırlıklarınız piyasa risklerine karşı koruma kalkanı görevi görüyor.")
+
 
