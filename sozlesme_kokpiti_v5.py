@@ -617,10 +617,16 @@ with st.container(border=True):
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
+    # ============================================================================
+# JARVIS AI & YORUM MODÜLÜ (MODEL GÜNCELLENDİ: GEMINI-PRO)
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
     st.markdown("### 🤖 Jarvis Finansal Yorumu")
     
     col_j1, col_j2 = st.columns([1, 4])
     
+    # Risk Skoru Hesabı
     risk_durumu = "Yüksek" if zam > 20 else "Düşük"
     with col_j1:
         st.metric("Risk Skoru", risk_durumu, delta="Dikkat" if zam > 20 else "Stabil", delta_color="inverse")
@@ -632,6 +638,7 @@ with st.container(border=True):
             else:
                 with st.spinner("Jarvis piyasa verilerini ve sözleşme yapısını inceliyor..."):
                     try:
+                        # Yapay Zekaya Gidecek Veri Seti (Prompt)
                         prompt = f"""
                         Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis).
                         Aşağıdaki verileri analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
@@ -665,8 +672,12 @@ with st.container(border=True):
                         Sonuçları madde madde değil, akıcı bir paragraf olarak sun.
                         """
                         
+                        # AI Konfigürasyonu
                         genai.configure(api_key=GEMINI_API_KEY)
-                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        # DÜZELTME BURADA YAPILDI: 'gemini-1.5-flash' yerine 'gemini-pro' kullanıldı.
+                        model = genai.GenerativeModel('gemini-pro')
+                        
                         response = model.generate_content(prompt)
                         
                         st.success("Analiz Tamamlandı")
@@ -676,3 +687,4 @@ with st.container(border=True):
                         st.error(f"Jarvis Bağlantı Hatası: {str(e)}")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
