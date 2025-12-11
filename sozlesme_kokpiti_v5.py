@@ -699,6 +699,7 @@ with st.container(border=True):
         col_e3.metric("Erime (€)", f"{fark_eur:,.0f}", delta_color="normal")
         
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
+
 # ============================================================================
 # HESAPLAMA MOTORU (SEKTÖREL H-ÜFE & İŞÇİLİK OTO)
 # ============================================================================
@@ -1016,6 +1017,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
