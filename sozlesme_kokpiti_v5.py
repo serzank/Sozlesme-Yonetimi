@@ -11,6 +11,11 @@ from bs4 import BeautifulSoup
 import io
 import google.generativeai as genai
 
+# --- VERSİYON KONTROL AJANI ---
+# Bunu sayfanın en tepesinde göreceksiniz.
+st.warning(f"🔧 Sunucudaki Gemini Kütüphane Versiyonu: {genai.__version__}")
+# Eğer bu sayı 0.3.x veya 0.4.x ise HATA BURADADIR. 0.8.x olmalıdır.
+
 # --- KÜTÜPHANE KONTROLÜ ---
 try:
     import matplotlib.pyplot as plt
@@ -704,5 +709,6 @@ with st.container(border=True):
                         st.markdown(f"**Çözüm İpucu:** Lütfen `requirements.txt` dosyanızda `google-generativeai>=0.7.0` yazdığından emin olun.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
