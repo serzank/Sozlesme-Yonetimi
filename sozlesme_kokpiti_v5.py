@@ -96,6 +96,41 @@ def safe_float(val):
 
 # --- SÖZLEŞME AĞIRLIK MANTIĞI ---
 def get_auto_weights(contract_type):
+    # --- ASGARİ ÜCRET HESAPLAYICI ---
+def get_asgari_ucret_degisim(d_start, d_end):
+    """
+    Seçilen tarih aralığındaki Net Asgari Ücret değişimini hesaplar.
+    Veriler resmi Resmi Gazete kararlarına dayanır.
+    2025 verisi simülasyon amaçlıdır (Kullanıcı contextine göre).
+    """
+    # Tarihçe: (Yürürlük Tarihi, Net Tutar TL)
+    # Liste en yeniden en eskiye doğru sıralanmalıdır.
+    maas_tablosu = [
+        (date(2026, 1, 1), 28732.0), # 2026 Tahmini (Gelecek Projeksiyonu için)
+        (date(2025, 7, 1), 22102.0), # 2025 Ara Dönem (Varsayılan)
+        (date(2025, 1, 1), 22102.0), # 2025 Ocak (Temsili TAV/Piyasa Beklentisi)
+        (date(2024, 1, 1), 17002.12),
+        (date(2023, 7, 1), 11402.32),
+        (date(2023, 1, 1), 8506.80),
+        (date(2022, 7, 1), 5500.35),
+        (date(2022, 1, 1), 4253.40),
+        (date(2021, 1, 1), 2825.90)
+    ]
+    
+    def get_val(tarih):
+        for baslangic, ucret in maas_tablosu:
+            if tarih >= baslangic:
+                return ucret
+        return 2825.90 # Liste dışı eski tarih
+        
+    ucret_start = get_val(d_start)
+    ucret_end = get_val(d_end)
+    
+    degisim = 0.0
+    if ucret_start > 0:
+        degisim = ((ucret_end - ucret_start) / ucret_start) * 100
+        
+    return degisim, ucret_start, ucret_end
     w = {
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
@@ -492,7 +527,7 @@ with st.container(border=True):
 
 
 # ============================================================================
-# HESAPLAMA MOTORU (DİNAMİK KONTROL EKLENDİ - v1.1)
+# HESAPLAMA MOTORU (İŞÇİLİK OTOMASYONLU - v2.1)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -503,22 +538,36 @@ with st.container(border=True):
     if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
     else: st.warning(f"⚠️ {tcmb['Msg']}")
 
+    # --- OTOMATİK VERİ HAZIRLIĞI ---
     val_tufe = safe_float(tcmb["TUFE"])
     val_ufe = safe_float(tcmb["UFE"])
     val_mix = (val_tufe + val_ufe) / 2
+    
+    # İşçilik Hesabı (YENİ)
+    val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
+    iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
+    # --- INPUT ALANLARI ---
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
     tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
-    iscilik = ec4.number_input("İşçilik %", value=0.0, key=f"i_{d_key}")
+    
+    # İşçilik Alanı (Güncellendi)
+    # Artık value=0.0 değil, value=val_iscilik olarak geliyor.
+    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret Değişimi:\n{iscilik_notu}")
+    
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
+    
+    # İşçilik Bilgi Notu (Küçük gri yazı)
+    if val_iscilik > 0:
+        ec4.markdown(f"<div style='font-size:10px; color:#27AE60'>ASG: {iscilik_notu}</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
 
-    # --- INPUT BLOKLARI ---
+    # --- AĞIRLIK INPUTLARI ---
     w1, w2, w3, w4 = st.columns(4)
     w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
     w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
@@ -537,11 +586,10 @@ with st.container(border=True):
     w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
     w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
 
-    # --- YENİ DİNAMİK TOPLAM KONTROLÜ ---
+    # --- TOPLAM KONTROLÜ VE HESAPLAMA ---
     toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
     kalan = 100.0 - toplam
     
-    # Görsel Bildirim Çubuğu
     if kalan == 0:
         st.success(f"✅ Sepet Tamamlandı: Toplam %100")
     elif kalan > 0:
@@ -549,7 +597,6 @@ with st.container(border=True):
     else:
         st.error(f"⚠️ HATA: Toplam %100'ü geçti! (Mevcut: %{toplam:.2f} -> Fazlalık: %{abs(kalan):.2f})")
     
-    # --- HESAPLAMA DEVAM EDER ---
     etkiler = [
         ("TÜFE+ÜFE Ort.", safe_float(ort_mix_giris), safe_float(w_mix_oran)), 
         ("TÜFE", safe_float(tufe), safe_float(w_tufe)), 
@@ -587,7 +634,6 @@ with st.container(border=True):
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='Detay', index=False)
         st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
-
 # ============================================================================
 # JARVIS PROJEKSİYONU (SENARYO ANALİZİ & BÜTÇE SİMÜLASYONU) v2.0
 # ============================================================================
@@ -769,6 +815,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
