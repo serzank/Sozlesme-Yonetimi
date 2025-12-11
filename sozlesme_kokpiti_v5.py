@@ -197,6 +197,60 @@ def canli_piyasa_cek():
 
 @st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, start_date, end_date):
+    # --- SEKTÖREL H-ÜFE ÇEKİCİ (YENİ) ---
+@st.cache_data(ttl=3600)
+def get_sectoral_hufe_change(api_key, series_code, d_start, d_end):
+    """
+    Belirli bir EVDS serisi (Örn: Ulaştırma H-ÜFE) için değişim oranını çeker.
+    """
+    res = 0.0
+    if not api_key or not series_code: return res
+    try:
+        evds_service = evdsAPI(api_key)
+        # Tarih formatı
+        start_q = (d_start - relativedelta(months=2)).strftime("%d-%m-%Y")
+        end_q = (d_end + relativedelta(months=1)).strftime("%d-%m-%Y")
+        if d_end > date.today(): end_q = date.today().strftime("%d-%m-%Y")
+
+        raw_df = evds_service.get_data([series_code], startdate=start_q, enddate=end_q)
+        if raw_df is None or raw_df.empty: return 0.0
+            
+        # Kolon temizliği (Noktaları alt çizgi yap EVDS standardı)
+        col_name = series_code.replace(".", "_")
+        target_col = [c for c in raw_df.columns if col_name in c]
+        if not target_col: return 0.0
+        target_col = target_col[0]
+
+        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
+        
+        # Dönem filtreleme
+        p_start = pd.Period(d_start, freq='M')
+        p_end = pd.Period(d_end, freq='M')
+        
+        # Veri setindeki en son tarih kontrolü
+        max_date = raw_df['Tarih_Dt'].max()
+        if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
+
+        # Başlangıç ve Bitiş değerlerini bul
+        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
+        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
+        
+        # Eğer tam başlangıç ayı yoksa, o tarihten sonraki ilk veriyi al
+        if row_start.empty:
+            mask = raw_df['Tarih_Dt'] >= pd.to_datetime(d_start)
+            if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
+            else: return 0.0
+            
+        if row_end.empty: row_end = raw_df.iloc[[-1]]
+        
+        val_start = pd.to_numeric(row_start[target_col].values[0], errors='coerce')
+        val_end = pd.to_numeric(row_end[target_col].values[0], errors='coerce')
+        
+        if val_start > 0:
+            res = ((val_end - val_start) / val_start) * 100
+            
+    except: pass
+    return res
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not api_key: return res
     try:
@@ -526,7 +580,7 @@ with st.container(border=True):
 
 
 # ============================================================================
-# HESAPLAMA MOTORU (İŞÇİLİK OTOMASYONLU - v2.1)
+# HESAPLAMA MOTORU (SEKTÖREL H-ÜFE & İŞÇİLİK OTO - v2.2)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -537,31 +591,63 @@ with st.container(border=True):
     if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
     else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-    # --- OTOMATİK VERİ HAZIRLIĞI ---
+    # --- Sektör Haritası (TAV İhtiyaçları) ---
+    hufe_sectors = {
+        "Genel (H-ÜFE Ortalaması)": "TP.HKFE01.I1",
+        "Ulaştırma ve Depolama (Servis/Lojistik)": "TP.HKFE01.H",
+        "Konaklama ve Yiyecek (Catering)": "TP.HKFE01.I",
+        "Bilgi ve İletişim (Yazılım/IT)": "TP.HKFE01.J",
+        "İdari ve Destek (Güvenlik/Temizlik)": "TP.HKFE01.N",
+        "Mesleki, Bilimsel ve Teknik": "TP.HKFE01.M",
+        "Gayrimenkul Hizmetleri": "TP.HKFE01.L"
+    }
+
+    # Sözleşme tipine göre varsayılan sektörü seçme zekası
+    default_sector_index = 0
+    if sozlesme_tipi == "Personel Taşımacılık": default_sector_index = 1 # Ulaştırma
+    elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri": default_sector_index = 2 # Yiyecek
+    elif sozlesme_tipi == "Yazılım / Lisans": default_sector_index = 3 # IT
+    elif sozlesme_tipi == "Güvenlik Hizmetleri": default_sector_index = 4 # İdari (Güvenlik)
+
+    # --- SEÇİM ALANI ---
+    # H-ÜFE için özel seçim kutusu
+    selected_sector_name = st.selectbox("📊 H-ÜFE Sektör Bazlı Endeks Seçimi:", list(hufe_sectors.keys()), index=default_sector_index)
+    selected_sector_code = hufe_sectors[selected_sector_name]
+
+    # --- VERİ HAZIRLIĞI ---
     val_tufe = safe_float(tcmb["TUFE"])
     val_ufe = safe_float(tcmb["UFE"])
     val_mix = (val_tufe + val_ufe) / 2
     
-    # İşçilik Hesabı (YENİ)
+    # İşçilik Otomasyonu
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
+
+    # Sektörel H-ÜFE Otomasyonu (YENİ)
+    # Eğer "Genel" seçiliyse zaten elimizde var (tcmb['HUFE']), değilse API'ye git.
+    if selected_sector_code == "TP.HKFE01.I1":
+        val_hufe_final = safe_float(tcmb["HUFE"])
+    else:
+        with st.spinner(f"{selected_sector_name} verisi çekiliyor..."):
+            val_hufe_final = get_sectoral_hufe_change(MY_API_KEY, selected_sector_code, start_date, end_date)
 
     # --- INPUT ALANLARI ---
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
     tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
-    h_ufe = ec3.number_input("H-ÜFE %", value=safe_float(tcmb["HUFE"]), key=f"h_{d_key}")
     
-    # İşçilik Alanı (Güncellendi)
-    # Artık value=0.0 değil, value=val_iscilik olarak geliyor.
-    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret Değişimi:\n{iscilik_notu}")
+    # H-ÜFE Input (Güncellendi)
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}", help=f"Seçilen Sektör: {selected_sector_name}")
     
+    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     
-    # İşçilik Bilgi Notu (Küçük gri yazı)
+    # Bilgi Notları (Alt Metinler)
     if val_iscilik > 0:
         ec4.markdown(f"<div style='font-size:10px; color:#27AE60'>ASG: {iscilik_notu}</div>", unsafe_allow_html=True)
+    if selected_sector_code != "TP.HKFE01.I1":
+        ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>Sektör: {selected_sector_name[:15]}...</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
@@ -814,6 +900,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
