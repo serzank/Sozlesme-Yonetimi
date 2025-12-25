@@ -388,28 +388,29 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            # TATİL FIX: Başlangıç tarihini 5 gün geri çekiyoruz ki 
-            # 1 Ocak tatiline denk gelirse önceki yılın son işlem gününü veya 
-            # o yılın ilk işlem gününü yakalayabilelim.
+            # SENE BAŞI / TATİL FIX: 
+            # 1 Ocak gibi tatil günlerini yakalamak için 5 gün öncesinden başlatıyoruz.
             check_start = d_start - timedelta(days=5)
             df = yf.download(symbol, start=check_start, end=y_end + timedelta(days=1), progress=False)
             
             if not df.empty:
+                # Kolon kontrolü
                 seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
                 seri = seri.dropna()
                 
                 if len(seri) > 0:
-                    # Başlangıç tarihine en yakın veriyi bul (>= d_start)
+                    # Başlangıç tarihine (d_start) en yakın olan indeksi buluyoruz (Abs/idxmin)
+                    # Bu sayede 1 Ocak tatilse, 2 veya 3 Ocak'taki ilk veriyi çeker.
                     start_ts = pd.Timestamp(d_start)
                     idx_closest_start = (seri.index.to_series() - start_ts).abs().idxmin()
                     
                     ilk = float(seri.loc[idx_closest_start])
                     son = float(seri.iloc[-1])
-        except Exception as e:
-            # Hata durumunda değerler 0 kalır, program çökmez
-            pass 
+        except Exception:
+            # Hata durumunda programın durmaması için sessizce devam et
+            ilk, son = 0.0, 0.0
         
-        # Canlı veri entegrasyonu (Canlı fiyat varsa Yahoo Finance verisinin üstüne yaz)
+        # Canlı veri varsa (Bigpara vb. gelen) Yahoo verisinin üzerine yaz
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
         
@@ -417,7 +418,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
         if ilk > 0: degisim = ((son - ilk) / ilk) * 100
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # Altın Hesaplama Mantığı
+    # Altın Hesaplama (Ons ve Kur üzerinden)
     gold_ilk = evds_gold_start
     if gold_ilk == 0:
         ons_ilk = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
@@ -931,6 +932,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
