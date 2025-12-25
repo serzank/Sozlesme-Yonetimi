@@ -380,25 +380,36 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     y_end = d_end
     if y_end > date.today(): y_end = date.today()
+    
     symbol_map = [("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
                   ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")]
     data_dict = {}
+    
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            df = yf.download(symbol, start=d_start, end=y_end + timedelta(days=1), progress=False)
-            if isinstance(df, pd.DataFrame):
+            # TATİL FIX: Başlangıç tarihini 5 gün geri çekiyoruz ki 
+            # 1 Ocak tatiline denk gelirse önceki yılın son işlem gününü veya 
+            # o yılın ilk işlem gününü yakalayabilelim.
+            check_start = d_start - timedelta(days=5)
+            df = yf.download(symbol, start=check_start, end=y_end + timedelta(days=1), progress=False)
+            
+            if not df.empty:
                 seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
-            else: seri = df 
-            seri = seri.dropna()
-            ilk = float(seri.iloc[0]) # Bu kalsın ama...
-    son = float(seri.iloc[-1])
-else:
-    # Eğer o tarih aralığında veri yoksa (çok dar aralık veya tatil), 
-    # başlangıç tarihini biraz geri çekerek tekrar dene
-    df_retry = yf.download(symbol, start=d_start - timedelta(days=5), end=y_end + timedelta(days=1), progress=False)
-    # ... (benzer mantıkla en yakın veriyi çek)
+                seri = seri.dropna()
+                
+                if len(seri) > 0:
+                    # Başlangıç tarihine en yakın veriyi bul (>= d_start)
+                    start_ts = pd.Timestamp(d_start)
+                    idx_closest_start = (seri.index.to_series() - start_ts).abs().idxmin()
+                    
+                    ilk = float(seri.loc[idx_closest_start])
+                    son = float(seri.iloc[-1])
+        except Exception as e:
+            # Hata durumunda değerler 0 kalır, program çökmez
+            pass 
         
+        # Canlı veri entegrasyonu (Canlı fiyat varsa Yahoo Finance verisinin üstüne yaz)
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
         
@@ -406,6 +417,7 @@ else:
         if ilk > 0: degisim = ((son - ilk) / ilk) * 100
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
+    # Altın Hesaplama Mantığı
     gold_ilk = evds_gold_start
     if gold_ilk == 0:
         ons_ilk = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
@@ -416,11 +428,12 @@ else:
     if gold_son == 0:
         ons_son = data_dict.get("ONS_ALTIN", {}).get("son", 0)
         usd_son = data_dict.get("USDTRY", {}).get("son", 0)
-        gold_son = (ons_son / 31.1035) * usd_son
+        if ons_son > 0 and usd_son > 0: gold_son = (ons_son / 31.1035) * usd_son
 
     g_deg = 0.0
     if gold_ilk > 0: g_deg = ((gold_son - gold_ilk) / gold_ilk) * 100
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
+    
     return data_dict
 
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
@@ -918,6 +931,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
