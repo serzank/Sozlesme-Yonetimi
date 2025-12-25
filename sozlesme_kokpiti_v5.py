@@ -219,54 +219,51 @@ def get_tcmb_data(api_key, start_date, end_date):
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
+        # Veri çekme aralığını geniş tutuyoruz (Aylık veriler için 2 ay geriden)
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
-        if end_date > date.today(): end_q = date.today().strftime("%d-%m-%Y")
-
+        
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
-            res["Msg"] = "API Boş Döndü"
             return res
             
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
+        
+        # Seçilen tarihlerin ay periyoduna bakıyoruz
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
-        max_date = raw_df['Tarih_Dt'].max()
-        if p_end > pd.Period(max_date, freq='M'): p_end = pd.Period(max_date, freq='M')
 
+        # Tam eşleşme ara, bulamazsan o tarihe en yakın (>=) veriyi al
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
-        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
-        
         if row_start.empty:
-            mask = raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)
-            if mask.any(): row_start = raw_df.loc[mask].iloc[[0]]
-            else: row_start = raw_df.iloc[[0]]
-
-        if row_end.empty: row_end = raw_df.iloc[[-1]]
+            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)].head(1)
         
+        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
+        if row_end.empty:
+            row_end = raw_df.tail(1)
+
         def get_val(row, codes):
+            if row.empty: return 0.0
             for c in codes:
+                c_clean = c.replace(".", "_") # EVDS bazen noktaları alt tireye çevirir
                 if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
+                if c_clean in row.columns and pd.notna(row[c_clean].values[0]): return float(row[c_clean].values[0])
             return 0.0
             
-        cols_t = ["TP_FG_J0", "TP.FG.J0"]
-        cols_u = ["TP_TUFE1YI_T1", "TP.TUFE1YI.T1"]
-        cols_h = ["TP_HKFE01_I1", "TP.HKFE01.I1"]
-
-        t_start, t_end = get_val(row_start, cols_t), get_val(row_end, cols_t)
-        u_start, u_end = get_val(row_start, cols_u), get_val(row_end, cols_u)
-        h_start, h_end = get_val(row_start, cols_h), get_val(row_end, cols_h)
+        t_start, t_end = get_val(row_start, ["TP.FG.J0"]), get_val(row_end, ["TP.FG.J0"])
+        u_start, u_end = get_val(row_start, ["TP.TUFE1YI.T1"]), get_val(row_end, ["TP.TUFE1YI.T1"])
+        h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
         
-        def calc(n, o):
-            if o == 0: return 0.0
-            return ((n - o) / o) * 100
+        calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
             
-        res["TUFE"] = round(calc(t_end, t_start), 2)
-        res["UFE"] = round(calc(u_end, u_start), 2)
-        res["HUFE"] = round(calc(h_end, h_start), 2)
-        res["Status"] = True
-        res["Msg"] = f"{p_start} ➡️ {p_end}"
+        res.update({
+            "TUFE": round(calc(t_end, t_start), 2),
+            "UFE": round(calc(u_end, u_start), 2),
+            "HUFE": round(calc(h_end, h_start), 2),
+            "Status": True,
+            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0]} - {row_end['Tarih'].values[0]}"
+        })
     except Exception as e: res["Msg"] = f"Hata: {str(e)}"
     return res
 
@@ -394,8 +391,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
                 seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
             else: seri = df 
             seri = seri.dropna()
-            if len(seri) > 0: ilk, son = float(seri.iloc[0]), float(seri.iloc[-1])
-        except: pass
+            ilk = float(seri.iloc[0]) # Bu kalsın ama...
+    son = float(seri.iloc[-1])
+else:
+    # Eğer o tarih aralığında veri yoksa (çok dar aralık veya tatil), 
+    # başlangıç tarihini biraz geri çekerek tekrar dene
+    df_retry = yf.download(symbol, start=d_start - timedelta(days=5), end=y_end + timedelta(days=1), progress=False)
+    # ... (benzer mantıkla en yakın veriyi çek)
         
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
@@ -916,6 +918,7 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
 
 
 
