@@ -46,15 +46,24 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- PDF RAPORLAMA SINIFI ---
-class PNXReport(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 15)
-        self.cell(0, 10, 'PNX | PROCUREMENT NEXUS - HAKEDIS ANALIZI', 0, 1, 'C')
-        self.ln(10)
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Sayfa {self.page_no()} | Olusturulma: {datetime.now().strftime("%d.%m.%Y")}', 0, 0, 'C')
+try:
+    from fpdf import FPDF
+    HAS_FPDF = True
+    # Kütüphane varsa normal miras al
+    class PNXReport(FPDF):
+        def header(self):
+            self.set_font('Arial', 'B', 15)
+            self.cell(0, 10, 'PNX | PROCUREMENT NEXUS - HAKEDIS ANALIZI', 0, 1, 'C')
+            self.ln(10)
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Sayfa {self.page_no()} | Olusturulma: {datetime.now().strftime("%d.%m.%Y")}', 0, 0, 'C')
+except ImportError:
+    HAS_FPDF = False
+    # Kütüphane yoksa hata vermemesi için boş bir sınıf tanımla
+    class PNXReport:
+        pass
 
 # --- YARDIMCI FONKSİYONLAR ---
 def tr_fmt(deger):
@@ -170,3 +179,4 @@ if c_ai.button("🧠 Jarvis Stratejik Analiz"):
             prompt = f"Sir, {sozlesme_tipi} sözleşmesinde Avrupa enflasyonu %{eu_val} ve yerel vergi etkisi %{tax_adj} iken risk analizi yap."
             response = model.generate_content(prompt)
             st.info(response.text)
+
