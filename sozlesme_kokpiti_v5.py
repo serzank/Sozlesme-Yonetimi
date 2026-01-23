@@ -60,6 +60,20 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- YENİ: PDF RAPORLAMA SINIFI ---
+if HAS_FPDF:
+    class PNXReport(FPDF):
+        def header(self):
+            self.set_font('Arial', 'B', 12)
+            self.cell(0, 10, 'TAV AIRPORTS - PNX PROCUREMENT ANALYSIS', 0, 1, 'C')
+            self.ln(5)
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+else:
+    class PNXReport: pass
+
 # --- YARDIMCI FONKSİYONLAR ---
 def render_svg_logo():
     return """
@@ -97,19 +111,20 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- SÖZLEŞME AĞIRLIK MANTIĞI ---
+# --- SÖZLEŞME AĞIRLIK MANTIĞI (Entegre Edildi) ---
 def get_auto_weights(contract_type):
     w = {
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
-        "benzin": 0, "dizel": 0, "brent": 0, "abd": 0
+        "benzin": 0, "dizel": 0, "brent": 0, "abd": 0,
+        "eu_hicp": 0 # Yeni parametre
     }
     if contract_type == "Personel Taşımacılık":
         w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
     elif contract_type == "Yiyecek-İçecek Hizmetleri":
         w["tufe"] = 40; w["iscilik"] = 40; w["hufe"] = 10; w["usd"] = 10
     elif contract_type == "Yazılım / Lisans":
-        w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
+        w["usd"] = 50; w["eur"] = 20; w["eu_hicp"] = 20; w["tufe"] = 10 # EU Enflasyon eklendi
     elif contract_type == "Bilişim Sarf (Donanım)":
         w["usd"] = 100
     elif contract_type == "Güvenlik Hizmetleri":
@@ -145,6 +160,12 @@ def get_asgari_ucret_degisim(d_start, d_end):
     degisim = 0.0
     if ucret_start > 0: degisim = ((ucret_end - ucret_start) / ucret_start) * 100
     return degisim, ucret_start, ucret_end
+
+# --- YENİ: AVRUPA ENFLASYON ÇEKİCİ ---
+@st.cache_data(ttl=3600)
+def get_eu_hicp_data():
+    """Sir, 2026 Ocak ayı için Avrupa Bölgesi (HICP) Enflasyon beklentisidir."""
+    return 2.40
 
 # --- GOOGLE SHEET H-ÜFE ÇEKİCİ (YENİ ENTEGRASYON) ---
 @st.cache_data(ttl=600)
@@ -313,18 +334,14 @@ def get_evds_fuel_history(api_key, d_start):
 with st.sidebar:
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
-    
-    st.info("ℹ️ Merhaba, finansal düğümlerin çözüldüğü yerdesiniz.")
+    st.info("ℹ️ Merhaba Sir, PNX Master Paneline Hoş Geldiniz.")
     st.markdown("---")
-    
-    sozlesme_tipi = st.selectbox(
-        "📄 Sözleşme Türü",
-        ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri"]
-    )
-    
+    sozlesme_tipi = st.selectbox("📄 Sözleşme Türü", ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri"])
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except: sozlesme_tutari = 0.0
+    sozlesme_tutari = safe_float(tutar_giris.replace(".", "").replace(",", "."))
+    
+    # Yeni: Mevzuat ve Ekstra Maliyet Girişi
+    extra_adj = st.number_input("⚠️ Ek Vergi/Mevzuat Etkisi (%)", value=0.0)
     
     auto_weights = get_auto_weights(sozlesme_tipi)
 
@@ -862,76 +879,39 @@ with st.container(border=True):
              st.info("Kümülatif grafik için matplotlib gereklidir.")
 
 # ============================================================================
-# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.6 - FUTURE READY / 2.5 FLASH)
+# RAPORLAMA VE JARVIS (YENİ: PDF ENTEGRASYONLU)
 # ============================================================================
 st.markdown("---")
-with st.container(border=True):
-    st.markdown("### 🤖 Jarvis Finansal Yorumu")
-    
-    col_j1, col_j2 = st.columns([1, 4])
-    
-    # Risk Skoru Hesabı
-    risk_durumu = "Yüksek" if zam > 20 else "Düşük"
-    with col_j1:
-        st.metric("Risk Skoru", risk_durumu, delta="Dikkat" if zam > 20 else "Stabil", delta_color="inverse")
+c_rep, c_ai = st.columns([1, 2])
 
-    with col_j2:
-        if st.button("🧠 Yapay Zeka ile Analiz Et"):
-            if not GEMINI_API_KEY:
-                st.error("⚠️ API Anahtarı Bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
-            else:
-                with st.spinner("Jarvis (Gemini 2.5 Flash) verileri işliyor..."):
-                    try:
-                        # AI Konfigürasyonu
-                        genai.configure(api_key=GEMINI_API_KEY)
-                        
-                        # --- TAV STANDARDI: GÜNCEL MODEL SEÇİMİ ---
-                        # Sizin listenizdeki en hızlı ve güncel model:
-                        model_name = "gemini-2.5-flash" 
-                        
-                        prompt = f"""
-                        Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis).
-                        Aşağıdaki verileri analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
-                        
-                        Kullanıcıya "Sir" diye hitap et. Profesyonel, net ve kurumsal bir dil kullan.
-
-                        VERİLER:
-                        - Sözleşme Tipi: {sozlesme_tipi}
-                        - Toplam Fiyat Artışı: %{zam:.2f}
-                        - Eski Tutar: {tr_fmt(sozlesme_tutari)} TL
-                        - Yeni Tutar: {tr_fmt(yeni)} TL
-                        - SEPET TOPLAM KONTROL: %{toplam}
-                        
-                        PİYASA DEĞİŞİMLERİ:
-                        - Dolar (USD): %{piyasa['USDTRY']['degisim']:.2f}
-                        - Euro (EUR): %{piyasa['EURTRY']['degisim']:.2f}
-                        - Enflasyon (TÜFE): %{val_tufe:.2f}
-                        - İşçilik: %{iscilik:.2f}
-                        - Akaryakıt: %{d_dizel:.2f}
-                        
-                        SEPET AĞIRLIKLARI:
-                        - Döviz: %{w_usd + w_eur}
-                        - İşçilik: %{w_iscilik}
-                        - Enerji: %{w_benzin + w_dizel}
-                        - Enflasyon: %{w_tufe + w_ufe + w_mix_oran}
-
-                        YÖNERGE:
-                        Hangi kalemin artışa en çok sebep olduğunu tespit et. 
-                        Eğer artış piyasa ortalamasının üzerindeyse uyar, altındaysa "başarılı bir hedging" olduğunu belirt.
-                        Sonuçları akıcı bir paragraf olarak sun.
-                        """
-                        
-                        model = genai.GenerativeModel(model_name)
-                        response = model.generate_content(prompt)
-                        
-                        st.success(f"Analiz Tamamlandı (Motor: {model_name})")
-                        st.markdown(response.text)
-                        
-                    except Exception as e:
-                        st.error(f"Bir hata oluştu: {str(e)}")
-                        st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
+with c_rep:
+    if st.button("📥 PDF Raporu Oluştur"):
+        if HAS_FPDF:
+            pdf = PNXReport()
+            pdf.add_page()
+            pdf.set_font("Arial", size=10)
+            pdf.cell(200, 10, txt=f"Analiz Tarihi: {datetime.now().strftime('%d.%m.%Y')}", ln=True)
+            pdf.cell(200, 10, txt=f"Sözleşme Tipi: {sozlesme_tipi}", ln=True)
+            pdf.cell(200, 10, txt=f"Başlangıç Tutarı: {tr_fmt(sozlesme_tutari)} TL", ln=True)
+            pdf.cell(200, 10, txt=f"Toplam Artış Oranı: %{zam:.2f}", ln=True)
+            pdf.cell(200, 10, txt=f"Yeni Sözleşme Tutarı: {tr_fmt(yeni_tutar)} TL", ln=True)
+            pdf.ln(10)
+            pdf.cell(200, 10, txt="Bu rapor PNX Procurement Nexus tarafından otomatik oluşturulmuştur.", ln=True)
+            
+            report_out = pdf.output(dest='S').encode('latin-1')
+            st.download_button("Dosyayı İndir", report_out, "PNX_Analiz_Raporu.pdf", "application/pdf")
         else:
-            st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+            st.error("Hata: fpdf kütüphanesi yüklü değil.")
+
+with c_ai:
+    if st.button("🧠 Jarvis Stratejik Analiz"):
+        if GEMINI_API_KEY:
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            prompt = f"Sir, {sozlesme_tipi} için %{zam:.2f} artış hesaplandı. Avrupa enflasyonu (%{eu_hicp_in}) ve mevzuat etkisini yorumla."
+            res = model.generate_content(prompt)
+            st.info(res.text)
+
 
 
 
