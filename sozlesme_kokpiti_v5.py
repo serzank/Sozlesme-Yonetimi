@@ -24,7 +24,7 @@ try:
 except ImportError:
     HAS_XLSX = False
 
-# --- YENİ: PDF KÜTÜPHANE KONTROLÜ ---
+# --- PDF KÜTÜPHANE KONTROLÜ ---
 try:
     from fpdf import FPDF
     HAS_FPDF = True
@@ -152,9 +152,9 @@ def get_asgari_ucret_degisim(d_start, d_end):
     degisim = ((ucret_end - ucret_start) / ucret_start) * 100 if ucret_start > 0 else 0.0
     return degisim, ucret_start, ucret_end
 
-# --- YENİ: AVRUPA ENFLASYON (EU HICP) ÇEKİCİ ---
+# --- AVRUPA ENFLASYON (EU HICP) ÇEKİCİ ---
 @st.cache_data(ttl=3600)
-def get_eu_inflation():
+def get_euro_inflation():
     """Sir, 2026 Ocak Avrupa Bölgesi HICP beklentisi %2.35 olarak simüle edilmiştir."""
     return 2.35
 
@@ -165,7 +165,14 @@ def get_google_sheet_data():
         sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRKKPo73sRdzL227kxw9PRvtd6teIyu74v0bw4NCZUCDmJBXgKxZ3AHYmD4zrkalxVgkOSc1lK6p7PF/pub?output=csv"
         df = pd.read_csv(sheet_url)
         df.columns = df.columns.str.strip()
-        df['Tarih'] = pd.to_datetime(df['Tarih'], format='%Y-%m-%d', errors='coerce').dropna()
+        df = df.dropna(how='all')
+        df['Tarih'] = pd.to_datetime(df['Tarih'], format='%Y-%m-%d', errors='coerce')
+        df = df.dropna(subset=['Tarih'])
+        df['Donem'] = df['Tarih'].dt.strftime('%Y-%m')
+        for col in df.columns:
+            if col not in ['Tarih', 'Donem']:
+                df[col] = df[col].astype(str).str.replace(',', '.')
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         return df
     except: return pd.DataFrame()
 
@@ -203,12 +210,25 @@ def get_tcmb_data(api_key, start_date, end_date):
     if not api_key: return res
     try:
         evds = evdsAPI(api_key)
-        start_q = (start_date - relativedelta(months=1)).strftime("%d-%m-%Y")
-        end_q = end_date.strftime("%d-%m-%Y")
-        df = evds.get_data(["TP.FG.J0", "TP.TUFE1YI.T1"], startdate=start_q, enddate=end_q)
-        if not df.empty:
-            v1, v2 = df["TP_FG_J0"].iloc[0], df["TP_FG_J0"].iloc[-1]
-            res.update({"TUFE": round(((v2-v1)/v1)*100, 2), "Status": True, "Msg": "EVDS Verisi Aktif"})
+        start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
+        end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
+        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
+        raw_df = evds.get_data(series, startdate=start_q, enddate=end_q)
+        if not raw_df.empty:
+            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
+            row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == pd.Period(start_date, freq='M')]
+            if row_start.empty: row_start = raw_df.head(1)
+            row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == pd.Period(end_date, freq='M')]
+            if row_end.empty: row_end = raw_df.tail(1)
+            
+            def get_val(row, code):
+                c_clean = code.replace(".", "_")
+                if code in row.columns: return float(row[code].values[0])
+                if c_clean in row.columns: return float(row[c_clean].values[0])
+                return 0.0
+                
+            v1, v2 = get_val(row_start, "TP.FG.J0"), get_val(row_end, "TP.FG.J0")
+            res.update({"TUFE": round(((v2-v1)/v1)*100, 2) if v1>0 else 0.0, "Status": True, "Msg": "EVDS Verisi Aktif"})
     except: pass
     return res
 
@@ -218,15 +238,12 @@ def get_tcmb_data(api_key, start_date, end_date):
 with st.sidebar:
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
-    st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
+    st.info("ℹ️ Merhaba Sir, PNX Master Paneli yayında.")
     st.markdown("---")
     sozlesme_tipi = st.selectbox("📄 Sözleşme Türü", ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri"])
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     sozlesme_tutari = safe_float(tutar_giris.replace(".", "").replace(",", "."))
-    
-    # Yeni: Ekstra Mevzuat/Vergi Etkisi
-    extra_tax_adj = st.number_input("⚖️ Ek Vergi/Mevzuat Etkisi (%)", value=0.0, help="2026 yılındaki vergi değişikliklerini buraya girebilirsiniz.")
-    
+    extra_tax_adj = st.number_input("⚖️ Ek Vergi/Mevzuat Etkisi (%)", value=0.0)
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
@@ -242,7 +259,6 @@ with st.container(border=True):
     end_date = c_d2.date_input("Bitiş", key="ss_end", format="DD.MM.YYYY")
     d_key = f"{start_date}_{end_date}"
 
-# Veri Köprüsü
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit = guncel_akaryakit_cek()
@@ -251,25 +267,16 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     val_eu_inf = get_euro_inflation()
 
 # ============================================================================
-# GÖSTERGE PANELİ (DASHBOARD)
+# GÖSTERGE PANELİ
 # ============================================================================
 st.title("💠 Procurement Node | Financial Datum")
-
 with st.container(border=True):
     st.subheader("📊 Piyasa Göstergeleri")
     k1, k2, k3, k4 = st.columns(4)
-    # USD/TL
-    with k1:
-        st.markdown(f"<div class='kutu'><b>💵 USD/TL</b><br><span class='big-metric'>{tr_fmt(canli['USD'])}</span><br><span class='badge-live'>CANLI</span></div>", unsafe_allow_html=True)
-    # EUR/TL
-    with k2:
-        st.markdown(f"<div class='kutu'><b>💶 EUR/TL</b><br><span class='big-metric'>{tr_fmt(canli['EUR'])}</span><br><span class='badge-live'>CANLI</span></div>", unsafe_allow_html=True)
-    # Gram Altın
-    with k3:
-        st.markdown(f"<div class='kutu'><b>🥇 Gram Altın</b><br><span class='big-metric'>{tr_fmt(canli['ALTIN'])}</span><br><span class='badge-live'>CANLI</span></div>", unsafe_allow_html=True)
-    # Yeni: Avrupa Enflasyonu
-    with k4:
-        st.markdown(f"<div class='kutu'><b>🇪🇺 EU HICP</b><br><span class='big-metric'>%{val_eu_inf}</span><br><span class='badge-est'>TAHMİNİ</span></div>", unsafe_allow_html=True)
+    with k1: st.markdown(f"<div class='kutu'><b>💵 USD/TL</b><br><span class='big-metric'>{tr_fmt(canli['USD'])}</span><br><span class='badge-live'>CANLI</span></div>", unsafe_allow_html=True)
+    with k2: st.markdown(f"<div class='kutu'><b>💶 EUR/TL</b><br><span class='big-metric'>{tr_fmt(canli['EUR'])}</span><br><span class='badge-live'>CANLI</span></div>", unsafe_allow_html=True)
+    with k3: st.markdown(f"<div class='kutu'><b>🥇 Gram Altın</b><br><span class='big-metric'>{tr_fmt(canli['ALTIN'])}</span><br><span class='badge-live'>CANLI</span></div>", unsafe_allow_html=True)
+    with k4: st.markdown(f"<div class='kutu'><b>🇪🇺 EU HICP</b><br><span class='big-metric'>%{val_eu_inf}</span><br><span class='badge-est'>TAHMİNİ</span></div>", unsafe_allow_html=True)
 
 # ============================================================================
 # HESAPLAMA MOTORU
@@ -277,8 +284,6 @@ with st.container(border=True):
 st.markdown("---")
 with st.container(border=True):
     st.subheader("⚡ Enflasyon & Sepet Hesabı")
-    
-    # H-ÜFE Sektör Mantığı (Orijinal)
     tum_sektorler = [col for col in df_hufe.columns if col not in ['Tarih', 'Donem']] if not df_hufe.empty else ["Yüklenemedi"]
     selected_sector = st.selectbox("📋 H-ÜFE Sektör Seçimi", tum_sektorler)
     
@@ -286,31 +291,28 @@ with st.container(border=True):
     val_iscilik, _, _ = get_asgari_ucret_degisim(start_date, end_date)
     
     ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-    in_tufe = ec1.number_input("TÜFE %", value=val_tufe)
-    in_iscilik = ec2.number_input("İşçilik %", value=val_iscilik)
-    in_hufe = ec3.number_input("H-ÜFE %", value=15.0)
-    in_eu_inf = ec4.number_input("EU Enflasyon %", value=val_eu_inf)
-    in_extra = ec5.number_input("Mevzuat Etkisi %", value=extra_tax_adj)
+    in_tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
+    in_iscilik = ec2.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}")
+    in_hufe = ec3.number_input("H-ÜFE %", value=15.0, key=f"h_{d_key}")
+    in_eu_inf = ec4.number_input("EU Enflasyon %", value=val_eu_inf, key=f"eu_{d_key}")
+    in_extra = ec5.number_input("Mevzuat Etkisi %", value=extra_tax_adj, key=f"ex_{d_key}")
 
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
     w1, w2, w3, w4, w5 = st.columns(5)
-    aw = auto_weights
-    sw_tufe = w1.number_input("Saf TÜFE %", value=aw["tufe"])
-    sw_iscilik = w2.number_input("İşçilik %", value=aw["iscilik"])
-    sw_usd = w3.number_input("USD %", value=aw["usd"])
-    sw_eur = w4.number_input("EUR %", value=aw["eur"])
-    sw_eu = w5.number_input("EU HICP %", value=aw["eu_inf"])
+    sw_tufe = w1.number_input("Saf TÜFE %", value=auto_weights["tufe"])
+    sw_iscilik = w2.number_input("İşçilik %", value=auto_weights["iscilik"])
+    sw_usd = w3.number_input("USD %", value=auto_weights["usd"])
+    sw_eur = w4.number_input("EUR %", value=auto_weights["eur"])
+    sw_eu = w5.number_input("EU HICP %", value=auto_weights["eu_inf"])
 
-    # Kur Değişimi (Simüle)
     d_usd = ((canli["USD"] - 30.0) / 30.0) * 100
     d_eur = ((canli["EUR"] - 32.0) / 32.0) * 100
-
+    
     etkiler = [
         ("TÜFE", in_tufe, sw_tufe), ("İşçilik", in_iscilik, sw_iscilik),
         ("USD", d_usd, sw_usd), ("EUR", d_eur, sw_eur),
-        ("EU Enflasyon", in_eu_inf, sw_eu), ("Ek Mevzuat", in_extra, 100 if in_extra > 0 else 0)
+        ("EU Enflasyon", in_eu_inf, sw_eu), ("Mevzuat", in_extra, 100 if in_extra > 0 else 0)
     ]
-    
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
     yeni = sozlesme_tutari + fark
@@ -322,40 +324,33 @@ with st.container(border=True):
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL")
 
 # ============================================================================
-# RAPORLAMA VE JARVIS AI
+# RAPORLAMA VE AI
 # ============================================================================
 st.markdown("---")
 c_rep, c_ai = st.columns([1, 2])
-
 with c_rep:
     if st.button("📥 Profesyonel PDF Oluştur"):
         if HAS_FPDF:
             pdf = PNXReport()
             pdf.add_page()
             pdf.set_font("Arial", size=10)
-            pdf.cell(200, 10, txt=f"Analysis Date: {datetime.now().strftime('%d.%m.%Y')}", ln=True)
-            pdf.cell(200, 10, txt=f"Contract Type: {sozlesme_tipi}", ln=True)
-            pdf.cell(200, 10, txt=f"Initial Amount: {tr_fmt(sozlesme_tutari)} TL", ln=True)
-            pdf.cell(200, 10, txt=f"Total Increase: %{zam:.2f}", ln=True)
+            pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%d.%m.%Y')}", ln=True)
+            pdf.cell(200, 10, txt=f"Contract: {sozlesme_tipi}", ln=True)
+            pdf.cell(200, 10, txt=f"Increase: %{zam:.2f}", ln=True)
             pdf.cell(200, 10, txt=f"NEW TOTAL: {tr_fmt(yeni)} TL", ln=True)
-            pdf_out = pdf.output(dest='S').encode('latin-1')
-            st.download_button("Dosyayı İndir", pdf_out, "PNX_Hakedis_Raporu.pdf", "application/pdf")
+            st.download_button("Dosyayı İndir", pdf.output(dest='S').encode('latin-1'), "PNX_Report.pdf", "application/pdf")
 
 with c_ai:
     if st.button("🧠 Jarvis Stratejik Yorum"):
         if GEMINI_API_KEY:
             genai.configure(api_key=GEMINI_API_KEY)
             model = genai.GenerativeModel("gemini-2.5-flash")
-            prompt = f"Sir, {sozlesme_tipi} için %{zam:.2f} artış hesaplandı. Avrupa enflasyonu (%{in_eu_inf}) ve yerel mevzuat risklerini yorumla."
+            prompt = f"Sir, {sozlesme_tipi} için %{zam:.2f} artış hesaplandı. Avrupa enflasyonu (%{in_eu_inf}) ve mevzuat riskini yorumla."
             res = model.generate_content(prompt)
             st.info(res.text)
 
-# Grafik Modülleri (Orijinal Matplotlib Yapısı)
 if HAS_MATPLOTLIB:
-    with st.expander("📈 Trend ve Senaryo Analizi", expanded=True):
+    with st.expander("📈 Trend Analizi", expanded=True):
         fig, ax = plt.subplots(figsize=(10, 4))
-        # Örnek projeksiyon çizgisi
-        x_graph = ["Mevcut", "Projeksiyon"]
-        y_graph = [sozlesme_tutari, yeni]
-        ax.plot(x_graph, y_graph, marker='o', color='#1E3D59')
+        ax.plot(["Mevcut", "Yeni"], [sozlesme_tutari, yeni], marker='o', color='#1E3D59')
         st.pyplot(fig)
