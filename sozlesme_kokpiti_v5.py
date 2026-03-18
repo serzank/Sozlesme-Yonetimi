@@ -219,77 +219,52 @@ def get_tcmb_data(api_key, start_date, end_date):
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
-        # API aralığını genişlettik
-        start_q = (start_date - relativedelta(months=3)).strftime("%d-%m-%Y")
+        # Veri çekme aralığını geniş tutuyoruz (Aylık veriler için 2 ay geriden)
+        start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
-        
-        series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1", "TP.TUFE1YI.T1"]
+        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
-            res["Msg"] = "Hata: EVDS tamamen boş veri döndürdü."
             return res
             
-        raw_df.columns = [str(c).replace('_', '.') for c in raw_df.columns]
+        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
         
-        if 'Tarih' not in raw_df.columns:
-            res["Msg"] = f"Hata: Tarih kolonu yok. Gelen kolonlar: {list(raw_df.columns)}"
-            return res
-
-        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
-        raw_df = raw_df.dropna(subset=['Tarih_Dt'])
-        
+        # Seçilen tarihlerin ay periyoduna bakıyoruz
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        def degeri_yakala(df, kod_listesi):
-            gecerli_kod = None
-            for kod in kod_listesi:
-                if kod in df.columns:
-                    gecerli_kod = kod
-                    break
-            
-            if not gecerli_kod: return 0.0, 0.0
-            
-            temp = df[['Tarih_Dt', gecerli_kod]].copy()
-            temp[gecerli_kod] = pd.to_numeric(temp[gecerli_kod].astype(str).str.replace(',', '.'), errors='coerce')
-            temp = temp.dropna(subset=[gecerli_kod])
-            temp = temp[temp[gecerli_kod] > 0]
-            
-            if temp.empty: return 0.0, 0.0
-            
-            s_match = temp[temp['Tarih_Dt'].dt.to_period('M') >= p_start]
-            val_start = s_match.iloc[0][gecerli_kod] if not s_match.empty else temp.iloc[-1][gecerli_kod]
-            
-            e_match = temp[temp['Tarih_Dt'].dt.to_period('M') <= p_end]
-            val_end = e_match.iloc[-1][gecerli_kod] if not e_match.empty else temp.iloc[-1][gecerli_kod]
-            
-            return float(val_start), float(val_end)
-
-        t_start, t_end = degeri_yakala(raw_df, ["TP.FG.J0"])
-        u_start, u_end = degeri_yakala(raw_df, ["TP.UY.G01", "TP.TUFE1YI.T1"])
-        h_start, h_end = degeri_yakala(raw_df, ["TP.HKFE01.I1"])
-
-        calc = lambda ilk, son: round(((son - ilk) / ilk) * 100, 2) if (ilk > 0 and son > 0) else 0.0
+        # Tam eşleşme ara, bulamazsan o tarihe en yakın (>=) veriyi al
+        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
+        if row_start.empty:
+            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)].head(1)
         
-        tufe_degisim = calc(t_start, t_end)
-        ufe_degisim = calc(u_start, u_end)
-        hufe_degisim = calc(h_start, h_end)
+        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
+        if row_end.empty:
+            row_end = raw_df.tail(1)
 
-        if tufe_degisim == 0 or ufe_degisim == 0:
-            durum = f"Sorunlu! TÜFE:{t_start}->{t_end} | ÜFE:{u_start}->{u_end} | Gelenler: {list(raw_df.columns)}"
-        else:
-            durum = "Sistem Aktif (Veriler Başarıyla Çekildi)"
-
+        def get_val(row, codes):
+            if row.empty: return 0.0
+            for c in codes:
+                c_clean = c.replace(".", "_") # EVDS bazen noktaları alt tireye çevirir
+                if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
+                if c_clean in row.columns and pd.notna(row[c_clean].values[0]): return float(row[c_clean].values[0])
+            return 0.0
+            
+        t_start, t_end = get_val(row_start, ["TP.FG.J0"]), get_val(row_end, ["TP.FG.J0"])
+        u_start, u_end = get_val(row_start, ["TP.TUFE1YI.T1"]), get_val(row_end, ["TP.TUFE1YI.T1"])
+        h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
+        
+        calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
+            
         res.update({
-            "TUFE": tufe_degisim,
-            "UFE": ufe_degisim,
-            "HUFE": hufe_degisim,
-            "Status": True if (tufe_degisim > 0 and ufe_degisim > 0) else False,
-            "Msg": durum
+            "TUFE": round(calc(t_end, t_start), 2),
+            "UFE": round(calc(u_end, u_start), 2),
+            "HUFE": round(calc(h_end, h_start), 2),
+            "Status": True,
+            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0]} - {row_end['Tarih'].values[0]}"
         })
-    except Exception as e: 
-        res["Msg"] = f"Kritik Çökme: {str(e)}"
+    except Exception as e: res["Msg"] = f"Hata: {str(e)}"
     return res
 
 @st.cache_data(ttl=3600)
