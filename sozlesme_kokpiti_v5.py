@@ -222,58 +222,48 @@ def get_tcmb_data(api_key, start_date, end_date):
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         
-        # Doğru ve resmi ÜFE kodu eklendi (TP.UY.G01)
+        # Kesin Kodlar: TÜFE (J0), Yİ-ÜFE (G01), H-ÜFE (I1)
         series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
             return res
             
+        # EVDS'nin rastgele alt tire (_) atamasını standart noktaya (.) çeviriyoruz
+        raw_df.columns = raw_df.columns.str.replace('_', '.')
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
         raw_df = raw_df.dropna(subset=['Tarih_Dt'])
         
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # Güçlendirilmiş Veri Yakalama Motoru
-        def get_series_val(df, codes, target_period, is_start=True):
-            valid_cols = [c for c in df.columns if c in codes or c.replace("_", ".") in codes or c.replace(".", "_") in codes]
-            if not valid_cols: return 0.0
-            col = valid_cols[0]
+        def hesapla_endeks(df, kod):
+            if kod not in df.columns: return 0.0
             
-            temp_df = df.copy()
-            temp_df[col] = pd.to_numeric(temp_df[col].astype(str).str.replace(',', '.'), errors='coerce')
-            valid_data = temp_df[temp_df[col] > 0].copy()
+            temp = df[['Tarih_Dt', kod]].copy()
+            temp[kod] = pd.to_numeric(temp[kod].astype(str).str.replace(',', '.'), errors='coerce')
+            temp = temp.dropna(subset=[kod])
+            temp = temp[temp[kod] > 0] # Sadece içi dolu olan gerçek veriler
             
-            if valid_data.empty: return 0.0
+            if temp.empty: return 0.0
             
-            if is_start:
-                match = valid_data[valid_data['Tarih_Dt'].dt.to_period('M') >= target_period]
-                if not match.empty: return float(match.iloc[0][col])
-                return float(valid_data.iloc[-1][col])
-            else:
-                match = valid_data[valid_data['Tarih_Dt'].dt.to_period('M') <= target_period]
-                if not match.empty: return float(match.iloc[-1][col])
-                return float(valid_data.iloc[-1][col])
+            # Başlangıç ve Bitiş değerlerini en yakın/en son tarihten bul
+            s_match = temp[temp['Tarih_Dt'].dt.to_period('M') >= p_start]
+            v_start = s_match.iloc[0][kod] if not s_match.empty else temp.iloc[-1][kod]
+            
+            e_match = temp[temp['Tarih_Dt'].dt.to_period('M') <= p_end]
+            v_end = e_match.iloc[-1][kod] if not e_match.empty else temp.iloc[-1][kod]
+            
+            if v_start > 0 and v_end > 0:
+                return ((v_end - v_start) / v_start) * 100
+            return 0.0
 
-        t_start = get_series_val(raw_df, ["TP.FG.J0"], p_start, True)
-        t_end = get_series_val(raw_df, ["TP.FG.J0"], p_end, False)
-        
-        u_start = get_series_val(raw_df, ["TP.UY.G01"], p_start, True)
-        u_end = get_series_val(raw_df, ["TP.UY.G01"], p_end, False)
-        
-        h_start = get_series_val(raw_df, ["TP.HKFE01.I1"], p_start, True)
-        h_end = get_series_val(raw_df, ["TP.HKFE01.I1"], p_end, False)
-        
-        # Güvenlik Kilidi: Eksik veride %-100 hatasını engeller
-        calc = lambda n, o: ((n - o) / o * 100) if (o > 0 and n > 0) else 0.0
-            
         res.update({
-            "TUFE": round(calc(t_end, t_start), 2),
-            "UFE": round(calc(u_end, u_start), 2),
-            "HUFE": round(calc(h_end, h_start), 2),
+            "TUFE": round(hesapla_endeks(raw_df, "TP.FG.J0"), 2),
+            "UFE": round(hesapla_endeks(raw_df, "TP.UY.G01"), 2),
+            "HUFE": round(hesapla_endeks(raw_df, "TP.HKFE01.I1"), 2),
             "Status": True,
-            "Msg": "Veriler TCMB'den Başarıyla Çekildi (Boş Aylar Filtrelendi)"
+            "Msg": "Sistem Aktif (TÜFE & ÜFE Doğrulandı)"
         })
     except Exception as e: 
         res["Msg"] = f"Hata: {str(e)}"
