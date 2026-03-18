@@ -228,13 +228,13 @@ def get_tcmb_data(api_key, start_date, end_date):
         if raw_df is None or raw_df.empty:
             return res
             
-        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
+        # FIX 1: Format parametresini kaldırıp Pandas'ın esnek tarih ayrıştırıcısına bırakıyoruz
+        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
+        raw_df = raw_df.dropna(subset=['Tarih_Dt']) # Ayrıştırılamayan geçersiz satırları temizle
         
-        # Seçilen tarihlerin ay periyoduna bakıyoruz
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # Tam eşleşme ara, bulamazsan o tarihe en yakın (>=) veriyi al
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
         if row_start.empty:
             row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)].head(1)
@@ -243,12 +243,20 @@ def get_tcmb_data(api_key, start_date, end_date):
         if row_end.empty:
             row_end = raw_df.tail(1)
 
+        # FIX 2: Boş string veya geçersiz metin dönüşümlerini handle edecek yapı
         def get_val(row, codes):
             if row.empty: return 0.0
             for c in codes:
-                c_clean = c.replace(".", "_") # EVDS bazen noktaları alt tireye çevirir
-                if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
-                if c_clean in row.columns and pd.notna(row[c_clean].values[0]): return float(row[c_clean].values[0])
+                c_clean = c.replace(".", "_")
+                for col_name in [c, c_clean]:
+                    if col_name in row.columns:
+                        val = row[col_name].values[0]
+                        if pd.notna(val) and str(val).strip() != "":
+                            try:
+                                # String tipindeki sayıları güvenli şekilde float'a çevir
+                                return float(str(val).replace(',', '.'))
+                            except ValueError:
+                                continue # Hata alırsan bir sonraki sütuna/koda bak
             return 0.0
             
         t_start, t_end = get_val(row_start, ["TP.FG.J0"]), get_val(row_end, ["TP.FG.J0"])
@@ -264,7 +272,8 @@ def get_tcmb_data(api_key, start_date, end_date):
             "Status": True,
             "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0]} - {row_end['Tarih'].values[0]}"
         })
-    except Exception as e: res["Msg"] = f"Hata: {str(e)}"
+    except Exception as e: 
+        res["Msg"] = f"Hata: {str(e)}"
     return res
 
 @st.cache_data(ttl=3600)
