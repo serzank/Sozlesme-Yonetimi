@@ -219,68 +219,88 @@ def get_tcmb_data(api_key, start_date, end_date):
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
-        start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
+        # API aralığını biraz daha geniş tutuyoruz ki boşluklara düşmeyelim
+        start_q = (start_date - relativedelta(months=3)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         
-        # Garanti olması adına TÜFE, Yİ-ÜFE ve Piyasa Beklenti anketini aynı anda çekiyoruz
         series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1", "TP.TUFE1YI.T1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
+            res["Msg"] = "Hata: EVDS tamamen boş veri döndürdü."
             return res
             
-        # Sütun adlarındaki alt tireleri standartlaştır
-        raw_df.columns = raw_df.columns.str.replace('_', '.')
+        # EVDS alt tire (_) döndürürse noktaya (.) çevir (Örn: TP_FG_J0 -> TP.FG.J0)
+        raw_df.columns = [str(c).replace('_', '.') for c in raw_df.columns]
+        
+        if 'Tarih' not in raw_df.columns:
+            res["Msg"] = f"Hata: Tarih kolonu yok. Gelen kolonlar: {list(raw_df.columns)}"
+            return res
+
+        # Tarih formatını güvenli şekilde datetime objesine çevir
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
         raw_df = raw_df.dropna(subset=['Tarih_Dt'])
         
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        def hesapla_endeks(df, aranan_kodlar):
-            bulunan_kod = None
-            for kod in aranan_kodlar:
+        def degeri_yakala(df, kod_listesi):
+            # İstenen kod veri setinde var mı kontrol et
+            gecerli_kod = None
+            for kod in kod_listesi:
                 if kod in df.columns:
-                    bulunan_kod = kod
+                    gecerli_kod = kod
                     break
             
-            if not bulunan_kod: return 0.0
+            if not gecerli_kod: return 0.0, 0.0
             
-            temp = df[['Tarih_Dt', bulunan_kod]].copy()
-            temp[bulunan_kod] = pd.to_numeric(temp[bulunan_kod].astype(str).str.replace(',', '.'), errors='coerce')
-            temp = temp.dropna(subset=[bulunan_kod])
-            temp = temp[temp[bulunan_kod] > 0] 
+            # Veriyi temizle ve sadece içi dolu olanları filtrele
+            temp = df[['Tarih_Dt', gecerli_kod]].copy()
+            temp[gecerli_kod] = pd.to_numeric(temp[gecerli_kod].astype(str).str.replace(',', '.'), errors='coerce')
+            temp = temp.dropna(subset=[gecerli_kod])
+            temp = temp[temp[gecerli_kod] > 0]
             
-            if temp.empty: return 0.0
+            if temp.empty: return 0.0, 0.0
             
+            # Başlangıç değeri (Hedef aya eşit veya sonraki ilk dolu veri, bulamazsa en sonuncu veri)
             s_match = temp[temp['Tarih_Dt'].dt.to_period('M') >= p_start]
-            v_start = s_match.iloc[0][bulunan_kod] if not s_match.empty else temp.iloc[-1][bulunan_kod]
+            val_start = s_match.iloc[0][gecerli_kod] if not s_match.empty else temp.iloc[-1][gecerli_kod]
             
+            # Bitiş değeri (Hedef aya eşit veya önceki son dolu veri, bulamazsa en sonuncu veri)
             e_match = temp[temp['Tarih_Dt'].dt.to_period('M') <= p_end]
-            v_end = e_match.iloc[-1][bulunan_kod] if not e_match.empty else temp.iloc[-1][bulunan_kod]
+            val_end = e_match.iloc[-1][gecerli_kod] if not e_match.empty else temp.iloc[-1][gecerli_kod]
             
-            if v_start > 0 and v_end > 0:
-                return ((v_end - v_start) / v_start) * 100
-            return 0.0
+            return float(val_start), float(val_end)
 
-        # TUFE, UFE (Alternatifleriyle), ve HUFE hesaplamaları
-        tufe_val = hesapla_endeks(raw_df, ["TP.FG.J0"])
-        ufe_val = hesapla_endeks(raw_df, ["TP.UY.G01", "TP.TUFE1YI.T1"])
-        hufe_val = hesapla_endeks(raw_df, ["TP.HKFE01.I1"])
+        # Değerleri çıkarma işlemi
+        t_start, t_end = degeri_yakala(raw_df, ["TP.FG.J0"])
+        u_start, u_end = degeri_yakala(raw_df, ["TP.UY.G01", "TP.TUFE1YI.T1"])
+        h_start, h_end = degeri_yakala(raw_df, ["TP.HKFE01.I1"])
 
-        # Eğer UFE hala 0 ise ekranda gelen kolonları gösterecek ki API'nin ne döndürdüğünü görelim
-        durum_mesaji = f"Sistem Aktif (Veriler Alındı)" if ufe_val != 0 else f"ÜFE Bulunamadı! API'den Gelenler: {list(raw_df.columns)}"
+        # Değişim Formülü (Güvenlik Korumalı)
+        calc = lambda ilk, son: round(((son - ilk) / ilk) * 100, 2) if (ilk > 0 and son > 0) else 0.0
+        
+        tufe_degisim = calc(t_start, t_end)
+        ufe_degisim = calc(u_start, u_end)
+        hufe_degisim = calc(h_start, h_end)
+
+        # Eğer değerlerden biri 0 dönerse teşhis mesajını ekrana bas
+        if tufe_degisim == 0 or ufe_degisim == 0:
+            durum = f"Sorunlu! TÜFE:{t_start}->{t_end} | ÜFE:{u_start}->{u_end} | Gelenler: {list(raw_df.columns)}"
+        else:
+            durum = "Sistem Aktif (Veriler Başarıyla Çekildi)"
 
         res.update({
-            "TUFE": round(tufe_val, 2),
-            "UFE": round(ufe_val, 2),
-            "HUFE": round(hufe_val, 2),
-            "Status": True,
-            "Msg": durum_mesaji
+            "TUFE": tufe_degisim,
+            "UFE": ufe_degisim,
+            "HUFE": hufe_degisim,
+            "Status": True if (tufe_degisim > 0 and ufe_degisim > 0) else False,
+            "Msg": durum
         })
     except Exception as e: 
-        res["Msg"] = f"Hata: {str(e)}"
+        res["Msg"] = f"Kritik Çökme: {str(e)}"
     return res
+    
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
