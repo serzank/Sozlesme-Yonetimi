@@ -221,7 +221,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         evds_service = evdsAPI(api_key)
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
-        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
+        series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
@@ -259,16 +259,17 @@ def get_tcmb_data(api_key, start_date, end_date):
                 return float(valid_data.iloc[-1][col])
 
         # Her bir seri için başlangıç ve bitiş değerlerini bağımsız çekiyoruz
-        t_start = get_series_val(raw_df, ["TP.FG.J0"], p_start, True)
+       t_start = get_series_val(raw_df, ["TP.FG.J0"], p_start, True)
         t_end = get_series_val(raw_df, ["TP.FG.J0"], p_end, False)
         
-        u_start = get_series_val(raw_df, ["TP.TUFE1YI.T1"], p_start, True)
-        u_end = get_series_val(raw_df, ["TP.TUFE1YI.T1"], p_end, False)
+        u_start = get_series_val(raw_df, ["TP.UY.G01"], p_start, True)
+        u_end = get_series_val(raw_df, ["TP.UY.G01"], p_end, False)
         
         h_start = get_series_val(raw_df, ["TP.HKFE01.I1"], p_start, True)
         h_end = get_series_val(raw_df, ["TP.HKFE01.I1"], p_end, False)
         
-        calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
+        # 3. ADIM: Güvenlik Kilidi (Fail-Safe) - Yeni değer 0 gelirse eksiye düşme, 0 göster
+        calc = lambda n, o: ((n - o) / o * 100) if (o > 0 and n > 0) else 0.0
             
         res.update({
             "TUFE": round(calc(t_end, t_start), 2),
