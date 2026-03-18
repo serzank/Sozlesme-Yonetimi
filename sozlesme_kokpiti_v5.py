@@ -219,7 +219,6 @@ def get_tcmb_data(api_key, start_date, end_date):
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
-        # Veri çekme aralığını geniş tutuyoruz (Aylık veriler için 2 ay geriden)
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
@@ -228,40 +227,46 @@ def get_tcmb_data(api_key, start_date, end_date):
         if raw_df is None or raw_df.empty:
             return res
             
-        # FIX 1: Format parametresini kaldırıp Pandas'ın esnek tarih ayrıştırıcısına bırakıyoruz
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
-        raw_df = raw_df.dropna(subset=['Tarih_Dt']) # Ayrıştırılamayan geçersiz satırları temizle
+        raw_df = raw_df.dropna(subset=['Tarih_Dt'])
         
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
-        if row_start.empty:
-            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)].head(1)
-        
-        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
-        if row_end.empty:
-            row_end = raw_df.tail(1)
-
-        # FIX 2: Boş string veya geçersiz metin dönüşümlerini handle edecek yapı
-        def get_val(row, codes):
-            if row.empty: return 0.0
-            for c in codes:
-                c_clean = c.replace(".", "_")
-                for col_name in [c, c_clean]:
-                    if col_name in row.columns:
-                        val = row[col_name].values[0]
-                        if pd.notna(val) and str(val).strip() != "":
-                            try:
-                                # String tipindeki sayıları güvenli şekilde float'a çevir
-                                return float(str(val).replace(',', '.'))
-                            except ValueError:
-                                continue # Hata alırsan bir sonraki sütuna/koda bak
-            return 0.0
+        # GÜÇLENDİRİLMİŞ VERİ YAKALAMA MOTORU
+        def get_series_val(df, codes, target_period, is_start=True):
+            # EVDS'nin döndürdüğü nokta/alt tire formatlarını eşleştir
+            valid_cols = [c for c in df.columns if c in codes or c.replace("_", ".") in codes or c.replace(".", "_") in codes]
+            if not valid_cols: return 0.0
+            col = valid_cols[0]
             
-        t_start, t_end = get_val(row_start, ["TP.FG.J0"]), get_val(row_end, ["TP.FG.J0"])
-        u_start, u_end = get_val(row_start, ["TP.TUFE1YI.T1"]), get_val(row_end, ["TP.TUFE1YI.T1"])
-        h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
+            # Sadece geçerli, sayısal ve 0'dan büyük olan satırları filtrele
+            temp_df = df.copy()
+            temp_df[col] = pd.to_numeric(temp_df[col].astype(str).str.replace(',', '.'), errors='coerce')
+            valid_data = temp_df[temp_df[col] > 0].copy()
+            
+            if valid_data.empty: return 0.0
+            
+            if is_start:
+                # Başlangıç tarihi için: İstenen aya eşit veya sonraki ilk açıklanmış veriyi bul
+                match = valid_data[valid_data['Tarih_Dt'].dt.to_period('M') >= target_period]
+                if not match.empty: return float(match.iloc[0][col])
+                return float(valid_data.iloc[-1][col])
+            else:
+                # Bitiş tarihi için: İstenen aya eşit veya önceki en son açıklanmış veriyi bul
+                match = valid_data[valid_data['Tarih_Dt'].dt.to_period('M') <= target_period]
+                if not match.empty: return float(match.iloc[-1][col])
+                return float(valid_data.iloc[-1][col])
+
+        # Her bir seri için başlangıç ve bitiş değerlerini bağımsız çekiyoruz
+        t_start = get_series_val(raw_df, ["TP.FG.J0"], p_start, True)
+        t_end = get_series_val(raw_df, ["TP.FG.J0"], p_end, False)
+        
+        u_start = get_series_val(raw_df, ["TP.TUFE1YI.T1"], p_start, True)
+        u_end = get_series_val(raw_df, ["TP.TUFE1YI.T1"], p_end, False)
+        
+        h_start = get_series_val(raw_df, ["TP.HKFE01.I1"], p_start, True)
+        h_end = get_series_val(raw_df, ["TP.HKFE01.I1"], p_end, False)
         
         calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
             
@@ -270,7 +275,7 @@ def get_tcmb_data(api_key, start_date, end_date):
             "UFE": round(calc(u_end, u_start), 2),
             "HUFE": round(calc(h_end, h_start), 2),
             "Status": True,
-            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0]} - {row_end['Tarih'].values[0]}"
+            "Msg": "Veriler TCMB'den Başarıyla Çekildi (Boş Aylar Filtrelendi)"
         })
     except Exception as e: 
         res["Msg"] = f"Hata: {str(e)}"
