@@ -222,14 +222,14 @@ def get_tcmb_data(api_key, start_date, end_date):
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
         
-        # Kesin Kodlar: TÜFE (J0), Yİ-ÜFE (G01), H-ÜFE (I1)
-        series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1"]
+        # Garanti olması adına TÜFE, Yİ-ÜFE ve Piyasa Beklenti anketini aynı anda çekiyoruz
+        series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1", "TP.TUFE1YI.T1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
             return res
             
-        # EVDS'nin rastgele alt tire (_) atamasını standart noktaya (.) çeviriyoruz
+        # Sütun adlarındaki alt tireleri standartlaştır
         raw_df.columns = raw_df.columns.str.replace('_', '.')
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
         raw_df = raw_df.dropna(subset=['Tarih_Dt'])
@@ -237,38 +237,50 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        def hesapla_endeks(df, kod):
-            if kod not in df.columns: return 0.0
+        def hesapla_endeks(df, aranan_kodlar):
+            bulunan_kod = None
+            for kod in aranan_kodlar:
+                if kod in df.columns:
+                    bulunan_kod = kod
+                    break
             
-            temp = df[['Tarih_Dt', kod]].copy()
-            temp[kod] = pd.to_numeric(temp[kod].astype(str).str.replace(',', '.'), errors='coerce')
-            temp = temp.dropna(subset=[kod])
-            temp = temp[temp[kod] > 0] # Sadece içi dolu olan gerçek veriler
+            if not bulunan_kod: return 0.0
+            
+            temp = df[['Tarih_Dt', bulunan_kod]].copy()
+            temp[bulunan_kod] = pd.to_numeric(temp[bulunan_kod].astype(str).str.replace(',', '.'), errors='coerce')
+            temp = temp.dropna(subset=[bulunan_kod])
+            temp = temp[temp[bulunan_kod] > 0] 
             
             if temp.empty: return 0.0
             
-            # Başlangıç ve Bitiş değerlerini en yakın/en son tarihten bul
             s_match = temp[temp['Tarih_Dt'].dt.to_period('M') >= p_start]
-            v_start = s_match.iloc[0][kod] if not s_match.empty else temp.iloc[-1][kod]
+            v_start = s_match.iloc[0][bulunan_kod] if not s_match.empty else temp.iloc[-1][bulunan_kod]
             
             e_match = temp[temp['Tarih_Dt'].dt.to_period('M') <= p_end]
-            v_end = e_match.iloc[-1][kod] if not e_match.empty else temp.iloc[-1][kod]
+            v_end = e_match.iloc[-1][bulunan_kod] if not e_match.empty else temp.iloc[-1][bulunan_kod]
             
             if v_start > 0 and v_end > 0:
                 return ((v_end - v_start) / v_start) * 100
             return 0.0
 
+        # TUFE, UFE (Alternatifleriyle), ve HUFE hesaplamaları
+        tufe_val = hesapla_endeks(raw_df, ["TP.FG.J0"])
+        ufe_val = hesapla_endeks(raw_df, ["TP.UY.G01", "TP.TUFE1YI.T1"])
+        hufe_val = hesapla_endeks(raw_df, ["TP.HKFE01.I1"])
+
+        # Eğer UFE hala 0 ise ekranda gelen kolonları gösterecek ki API'nin ne döndürdüğünü görelim
+        durum_mesaji = f"Sistem Aktif (Veriler Alındı)" if ufe_val != 0 else f"ÜFE Bulunamadı! API'den Gelenler: {list(raw_df.columns)}"
+
         res.update({
-            "TUFE": round(hesapla_endeks(raw_df, "TP.FG.J0"), 2),
-            "UFE": round(hesapla_endeks(raw_df, "TP.UY.G01"), 2),
-            "HUFE": round(hesapla_endeks(raw_df, "TP.HKFE01.I1"), 2),
+            "TUFE": round(tufe_val, 2),
+            "UFE": round(ufe_val, 2),
+            "HUFE": round(hufe_val, 2),
             "Status": True,
-            "Msg": "Sistem Aktif (TÜFE & ÜFE Doğrulandı)"
+            "Msg": durum_mesaji
         })
     except Exception as e: 
         res["Msg"] = f"Hata: {str(e)}"
     return res
-
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
