@@ -221,6 +221,8 @@ def get_tcmb_data(api_key, start_date, end_date):
         evds_service = evdsAPI(api_key)
         start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
         end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
+        
+        # Doğru ve resmi ÜFE kodu eklendi (TP.UY.G01)
         series = ["TP.FG.J0", "TP.UY.G01", "TP.HKFE01.I1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
@@ -233,14 +235,12 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # GÜÇLENDİRİLMİŞ VERİ YAKALAMA MOTORU
+        # Güçlendirilmiş Veri Yakalama Motoru
         def get_series_val(df, codes, target_period, is_start=True):
-            # EVDS'nin döndürdüğü nokta/alt tire formatlarını eşleştir
             valid_cols = [c for c in df.columns if c in codes or c.replace("_", ".") in codes or c.replace(".", "_") in codes]
             if not valid_cols: return 0.0
             col = valid_cols[0]
             
-            # Sadece geçerli, sayısal ve 0'dan büyük olan satırları filtrele
             temp_df = df.copy()
             temp_df[col] = pd.to_numeric(temp_df[col].astype(str).str.replace(',', '.'), errors='coerce')
             valid_data = temp_df[temp_df[col] > 0].copy()
@@ -248,18 +248,15 @@ def get_tcmb_data(api_key, start_date, end_date):
             if valid_data.empty: return 0.0
             
             if is_start:
-                # Başlangıç tarihi için: İstenen aya eşit veya sonraki ilk açıklanmış veriyi bul
                 match = valid_data[valid_data['Tarih_Dt'].dt.to_period('M') >= target_period]
                 if not match.empty: return float(match.iloc[0][col])
                 return float(valid_data.iloc[-1][col])
             else:
-                # Bitiş tarihi için: İstenen aya eşit veya önceki en son açıklanmış veriyi bul
                 match = valid_data[valid_data['Tarih_Dt'].dt.to_period('M') <= target_period]
                 if not match.empty: return float(match.iloc[-1][col])
                 return float(valid_data.iloc[-1][col])
 
-        # Her bir seri için başlangıç ve bitiş değerlerini bağımsız çekiyoruz
-       t_start = get_series_val(raw_df, ["TP.FG.J0"], p_start, True)
+        t_start = get_series_val(raw_df, ["TP.FG.J0"], p_start, True)
         t_end = get_series_val(raw_df, ["TP.FG.J0"], p_end, False)
         
         u_start = get_series_val(raw_df, ["TP.UY.G01"], p_start, True)
@@ -268,7 +265,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         h_start = get_series_val(raw_df, ["TP.HKFE01.I1"], p_start, True)
         h_end = get_series_val(raw_df, ["TP.HKFE01.I1"], p_end, False)
         
-        # 3. ADIM: Güvenlik Kilidi (Fail-Safe) - Yeni değer 0 gelirse eksiye düşme, 0 göster
+        # Güvenlik Kilidi: Eksik veride %-100 hatasını engeller
         calc = lambda n, o: ((n - o) / o * 100) if (o > 0 and n > 0) else 0.0
             
         res.update({
