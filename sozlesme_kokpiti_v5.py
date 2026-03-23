@@ -228,9 +228,10 @@ def get_tcmb_data(api_key, start_date, end_date):
         # Başlangıç: Ayın 1'i olarak sabitleniyor
         start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
         
-        # Bitiş: O ayın son günü olarak hesaplanıp sabitleniyor
-        last_day = calendar.monthrange(e_date.year, e_date.month)[1]
-        end_q = e_date.replace(day=last_day).strftime("%d-%m-%Y")
+        # Bitiş: O ayın son gününü relativedelta ve timedelta ile buluyoruz (calendar'a gerek yok)
+        next_month = e_date + relativedelta(months=1)
+        last_day_date = next_month.replace(day=1) - timedelta(days=1)
+        end_q = last_day_date.strftime("%d-%m-%Y")
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         
