@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 import io
 import google.generativeai as genai
+import calendar
 
 # --- KÜTÜPHANE KONTROLÜ ---
 try:
