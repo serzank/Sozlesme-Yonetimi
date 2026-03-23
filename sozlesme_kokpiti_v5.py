@@ -225,10 +225,8 @@ def get_tcmb_data(api_key, start_date, end_date):
         s_date = start_date - relativedelta(months=2)
         e_date = end_date + relativedelta(months=1)
         
-        # Başlangıç: Ayın 1'i olarak sabitleniyor
         start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
         
-        # Bitiş: O ayın son gününü relativedelta ve timedelta ile buluyoruz (calendar'a gerek yok)
         next_month = e_date + relativedelta(months=1)
         last_day_date = next_month.replace(day=1) - timedelta(days=1)
         end_q = last_day_date.strftime("%d-%m-%Y")
@@ -240,17 +238,27 @@ def get_tcmb_data(api_key, start_date, end_date):
             res["Msg"] = "EVDS'den veri dönmedi. Tarih aralığını kontrol edin."
             return res
             
-        # Tarih formatını güvenli bir şekilde parse et
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m', errors='coerce')
-        if raw_df['Tarih_Dt'].isna().all(): # Format uymazsa Pandas'ın kendi tahmin etmesini sağla
+        if raw_df['Tarih_Dt'].isna().all():
             raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
             
-        raw_df = raw_df.dropna(subset=['Tarih_Dt']) # Geçersiz/bozuk tarihleri veri setinden at
+        raw_df = raw_df.dropna(subset=['Tarih_Dt']).copy()
         
+        # --- ZIRH: EKSİK (GELECEK) VERİ KORUMASI ---
+        # EVDS açıklanmamış aylara 'Boş' atar, bu da %-100 hatasına neden olur.
+        data_cols = [c for c in raw_df.columns if c.startswith('TP')]
+        for c in data_cols:
+            # Boşlukları veya hatalı metinleri sayısal NaN değere zorla
+            raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
+            
+        if data_cols:
+            # Açıklanmayan henüz boş olan ayı, en son açıklanan ayın verisiyle doldur (Forward Fill)
+            raw_df[data_cols] = raw_df[data_cols].ffill()
+            raw_df = raw_df.dropna(subset=data_cols, how='all')
+            
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # Tam eşleşme ara
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
         if row_start.empty:
             row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date.replace(day=1))].head(1)
@@ -283,7 +291,6 @@ def get_tcmb_data(api_key, start_date, end_date):
     except Exception as e: 
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
     return res
-
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
