@@ -219,25 +219,39 @@ def get_tcmb_data(api_key, start_date, end_date):
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
-        # Veri çekme aralığını geniş tutuyoruz (Aylık veriler için 2 ay geriden)
-        start_q = (start_date - relativedelta(months=2)).strftime("%d-%m-%Y")
-        end_q = (end_date + relativedelta(months=1)).strftime("%d-%m-%Y")
+        
+        # EVDS aylık serilerde hata vermemesi için ayın 1'ini ve sonunu baz alıyoruz
+        s_date = start_date - relativedelta(months=2)
+        e_date = end_date + relativedelta(months=1)
+        
+        # Başlangıç: Ayın 1'i olarak sabitleniyor
+        start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
+        
+        # Bitiş: O ayın son günü olarak hesaplanıp sabitleniyor
+        last_day = calendar.monthrange(e_date.year, e_date.month)[1]
+        end_q = e_date.replace(day=last_day).strftime("%d-%m-%Y")
+
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         
         raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
+            res["Msg"] = "EVDS'den veri dönmedi. Tarih aralığını kontrol edin."
             return res
             
-        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m')
+        # Tarih formatını güvenli bir şekilde parse et
+        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m', errors='coerce')
+        if raw_df['Tarih_Dt'].isna().all(): # Format uymazsa Pandas'ın kendi tahmin etmesini sağla
+            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
+            
+        raw_df = raw_df.dropna(subset=['Tarih_Dt']) # Geçersiz/bozuk tarihleri veri setinden at
         
-        # Seçilen tarihlerin ay periyoduna bakıyoruz
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # Tam eşleşme ara, bulamazsan o tarihe en yakın (>=) veriyi al
+        # Tam eşleşme ara
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
         if row_start.empty:
-            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date)].head(1)
+            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date.replace(day=1))].head(1)
         
         row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
         if row_end.empty:
@@ -246,7 +260,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         def get_val(row, codes):
             if row.empty: return 0.0
             for c in codes:
-                c_clean = c.replace(".", "_") # EVDS bazen noktaları alt tireye çevirir
+                c_clean = c.replace(".", "_") 
                 if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
                 if c_clean in row.columns and pd.notna(row[c_clean].values[0]): return float(row[c_clean].values[0])
             return 0.0
@@ -262,9 +276,10 @@ def get_tcmb_data(api_key, start_date, end_date):
             "UFE": round(calc(u_end, u_start), 2),
             "HUFE": round(calc(h_end, h_start), 2),
             "Status": True,
-            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0]} - {row_end['Tarih'].values[0]}"
+            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0] if not row_start.empty else '?'} - {row_end['Tarih'].values[0] if not row_end.empty else '?'}"
         })
-    except Exception as e: res["Msg"] = f"Hata: {str(e)}"
+    except Exception as e: 
+        res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
     return res
 
 @st.cache_data(ttl=3600)
