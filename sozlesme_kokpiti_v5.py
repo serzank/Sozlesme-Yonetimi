@@ -400,7 +400,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 # ============================================================================
 # PİYASA VERİSİ İŞLEME (GRAFİKLER İÇİN)
 # ============================================================================
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     y_end = d_end
     if y_end > date.today(): y_end = date.today()
@@ -412,14 +412,19 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            check_start = d_start - timedelta(days=5)
-            # yfinance history fonksiyonu ile daha kararlı veri çekimi
-            tik = yf.Ticker(symbol)
-            df = tik.history(start=check_start, end=y_end + timedelta(days=2))
+            # Tatil ve haftasonu boşluklarını kapatmak için marjı 7 güne çıkardık
+            check_start = d_start - timedelta(days=7) 
+            
+            df = yf.download(symbol, start=check_start, end=y_end + timedelta(days=2), progress=False)
             
             if not df.empty:
-                seri = df['Close']
-                # Eğer seri DataFrame dönerse ilk kolonu garantiye al
+                # Yfinance MultiIndex kolon yapısına karşı zırh
+                if 'Close' in df.columns:
+                    seri = df['Close']
+                else:
+                    seri = df.iloc[:, 0]
+                    
+                # Eğer hala DataFrame ise (yeni yfinance sürümleri), ilk kolonu alarak Series'e zorla
                 if isinstance(seri, pd.DataFrame):
                     seri = seri.iloc[:, 0]
                     
@@ -427,18 +432,19 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
                 
                 if len(seri) > 0:
                     start_ts = pd.Timestamp(d_start)
-                    # ZIRH: yfinance'den gelen timezone (saat dilimi) ekini temizleyerek karşılaştır
+                    # Zaman dilimi çakışmasını engelle
                     clean_index = seri.index.tz_localize(None)
-                    idx_closest_start = (clean_index - start_ts).abs().idxmin()
                     
-                    # Bulunan indeksi orijinal seriden çekmek için tekrar orijinal indeksi kullan
-                    orj_idx = seri.index[(clean_index == idx_closest_start)][0]
-                    ilk = float(seri.loc[orj_idx])
+                    # idxmin() yerine argmin() ile mutlak sıra numarasını (integer) buluyoruz
+                    time_diffs = (clean_index - start_ts).abs()
+                    best_pos = time_diffs.argmin()
+                    
+                    ilk = float(seri.iloc[best_pos])
                     son = float(seri.iloc[-1])
         except Exception as e:
-            ilk, son = 0.0, 0.0
+            pass # Hata durumunda 0.0 kalır, veritabanı akışını bozmaz
         
-        # Canlı veri varsa (Bigpara vb. gelen) Yahoo verisinin üzerine yaz
+        # Canlı veri ezişi (Override)
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
         
