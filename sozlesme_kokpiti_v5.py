@@ -401,7 +401,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 # PİYASA VERİSİ İŞLEME (GRAFİKLER İÇİN)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key):
     y_end = d_end
     if y_end > date.today(): y_end = date.today()
     
@@ -409,75 +409,70 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
                   ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")]
     data_dict = {}
     
-    # Hedef tarihleri Timestamp objesine çevir (Bileşenleri ayıklamak için)
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
-    target_end = pd.Timestamp(y_end).replace(hour=0, minute=0, second=0)
 
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
+        # --- 1. ADIM: Yahoo Finance Denemesi ---
         try:
-            # ZIRH: Start/End yerine 'period' kullanmak Yahoo kısıtlamalarını aşar
             tik = yf.Ticker(symbol)
-            # 2 yıllık veri çekiyoruz, sözleşme başlangıcınız bu aralıktaysa mutlaka yakalar
             df = tik.history(period="2y")
-            
             if not df.empty:
-                # Sütun yapısı ne olursa olsun 'Close' verisini çek
-                if 'Close' in df.columns:
-                    seri = df['Close']
-                else:
-                    seri = df.iloc[:, 0]
-                
-                # Saat dilimi (Timezone) temizliği
-                if seri.index.tz is not None:
-                    seri.index = seri.index.tz_localize(None)
-                
-                # Veriyi sayısal hale getir
+                seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
+                if seri.index.tz is not None: seri.index = seri.index.tz_localize(None)
                 seri = pd.to_numeric(seri, errors='coerce').dropna()
                 
                 if not seri.empty:
-                    # 1. BAŞLANGIÇ (ESKİ) FİYATI BULMA
-                    # Hedef tarihe en yakın olan geçmiş veriyi bulur
-                    idx_closest_start = (seri.index - target_start).abs().argmin()
-                    ilk = float(seri.iloc[idx_closest_start])
-                    
-                    # 2. GÜNCEL (SON) FİYATI BULMA
-                    # Eğer canlı veri yoksa Yahoo'daki en son kapanışı al
+                    idx = (seri.index - target_start).abs().argmin()
+                    ilk = float(seri.iloc[idx])
                     son = float(seri.iloc[-1])
-                    
-        except Exception as e:
-            # Hata varsa terminalde görmek isterseniz: print(f"Hata {symbol}: {e}")
-            ilk, son = 0.0, 0.0
-        
-        # CANLI VERİ EZİŞİ (Bigpara/Doviz.com verileri Yahoo'dan daha tazedir)
+        except: pass
+
+        # --- 2. ADIM: TCMB (EVDS) FALLBACK (Yahoo Başarısız Olursa) ---
+        # Eğer Dolar veya Euro hala 0 geliyorsa TCMB'den çekelim
+        if ilk == 0 and evds_key and (key == "USDTRY" or key == "EURTRY"):
+            try:
+                evds_service = evdsAPI(evds_key)
+                # TCMB Döviz Kodu Belirle (USD veya EUR)
+                tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
+                
+                # Başlangıç tarihi için TCMB'den veri iste (10 günlük marjla)
+                s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+                e_evds = d_start.strftime("%d-%m-%Y")
+                
+                evds_df = evds_service.get_data([tcmb_code], startdate=s_evds, enddate=e_evds)
+                if evds_df is not None and not evds_df.empty:
+                    val_col = tcmb_code.replace(".", "_")
+                    evds_df[val_col] = pd.to_numeric(evds_df[val_col], errors='coerce')
+                    ilk = float(evds_df[val_col].dropna().iloc[-1])
+            except: pass
+
+        # --- 3. ADIM: CANLI VERİ EZİŞİ ---
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-        elif key == "GRAM_ALTIN_TL" and live_data.get("ALTIN", 0) > 0: son = live_data["ALTIN"]
         
-        degisim = 0.0
-        if ilk > 0: degisim = ((son - ilk) / ilk) * 100
+        degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # Gram Altın Fallback (Eğer Yahoo'da veya canlı veride yoksa hesapla)
-    if data_dict.get("GRAM_ALTIN_TL") is None or data_dict["GRAM_ALTIN_TL"]["son"] == 0:
-        gold_ilk = evds_gold_start
-        if gold_ilk <= 0:
-            ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
-            usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
-            if ons_i > 0 and usd_i > 0: gold_ilk = (ons_i / 31.1035) * usd_i
+    # Gram Altın Mantığı
+    gold_ilk = evds_gold_start
+    if gold_ilk <= 0:
+        ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
+        usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
+        if ons_i > 0 and usd_i > 0: gold_ilk = (ons_i / 31.1035) * usd_i
 
-        gold_son = live_data.get("ALTIN", 0)
-        if gold_son <= 0:
-            ons_s = data_dict.get("ONS_ALTIN", {}).get("son", 0)
-            usd_s = data_dict.get("USDTRY", {}).get("son", 0)
-            if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
+    gold_son = live_data.get("ALTIN", 0)
+    if gold_son <= 0:
+        ons_s = data_dict.get("ONS_ALTIN", {}).get("son", 0)
+        usd_s = data_dict.get("USDTRY", {}).get("son", 0)
+        if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
 
-        g_deg = ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0
-        data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
+    g_deg = ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0
+    data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
     
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY)
 
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
