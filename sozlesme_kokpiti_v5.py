@@ -562,12 +562,15 @@ st.markdown("---")
 with st.container(border=True):
     st.subheader("💱 PNX Value Matrix: Alım Gücü Analizi")
     
-   u_ilk = piyasa["USDTRY"]["ilk"] if piyasa["USDTRY"]["ilk"] > 0 else u_son
+    # Mevcut (Son) kurları al
     u_son = piyasa["USDTRY"]["son"] if piyasa["USDTRY"]["son"] > 0 else 1.0
-    
-    e_ilk = piyasa["EURTRY"]["ilk"] if piyasa["EURTRY"]["ilk"] > 0 else e_son
     e_son = piyasa["EURTRY"]["son"] if piyasa["EURTRY"]["son"] > 0 else 1.0
     
+    # Başlangıç kurlarını al (Eğer çekilemediyse son kuru yazarak hatayı önler)
+    u_ilk = piyasa["USDTRY"]["ilk"] if piyasa["USDTRY"]["ilk"] > 0 else u_son
+    e_ilk = piyasa["EURTRY"]["ilk"] if piyasa["EURTRY"]["ilk"] > 0 else e_son
+    
+    # Değerlemeleri hesapla
     tutar_usd_baslangic = sozlesme_tutari / u_ilk
     tutar_usd_guncel = sozlesme_tutari / u_son
     fark_usd = tutar_usd_guncel - tutar_usd_baslangic
@@ -580,16 +583,17 @@ with st.container(border=True):
     with c_usd:
         st.markdown(f"**💵 USD Bazlı Değerleme**")
         col_u1, col_u2, col_u3 = st.columns(3)
-        col_u1.metric("Başlangıç ($)", f"{tr_fmt(tutar_usd_baslangic)}")
-        col_u2.metric("Güncel ($)", f"{tr_fmt(tutar_usd_guncel)}")
-        col_u3.metric("Erime ($)", f"{tr_fmt(fark_usd)}", delta_color="normal")
+        # tr_fmt kullanarak binlik nokta, ondalık virgül sağlandı
+        col_u1.metric("Başlangıç ($)", tr_fmt(tutar_usd_baslangic))
+        col_u2.metric("Güncel ($)", tr_fmt(tutar_usd_guncel))
+        col_u3.metric("Erime ($)", tr_fmt(fark_usd), delta_color="normal")
     
     with c_eur:
         st.markdown(f"**💶 EUR Bazlı Değerleme**")
         col_e1, col_e2, col_e3 = st.columns(3)
-        col_e1.metric("Başlangıç (€)", f"{tr_fmt(tutar_eur_baslangic)}")
-        col_e2.metric("Güncel (€)", f"{tr_fmt(tutar_eur_guncel)}")
-        col_e3.metric("Erime (€)", f"{tr_fmt(fark_eur)}", delta_color="normal")
+        col_e1.metric("Başlangıç (€)", tr_fmt(tutar_eur_baslangic))
+        col_e2.metric("Güncel (€)", tr_fmt(tutar_eur_guncel))
+        col_e3.metric("Erime (€)", tr_fmt(fark_eur), delta_color="normal")
         
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
 
