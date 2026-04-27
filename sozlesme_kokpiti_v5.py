@@ -412,26 +412,30 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            # SENE BAŞI / TATİL FIX: 
-            # 1 Ocak gibi tatil günlerini yakalamak için 5 gün öncesinden başlatıyoruz.
             check_start = d_start - timedelta(days=5)
-            df = yf.download(symbol, start=check_start, end=y_end + timedelta(days=1), progress=False)
+            # yfinance history fonksiyonu ile daha kararlı veri çekimi
+            tik = yf.Ticker(symbol)
+            df = tik.history(start=check_start, end=y_end + timedelta(days=2))
             
             if not df.empty:
-                # Kolon kontrolü
-                seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
+                seri = df['Close']
+                # Eğer seri DataFrame dönerse ilk kolonu garantiye al
+                if isinstance(seri, pd.DataFrame):
+                    seri = seri.iloc[:, 0]
+                    
                 seri = seri.dropna()
                 
                 if len(seri) > 0:
-                    # Başlangıç tarihine (d_start) en yakın olan indeksi buluyoruz (Abs/idxmin)
-                    # Bu sayede 1 Ocak tatilse, 2 veya 3 Ocak'taki ilk veriyi çeker.
                     start_ts = pd.Timestamp(d_start)
-                    idx_closest_start = (seri.index.to_series() - start_ts).abs().idxmin()
+                    # ZIRH: yfinance'den gelen timezone (saat dilimi) ekini temizleyerek karşılaştır
+                    clean_index = seri.index.tz_localize(None)
+                    idx_closest_start = (clean_index - start_ts).abs().idxmin()
                     
-                    ilk = float(seri.loc[idx_closest_start])
+                    # Bulunan indeksi orijinal seriden çekmek için tekrar orijinal indeksi kullan
+                    orj_idx = seri.index[(clean_index == idx_closest_start)][0]
+                    ilk = float(seri.loc[orj_idx])
                     son = float(seri.iloc[-1])
-        except Exception:
-            # Hata durumunda programın durmaması için sessizce devam et
+        except Exception as e:
             ilk, son = 0.0, 0.0
         
         # Canlı veri varsa (Bigpara vb. gelen) Yahoo verisinin üzerine yaz
@@ -559,16 +563,16 @@ with st.container(border=True):
     with c_usd:
         st.markdown(f"**💵 USD Bazlı Değerleme**")
         col_u1, col_u2, col_u3 = st.columns(3)
-        col_u1.metric("Başlangıç ($)", f"{tutar_usd_baslangic:,.0f}")
-        col_u2.metric("Güncel ($)", f"{tutar_usd_guncel:,.0f}")
-        col_u3.metric("Erime ($)", f"{fark_usd:,.0f}", delta_color="normal")
+        col_u1.metric("Başlangıç ($)", f"{tr_fmt(tutar_usd_baslangic)}")
+        col_u2.metric("Güncel ($)", f"{tr_fmt(tutar_usd_guncel)}")
+        col_u3.metric("Erime ($)", f"{tr_fmt(fark_usd)}", delta_color="normal")
     
     with c_eur:
         st.markdown(f"**💶 EUR Bazlı Değerleme**")
         col_e1, col_e2, col_e3 = st.columns(3)
-        col_e1.metric("Başlangıç (€)", f"{tutar_eur_baslangic:,.0f}")
-        col_e2.metric("Güncel (€)", f"{tutar_eur_guncel:,.0f}")
-        col_e3.metric("Erime (€)", f"{fark_eur:,.0f}", delta_color="normal")
+        col_e1.metric("Başlangıç (€)", f"{tr_fmt(tutar_eur_baslangic)}")
+        col_e2.metric("Güncel (€)", f"{tr_fmt(tutar_eur_guncel)}")
+        col_e3.metric("Erime (€)", f"{tr_fmt(fark_eur)}", delta_color="normal")
         
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
 
