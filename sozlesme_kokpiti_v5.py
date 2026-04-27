@@ -409,76 +409,71 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
                   ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")]
     data_dict = {}
     
-    # ZIRH: Yahoo'nun engellememesi için oturum yapılandırması
-    import requests
-    session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+    # Hedef tarihleri Timestamp objesine çevir (Bileşenleri ayıklamak için)
+    target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
+    target_end = pd.Timestamp(y_end).replace(hour=0, minute=0, second=0)
 
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            # Tarih Aralığı (Haftasonlarını kurtarmak için marjı geniş tuttuk)
-            s_str = (d_start - timedelta(days=10)).strftime("%Y-%m-%d")
-            e_str = (y_end + timedelta(days=3)).strftime("%Y-%m-%d")
-            
-            # download metodu genellikle toplu çekimde daha kararlıdır
-            df = yf.download(symbol, start=s_str, end=e_str, progress=False, session=session)
+            # ZIRH: Start/End yerine 'period' kullanmak Yahoo kısıtlamalarını aşar
+            tik = yf.Ticker(symbol)
+            # 2 yıllık veri çekiyoruz, sözleşme başlangıcınız bu aralıktaysa mutlaka yakalar
+            df = tik.history(period="2y")
             
             if not df.empty:
-                # Çok Katmanlı (MultiIndex) Sütun Yapısını Temizle
-                if isinstance(df.columns, pd.MultiIndex):
-                    # Sadece 'Close' olan sütun seviyesini al
-                    seri = df.xs('Close', axis=1, level=0)
-                    if isinstance(seri, pd.DataFrame):
-                        seri = seri.iloc[:, 0]
-                elif 'Close' in df.columns:
+                # Sütun yapısı ne olursa olsun 'Close' verisini çek
+                if 'Close' in df.columns:
                     seri = df['Close']
                 else:
                     seri = df.iloc[:, 0]
                 
-                # Sayısal olmayanları temizle
+                # Saat dilimi (Timezone) temizliği
+                if seri.index.tz is not None:
+                    seri.index = seri.index.tz_localize(None)
+                
+                # Veriyi sayısal hale getir
                 seri = pd.to_numeric(seri, errors='coerce').dropna()
                 
                 if not seri.empty:
-                    # Zaman Dilimi (Timezone) Ayıklama
-                    if seri.index.tz is not None:
-                        clean_index = seri.index.tz_localize(None)
-                    else:
-                        clean_index = seri.index
+                    # 1. BAŞLANGIÇ (ESKİ) FİYATI BULMA
+                    # Hedef tarihe en yakın olan geçmiş veriyi bulur
+                    idx_closest_start = (seri.index - target_start).abs().argmin()
+                    ilk = float(seri.iloc[idx_closest_start])
                     
-                    # Başlangıç tarihine en yakın veriyi bul
-                    target_ts = pd.Timestamp(d_start)
-                    best_pos = (clean_index - target_ts).abs().argmin()
-                    
-                    ilk = float(seri.iloc[best_pos])
+                    # 2. GÜNCEL (SON) FİYATI BULMA
+                    # Eğer canlı veri yoksa Yahoo'daki en son kapanışı al
                     son = float(seri.iloc[-1])
                     
-        except Exception:
+        except Exception as e:
+            # Hata varsa terminalde görmek isterseniz: print(f"Hata {symbol}: {e}")
             ilk, son = 0.0, 0.0
         
-        # Canlı veri varsa Yahoo verisinin üzerine yaz
+        # CANLI VERİ EZİŞİ (Bigpara/Doviz.com verileri Yahoo'dan daha tazedir)
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
+        elif key == "GRAM_ALTIN_TL" and live_data.get("ALTIN", 0) > 0: son = live_data["ALTIN"]
         
         degisim = 0.0
         if ilk > 0: degisim = ((son - ilk) / ilk) * 100
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # Altın Hesaplama Fallback
-    gold_ilk = evds_gold_start
-    if gold_ilk <= 0:
-        ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
-        usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
-        if ons_i > 0 and usd_i > 0: gold_ilk = (ons_i / 31.1035) * usd_i
+    # Gram Altın Fallback (Eğer Yahoo'da veya canlı veride yoksa hesapla)
+    if data_dict.get("GRAM_ALTIN_TL") is None or data_dict["GRAM_ALTIN_TL"]["son"] == 0:
+        gold_ilk = evds_gold_start
+        if gold_ilk <= 0:
+            ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
+            usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
+            if ons_i > 0 and usd_i > 0: gold_ilk = (ons_i / 31.1035) * usd_i
 
-    gold_son = live_data.get("ALTIN", 0)
-    if gold_son <= 0:
-        ons_s = data_dict.get("ONS_ALTIN", {}).get("son", 0)
-        usd_s = data_dict.get("USDTRY", {}).get("son", 0)
-        if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
+        gold_son = live_data.get("ALTIN", 0)
+        if gold_son <= 0:
+            ons_s = data_dict.get("ONS_ALTIN", {}).get("son", 0)
+            usd_s = data_dict.get("USDTRY", {}).get("son", 0)
+            if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
 
-    g_deg = ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0
-    data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
+        g_deg = ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0
+        data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
     
     return data_dict
 
