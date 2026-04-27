@@ -412,37 +412,50 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start):
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            # Tatil ve haftasonu boşluklarını kapatmak için marjı 7 güne çıkardık
-            check_start = d_start - timedelta(days=7) 
+            # ZIRH 1: Tarihleri Yfinance'in kesin anladığı string formatına çevir (Haftasonu/Tatil payı: 10 gün)
+            start_str = (d_start - timedelta(days=10)).strftime("%Y-%m-%d")
+            end_str = (y_end + timedelta(days=2)).strftime("%Y-%m-%d")
             
-            df = yf.download(symbol, start=check_start, end=y_end + timedelta(days=2), progress=False)
+            df = yf.download(symbol, start=start_str, end=end_str, progress=False)
             
             if not df.empty:
-                # Yfinance MultiIndex kolon yapısına karşı zırh
-                if 'Close' in df.columns:
-                    seri = df['Close']
+                # ZIRH 2: Yfinance MultiIndex (Çok katmanlı sütun) Koruması
+                close_col = None
+                for col in df.columns:
+                    # Eğer MultiIndex ise (örn: ('Close', 'TRY=X'))
+                    if type(col) is tuple and 'Close' in col:
+                        close_col = col
+                        break
+                    # Eğer normal Index ise
+                    elif col == 'Close':
+                        close_col = col
+                        break
+                        
+                if close_col is not None:
+                    seri = df[close_col]
                 else:
-                    seri = df.iloc[:, 0]
+                    seri = df.iloc[:, 0] # Bulamazsa ilk sütunu al
                     
-                # Eğer hala DataFrame ise (yeni yfinance sürümleri), ilk kolonu alarak Series'e zorla
+                # ZIRH 3: Seri hala DataFrame ise (çok nadir yfinance hatası), ilk kolona zorla
                 if isinstance(seri, pd.DataFrame):
                     seri = seri.iloc[:, 0]
                     
-                seri = seri.dropna()
+                # NaN ve hatalı verileri temizle, sayısal formata zorla
+                seri = pd.to_numeric(seri, errors='coerce').dropna()
                 
-                if len(seri) > 0:
-                    start_ts = pd.Timestamp(d_start)
-                    # Zaman dilimi çakışmasını engelle
+                if not seri.empty:
+                    target_ts = pd.to_datetime(d_start)
+                    # ZIRH 4: Saat dilimini (Timezone) sil, saf tarih bırak
                     clean_index = seri.index.tz_localize(None)
                     
-                    # idxmin() yerine argmin() ile mutlak sıra numarasını (integer) buluyoruz
-                    time_diffs = (clean_index - start_ts).abs()
+                    # Hedef tarihe en yakın indeks pozisyonunu bul
+                    time_diffs = (clean_index - target_ts).abs()
                     best_pos = time_diffs.argmin()
                     
                     ilk = float(seri.iloc[best_pos])
                     son = float(seri.iloc[-1])
-        except Exception as e:
-            pass # Hata durumunda 0.0 kalır, veritabanı akışını bozmaz
+        except Exception:
+            pass # Terminali kirletmemek için sessiz geç, 0 kalsın
         
         # Canlı veri ezişi (Override)
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
