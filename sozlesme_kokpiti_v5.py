@@ -406,7 +406,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
     if y_end > date.today(): y_end = date.today()
     
     symbol_map = [("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-              ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX")]
+                  ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX")]
     data_dict = {}
     
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
@@ -426,45 +426,57 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
                     idx = (seri.index - target_start).abs().argmin()
                     ilk = float(seri.iloc[idx])
                     son = float(seri.iloc[-1])
-        except: pass
+        except Exception as e:
+            # Brent petrol veya parite patlarsa sidebar'a sessizce yaz, kodu çökertme
+            if key in ["BRENT_PETROL", "EURUSD"]:
+                st.sidebar.caption(f"ℹ️ {key} Yahoo'dan alınamadı, fallback bekleniyor.")
 
-        # --- 2. ADIM: TCMB (EVDS) FALLBACK (Yahoo Başarısız Olursa) ---
-        if evds_key:
-            # Dolar veya Euro başarısız olursa TCMB devreye girer
-            if ilk == 0 and (key == "USDTRY" or key == "EURTRY"):
-                try:
-                    evds_service = evdsAPI(evds_key)
-                    tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
-                    s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
-                    e_evds = d_start.strftime("%d-%m-%Y")
-                    
-                    evds_df = evds_service.get_data([tcmb_code], startdate=s_evds, enddate=e_evds)
-                    if evds_df is not None and not evds_df.empty:
-                        val_col = tcmb_code.replace(".", "_")
-                        evds_df[val_col] = pd.to_numeric(evds_df[val_col], errors='coerce')
-                        ilk = float(evds_df[val_col].dropna().iloc[-1])
-                except Exception as e:
-                    st.sidebar.error(f"TCMB Kur Hatası ({key}): {e}")
-
-        # --- 2.5. ADIM: EURUSD PARİTE KORUMASI (YENİ) ---
-        # Eğer Yahoo Finance EURUSD paritesini (ilk değerini) çekemediyse, TCMB'den alınan değerlerle üretelim
-        if key == "EURUSD" and ilk == 0:
+        # --- 2. ADIM: TCMB (EVDS) FALLBACK ---
+        if ilk == 0 and evds_key and (key == "USDTRY" or key == "EURTRY"):
             try:
-                usd_ilk_val = data_dict.get("USDTRY", {}).get("ilk", 0)
-                eur_ilk_val = data_dict.get("EURTRY", {}).get("ilk", 0)
-                if usd_ilk_val > 0 and eur_ilk_val > 0:
-                    ilk = eur_ilk_val / usd_ilk_val
+                evds_service = evdsAPI(evds_key)
+                tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
+                
+                s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+                e_evds = d_start.strftime("%d-%m-%Y")
+                
+                evds_df = evds_service.get_data([tcmb_code], startdate=s_evds, enddate=e_evds)
+                if evds_df is not None and not evds_df.empty:
+                    val_col = tcmb_code.replace(".", "_")
+                    evds_df[val_col] = pd.to_numeric(evds_df[val_col], errors='coerce')
+                    ilk = float(evds_df[val_col].dropna().iloc[-1])
             except: pass
 
         # --- 3. ADIM: CANLI VERİ EZİŞİ ---
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-        elif key == "EURUSD":
-            # Canlı parite son değerini de korumaya alalım
-            if live_data.get("EUR", 0) > 0 and live_data.get("USD", 0) > 0:
-                son = live_data["EUR"] / live_data["USD"]
+        
+        degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
+        data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # Gram Altın Mantığı
+    # ============================================================================
+    # DÖNGÜ DIŞI GÜVENLİK BÖLGESİ (ÇÖKMEYİ ENGELLEYEN YER)
+    # ============================================================================
+    
+    # --- EURUSD PARİTE KORUMASI ---
+    # Eğer Yahoo pariteyi getiremediyse veya 0 döndüyse, Dolar ve Euro kurları üzerinden hesapla
+    if data_dict["EURUSD"]["ilk"] == 0:
+        u_ilk = data_dict["USDTRY"]["ilk"]
+        e_ilk = data_dict["EURTRY"]["ilk"]
+        if u_ilk > 0 and e_ilk > 0:
+            data_dict["EURUSD"]["ilk"] = e_ilk / u_ilk
+            
+    if data_dict["EURUSD"]["son"] == 0 or live_data.get("USD", 0) > 0:
+        u_son = data_dict["USDTRY"]["son"] if data_dict["USDTRY"]["son"] > 0 else live_data.get("USD", 1)
+        e_son = data_dict["EURTRY"]["son"] if data_dict["EURTRY"]["son"] > 0 else live_data.get("EUR", 1)
+        data_dict["EURUSD"]["son"] = e_son / u_son
+    
+    # Parite değişimini yeniden hesapla
+    p_ilk = data_dict["EURUSD"]["ilk"]
+    p_son = data_dict["EURUSD"]["son"]
+    data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
+
+    # --- GRAM ALTIN MANTIĞI ---
     gold_ilk = evds_gold_start
     if gold_ilk <= 0:
         ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
