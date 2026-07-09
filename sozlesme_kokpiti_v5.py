@@ -429,30 +429,40 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
         except: pass
 
         # --- 2. ADIM: TCMB (EVDS) FALLBACK (Yahoo Başarısız Olursa) ---
-        # Eğer Dolar veya Euro hala 0 geliyorsa TCMB'den çekelim
-        if ilk == 0 and evds_key and (key == "USDTRY" or key == "EURTRY"):
+        if evds_key:
+            # Dolar veya Euro başarısız olursa TCMB devreye girer
+            if ilk == 0 and (key == "USDTRY" or key == "EURTRY"):
+                try:
+                    evds_service = evdsAPI(evds_key)
+                    tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
+                    s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+                    e_evds = d_start.strftime("%d-%m-%Y")
+                    
+                    evds_df = evds_service.get_data([tcmb_code], startdate=s_evds, enddate=e_evds)
+                    if evds_df is not None and not evds_df.empty:
+                        val_col = tcmb_code.replace(".", "_")
+                        evds_df[val_col] = pd.to_numeric(evds_df[val_col], errors='coerce')
+                        ilk = float(evds_df[val_col].dropna().iloc[-1])
+                except Exception as e:
+                    st.sidebar.error(f"TCMB Kur Hatası ({key}): {e}")
+
+        # --- 2.5. ADIM: EURUSD PARİTE KORUMASI (YENİ) ---
+        # Eğer Yahoo Finance EURUSD paritesini (ilk değerini) çekemediyse, TCMB'den alınan değerlerle üretelim
+        if key == "EURUSD" and ilk == 0:
             try:
-                evds_service = evdsAPI(evds_key)
-                # TCMB Döviz Kodu Belirle (USD veya EUR)
-                tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
-                
-                # Başlangıç tarihi için TCMB'den veri iste (10 günlük marjla)
-                s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
-                e_evds = d_start.strftime("%d-%m-%Y")
-                
-                evds_df = evds_service.get_data([tcmb_code], startdate=s_evds, enddate=e_evds)
-                if evds_df is not None and not evds_df.empty:
-                    val_col = tcmb_code.replace(".", "_")
-                    evds_df[val_col] = pd.to_numeric(evds_df[val_col], errors='coerce')
-                    ilk = float(evds_df[val_col].dropna().iloc[-1])
+                usd_ilk_val = data_dict.get("USDTRY", {}).get("ilk", 0)
+                eur_ilk_val = data_dict.get("EURTRY", {}).get("ilk", 0)
+                if usd_ilk_val > 0 and eur_ilk_val > 0:
+                    ilk = eur_ilk_val / usd_ilk_val
             except: pass
 
         # --- 3. ADIM: CANLI VERİ EZİŞİ ---
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-        
-        degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
-        data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
+        elif key == "EURUSD":
+            # Canlı parite son değerini de korumaya alalım
+            if live_data.get("EUR", 0) > 0 and live_data.get("USD", 0) > 0:
+                son = live_data["EUR"] / live_data["USD"]
 
     # Gram Altın Mantığı
     gold_ilk = evds_gold_start
