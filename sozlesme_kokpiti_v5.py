@@ -192,7 +192,7 @@ def guncel_akaryakit_cek():
                         fiyatlar["motorin"] = float(raw_motorin)
     except: pass
     return fiyatlar
-    @st.cache_data(ttl=1800)
+@st.cache_data(ttl=1800)
 def canli_emtia_cek():
     """
     Bakır, Alüminyum ve Doğal Gaz verilerini canlı ve stabil şekilde çeker.
