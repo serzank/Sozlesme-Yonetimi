@@ -553,16 +553,15 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
     b_son = data_dict["BRENT_PETROL"]["son"]
     data_dict["BRENT_PETROL"]["degisim"] = ((b_son - b_ilk) / b_ilk * 100) if b_ilk > 0 else 0.0
 
-    # --- SANAYİ EMTİALARI KORUMASI (YENİ) ---
+   # --- SANAYİ EMTİALARI KORUMASI (GÜNCELLENDİ) ---
     for emt in ["BAKIR", "ALUMINYUM", "DOGALGAZ"]:
         if emt in data_dict:
+            # YAPAY USD/TRY ÇARPANI KALDIRILDI!
+            # Eğer API'den geçmiş veri gelmediyse, kullanıcıyı yanlış yönlendirmemek için
+            # ilk fiyatı son fiyata eşitler (Değişim %0 görünür).
+            # Böylece paneldeki "%" kutusundan gerçek piyasa değerini kendiniz girebilirsiniz.
             if data_dict[emt]["ilk"] == 0:
-                u_ilk = data_dict.get("USDTRY", {}).get("ilk", 0)
-                u_son = data_dict.get("USDTRY", {}).get("son", 0)
-                if u_ilk > 0 and u_son > 0:
-                    data_dict[emt]["ilk"] = data_dict[emt]["son"] * (u_ilk / u_son)
-                else:
-                    data_dict[emt]["ilk"] = data_dict[emt]["son"]
+                data_dict[emt]["ilk"] = data_dict[emt]["son"]
 
             e_ilk = data_dict[emt]["ilk"]
             e_son = data_dict[emt]["son"]
