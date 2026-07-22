@@ -29,20 +29,11 @@ except ImportError:
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- AYARLAR ve GÜVENLİK (SECRETS) ---
-try:
-    MY_API_KEY = st.secrets["EVDS_KEY"]
-except:
-    MY_API_KEY = None 
+try: MY_API_KEY = st.secrets["EVDS_KEY"]
+except: MY_API_KEY = None 
 
-try:
-    GEMINI_API_KEY = st.secrets["GEMINI_KEY"]
-except:
-    GEMINI_API_KEY = None
-
-try:
-    API_NINJAS_KEY = st.secrets["API_NINJAS_KEY"]
-except:
-    API_NINJAS_KEY = None
+try: GEMINI_API_KEY = st.secrets["GEMINI_KEY"]
+except: GEMINI_API_KEY = None
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="PNX | Procurement Nexus", layout="wide", page_icon="💠")
@@ -102,20 +93,13 @@ def safe_float(val):
 
 def get_auto_weights(contract_type):
     w = { "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0, "iscilik": 0, "usd": 0, "eur": 0, "altin": 0, "benzin": 0, "dizel": 0, "brent": 0, "abd": 0 }
-    if contract_type == "Personel Taşımacılık":
-        w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
-    elif contract_type == "Yiyecek-İçecek Hizmetleri":
-        w["tufe"] = 40; w["iscilik"] = 40; w["hufe"] = 10; w["usd"] = 10
-    elif contract_type == "Yazılım / Lisans":
-        w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
-    elif contract_type == "Bilişim Sarf (Donanım)":
-        w["usd"] = 100
-    elif contract_type == "Güvenlik Hizmetleri":
-        w["iscilik"] = 85; w["tufe"] = 10; w["hufe"] = 5
-    elif contract_type == "Serzan'ın Klasiği (TÜFE+ÜFE)":
-        w["mix"] = 100
-    else: 
-        w["tufe"] = 30; w["iscilik"] = 30; w["usd"] = 20; w["eur"] = 10; w["hufe"] = 10
+    if contract_type == "Personel Taşımacılık": w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
+    elif contract_type == "Yiyecek-İçecek Hizmetleri": w["tufe"] = 40; w["iscilik"] = 40; w["hufe"] = 10; w["usd"] = 10
+    elif contract_type == "Yazılım / Lisans": w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
+    elif contract_type == "Bilişim Sarf (Donanım)": w["usd"] = 100
+    elif contract_type == "Güvenlik Hizmetleri": w["iscilik"] = 85; w["tufe"] = 10; w["hufe"] = 5
+    elif contract_type == "Serzan'ın Klasiği (TÜFE+ÜFE)": w["mix"] = 100
+    else: w["tufe"] = 30; w["iscilik"] = 30; w["usd"] = 20; w["eur"] = 10; w["hufe"] = 10
     return w
 
 def get_asgari_ucret_degisim(d_start, d_end):
@@ -124,12 +108,8 @@ def get_asgari_ucret_degisim(d_start, d_end):
         (date(2024, 1, 1), 17002.12), (date(2023, 7, 1), 11402.32), (date(2023, 1, 1), 8506.80),
         (date(2022, 7, 1), 5500.35), (date(2022, 1, 1), 4253.40), (date(2021, 1, 1), 2825.90)
     ]
-    def get_val(tarih):
-        for baslangic, ucret in maas_tablosu:
-            if tarih >= baslangic: return ucret
-        return 2825.90 
-    ucret_start = get_val(d_start)
-    ucret_end = get_val(d_end)
+    ucret_start = next((u for b, u in maas_tablosu if d_start >= b), 2825.90)
+    ucret_end = next((u for b, u in maas_tablosu if d_end >= b), 2825.90)
     degisim = ((ucret_end - ucret_start) / ucret_start) * 100 if ucret_start > 0 else 0.0
     return degisim, ucret_start, ucret_end
 
@@ -142,11 +122,10 @@ def get_google_sheet_data():
         df = df.dropna(how='all')
         df['Tarih'] = pd.to_datetime(df['Tarih'], format='%Y-%m-%d', errors='coerce')
         df = df.dropna(subset=['Tarih'])
-        df['Donem'] = df['Tarih'].dt.strftime('%Y-%m') 
+        df['Donem'] = df['Tarih'].dt.strftime('%Y-%m')
         for col in df.columns:
             if col not in ['Tarih', 'Donem']:
-                df[col] = df[col].astype(str).str.replace(',', '.')
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
         return df
     except: return pd.DataFrame()
 
@@ -154,45 +133,19 @@ def get_google_sheet_data():
 def guncel_akaryakit_cek():
     url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
     headers = {'User-Agent': 'Mozilla/5.0'}
-    fiyatlar = {"benzin": 0.0, "motorin": 0.0}
+    fiyatlar = {"benzin": 44.0, "motorin": 45.0}
     try:
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, "html.parser")
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content, "html.parser")
             table = soup.find('table')
             if table:
-                rows = table.find('tbody').find_all('tr')
-                if rows:
-                    cols = rows[0].find_all('td')
-                    if len(cols) >= 3:
-                        fiyatlar["benzin"] = float(cols[1].get_text().replace('₺', '').strip().replace(',', '.'))
-                        fiyatlar["motorin"] = float(cols[2].get_text().replace('₺', '').strip().replace(',', '.'))
+                cols = table.find('tbody').find_all('tr')[0].find_all('td')
+                if len(cols) >= 3:
+                    fiyatlar["benzin"] = float(cols[1].get_text().replace('₺', '').strip().replace(',', '.'))
+                    fiyatlar["motorin"] = float(cols[2].get_text().replace('₺', '').strip().replace(',', '.'))
     except: pass
     return fiyatlar
-
-@st.cache_data(ttl=600)
-def api_ninjas_emtia_cek(api_key):
-    sonuclar = {"BAKIR": 0.0, "ALUMINYUM": 0.0, "DOGALGAZ": 0.0, "BRENT_PETROL": 0.0}
-    if not api_key: return sonuclar
-
-    headers = {'X-Api-Key': api_key}
-    targets = {
-        "BAKIR": "copper",
-        "ALUMINYUM": "aluminum",
-        "DOGALGAZ": "natural gas",
-        "BRENT_PETROL": "crude oil"
-    }
-
-    for key, name in targets.items():
-        try:
-            url = f"https://api.api-ninjas.com/v1/commodityprice?name={name}"
-            response = requests.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and "price" in data:
-                    sonuclar[key] = float(data["price"])
-        except: pass
-    return sonuclar
 
 @st.cache_data(ttl=300)
 def canli_piyasa_cek():
@@ -202,13 +155,11 @@ def canli_piyasa_cek():
     sonuclar = {"USD": 0.0, "EUR": 0.0, "ALTIN": 0.0}
     for key, slug in targets.items():
         try:
-            url = base_url + slug
-            response = requests.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.content, "html.parser")
+            res = requests.get(base_url + slug, headers=headers, timeout=5)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.content, "html.parser")
                 box = soup.find("span", {"class": "value up"}) or soup.find("span", {"class": "value down"}) or soup.find("span", {"class": "value"})
-                if box:
-                    sonuclar[key] = float(box.get_text().strip().replace(".", "").replace(",", "."))
+                if box: sonuclar[key] = float(box.get_text().strip().replace(".", "").replace(",", "."))
         except: pass
     return sonuclar
 
@@ -220,13 +171,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         evds_service = evdsAPI(api_key)
         s_date = start_date - relativedelta(months=2)
         e_date = end_date + relativedelta(months=1)
-        start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
-        next_month = e_date + relativedelta(months=1)
-        last_day_date = next_month.replace(day=1) - timedelta(days=1)
-        end_q = last_day_date.strftime("%d-%m-%Y")
-
-        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
-        raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
+        raw_df = evds_service.get_data(["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"], startdate=s_date.replace(day=1).strftime("%d-%m-%Y"), enddate=(e_date.replace(day=1) + relativedelta(months=1) - timedelta(days=1)).strftime("%d-%m-%Y"))
         if raw_df is None or raw_df.empty: return res
             
         raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m', errors='coerce')
@@ -235,10 +180,8 @@ def get_tcmb_data(api_key, start_date, end_date):
         
         data_cols = [c for c in raw_df.columns if c.startswith('TP')]
         for c in data_cols: raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
-        if data_cols:
-            raw_df[data_cols] = raw_df[data_cols].ffill()
-            raw_df = raw_df.dropna(subset=data_cols, how='all')
-            
+        if data_cols: raw_df[data_cols] = raw_df[data_cols].ffill()
+        
         p_start, p_end = pd.Period(start_date, freq='M'), pd.Period(end_date, freq='M')
         row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
         if row_start.empty: row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date.replace(day=1))].head(1)
@@ -258,30 +201,21 @@ def get_tcmb_data(api_key, start_date, end_date):
         h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
         
         calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
-        res.update({
-            "TUFE": round(calc(t_end, t_start), 2),
-            "UFE": round(calc(u_end, u_start), 2),
-            "HUFE": round(calc(h_end, h_start), 2),
-            "Status": True,
-            "Msg": "EVDS Bağlantısı Başarılı"
-        })
+        res.update({ "TUFE": round(calc(t_end, t_start), 2), "UFE": round(calc(u_end, u_start), 2), "HUFE": round(calc(h_end, h_start), 2), "Status": True, "Msg": "EVDS Bağlantısı Başarılı" })
     except: pass
     return res
 
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
-    price = 0.0
-    if not api_key: return price
     try:
         evds = evdsAPI(api_key)
         df = evds.get_data(["TP.MK.KUL.YTL"], startdate=(d_start - timedelta(days=7)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
         if df is not None and not df.empty:
              col = [c for c in df.columns if "TP" in c][0]
-             df[col] = pd.to_numeric(df[col], errors='coerce')
-             df.dropna(subset=[col], inplace=True)
-             if not df.empty: price = float(df.iloc[-1][col])
+             s = pd.to_numeric(df[col], errors='coerce').dropna()
+             if not s.empty: return float(s.iloc[-1])
     except: pass
-    return price
+    return 0.0
 
 @st.cache_data(ttl=3600)
 def get_evds_fuel_history(api_key, d_start):
@@ -291,14 +225,11 @@ def get_evds_fuel_history(api_key, d_start):
         evds = evdsAPI(api_key)
         df = evds.get_data(["TP.AK.U95", "TP.AK.MTR"], startdate=(d_start - timedelta(days=30)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
         if df is not None and not df.empty:
-            cols_b = [c for c in df.columns if "U95" in c]
-            if cols_b:
-                s_b = pd.to_numeric(df[cols_b[0]], errors='coerce').dropna()
-                if not s_b.empty: res["benzin"] = float(s_b.iloc[-1])
-            cols_m = [c for c in df.columns if "MTR" in c]
-            if cols_m:
-                s_m = pd.to_numeric(df[cols_m[0]], errors='coerce').dropna()
-                if not s_m.empty: res["motorin"] = float(s_m.iloc[-1])
+            for k, code in [("benzin", "U95"), ("motorin", "MTR")]:
+                cols = [c for c in df.columns if code in c]
+                if cols:
+                    s = pd.to_numeric(df[cols[0]], errors='coerce').dropna()
+                    if not s.empty: res[k] = float(s.iloc[-1])
     except: pass
     return res
 
@@ -309,7 +240,6 @@ with st.sidebar:
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     st.info("ℹ️ Merhaba, finansal düğümlerin çözüldüğü yerdesiniz.")
-    if not API_NINJAS_KEY: st.warning("⚠️ st.secrets ayarlarına 'API_NINJAS_KEY' ekleyin.")
     st.markdown("---")
     
     sozlesme_tipi = st.selectbox(
@@ -317,8 +247,7 @@ with st.sidebar:
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri"]
     )
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except: sozlesme_tutari = 0.0
+    sozlesme_tutari = safe_float(tutar_giris.replace(".", "").replace(",", "."))
     auto_weights = get_auto_weights(sozlesme_tipi)
 
 # ============================================================================
@@ -333,84 +262,71 @@ def set_ytd_date(): st.session_state.ss_start = date(st.session_state.ss_end.yea
 with st.container(border=True): 
     st.markdown("##### 📅 Tarih Aralığı Seçimi")
     c_date1, c_date2 = st.columns(2)
-    with c_date1: start_date = st.date_input("Başlangıç Tarihi", key="ss_start", format="DD.MM.YYYY")
-    with c_date2: end_date = st.date_input("Bitiş Tarihi (Güncel)", key="ss_end", format="DD.MM.YYYY")
+    start_date = c_date1.date_input("Başlangıç Tarihi", key="ss_start", format="DD.MM.YYYY")
+    end_date = c_date2.date_input("Bitiş Tarihi (Güncel)", key="ss_end", format="DD.MM.YYYY")
         
     b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1.2, 2.5])
-    with b1: st.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
-    with b2: st.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
-    with b3: st.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
-    with b4: st.button("Sene Başı", on_click=set_ytd_date, use_container_width=True)
-    with b5: st.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
+    b1.button("3 Ay", on_click=set_quick_date, args=(3,), use_container_width=True)
+    b2.button("6 Ay", on_click=set_quick_date, args=(6,), use_container_width=True)
+    b3.button("1 Yıl", on_click=set_quick_date, args=(12,), use_container_width=True)
+    b4.button("Sene Başı", on_click=set_ytd_date, use_container_width=True)
+    b5.markdown(f"<div style='padding-top:10px; font-size:12px; color:gray'>*Seçili Bitiş Tarihine göre hesaplar.</div>", unsafe_allow_html=True)
 
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
-# --- VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
-    api_ninjas_data = api_ninjas_emtia_cek(API_NINJAS_KEY)
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date) 
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME
+# PİYASA VERİSİ İŞLEME (STABİL JSON API)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, api_ninjas_live):
-    y_end = d_end
-    if y_end > date.today(): y_end = date.today()
-    
-    symbol_map = [
-        ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX"),
-        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F")
-    ]
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key):
+    y_end = min(d_end, date.today())
+    symbol_map = [("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), ("ONS_ALTIN", "GC=F"), ("ABD_TAHVIL", "^TNX")]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
-        if key in ["USDTRY", "EURTRY", "EURUSD", "ONS_ALTIN", "ABD_TAHVIL"]:
+        try:
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                result = data.get('chart', {}).get('result', [])
+                if result:
+                    ts = result[0].get('timestamp', [])
+                    qs = result[0].get('indicators', {}).get('quote', [{}])[0].get('close', [])
+                    vd = [(pd.to_datetime(t, unit='s'), c) for t, c in zip(ts, qs) if c is not None]
+                    if vd:
+                        df = pd.DataFrame(vd, columns=['Date', 'Close']).set_index('Date')
+                        if not df.empty:
+                            idx = (df.index - target_start).abs().argmin()
+                            ilk, son = float(df.iloc[idx]['Close']), float(df.iloc[-1]['Close'])
+        except: pass
+
+        if ilk == 0 and evds_key and (key in ["USDTRY", "EURTRY"]):
             try:
-                url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
-                res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-                if res.status_code == 200:
-                    data = res.json()
-                    result = data.get('chart', {}).get('result', [])
-                    if result:
-                        ts = result[0].get('timestamp', [])
-                        qs = result[0].get('indicators', {}).get('quote', [{}])[0].get('close', [])
-                        vd = [(pd.to_datetime(t, unit='s'), c) for t, c in zip(ts, qs) if c is not None]
-                        if vd:
-                            df = pd.DataFrame(vd, columns=['Date', 'Close']).set_index('Date')
-                            if not df.empty:
-                                idx = (df.index - target_start).abs().argmin()
-                                ilk, son = float(df.iloc[idx]['Close']), float(df.iloc[-1]['Close'])
+                evds_service = evdsAPI(evds_key)
+                tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
+                evds_df = evds_service.get_data([tcmb_code], startdate=(d_start - timedelta(days=10)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
+                if evds_df is not None and not evds_df.empty:
+                    ilk = float(pd.to_numeric(evds_df[tcmb_code.replace(".", "_")], errors='coerce').dropna().iloc[-1])
             except: pass
 
-            if ilk == 0 and evds_key and (key == "USDTRY" or key == "EURTRY"):
-                try:
-                    evds_service = evdsAPI(evds_key)
-                    tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
-                    evds_df = evds_service.get_data([tcmb_code], startdate=(d_start - timedelta(days=10)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
-                    if evds_df is not None and not evds_df.empty:
-                        ilk = float(pd.to_numeric(evds_df[tcmb_code.replace(".", "_")], errors='coerce').dropna().iloc[-1])
-                except: pass
-
-            if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
-            elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-
-        elif key in ["BRENT_PETROL", "BAKIR", "ALUMINYUM", "DOGALGAZ"]:
-            if api_ninjas_live.get(key, 0) > 0: son = api_ninjas_live[key]
+        if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
+        elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
 
         degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # EURUSD Parite Koruması
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
         data_dict["EURUSD"]["ilk"] = data_dict["EURTRY"]["ilk"] / data_dict["USDTRY"]["ilk"]
     if data_dict["EURUSD"]["son"] == 0:
@@ -419,7 +335,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
     p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
 
-    # Gram Altın
     gold_ilk = evds_gold_start
     if gold_ilk <= 0 and data_dict.get("ONS_ALTIN", {}).get("ilk", 0) > 0 and data_dict.get("USDTRY", {}).get("ilk", 0) > 0:
         gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
@@ -428,12 +343,9 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
         gold_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
-    for emt in ["BRENT_PETROL", "BAKIR", "ALUMINYUM", "DOGALGAZ"]:
-        if data_dict[emt]["ilk"] == 0: data_dict[emt]["ilk"] = data_dict[emt]["son"]
-            
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, api_ninjas_data)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY)
 
 # ============================================================================
 # GÖSTERGE PANELİ
@@ -462,14 +374,16 @@ with st.container(border=True):
     d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
     d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-    st.markdown("### 🛢️ Enerji & Emtialar")
+    st.markdown("### 🛢️ Enerji & Ham Madde (İnteraktif Kontrol)")
     e1, e2, e3, e4 = st.columns(4)
     
-    val_brent = piyasa.get("BRENT_PETROL", {"ilk": 0, "son": 0, "degisim": 0})
+    # 1. BRENT PETROL (Tamamen Edilebilir / Manuel Kontrollü)
     with e1:
-        st.markdown(f"<div class='kutu-enerji'><b>🛢️ Brent ($/Varil)</b>", unsafe_allow_html=True)
-        b_eski_in = st.number_input("eski_brent", value=safe_float(val_brent["ilk"]), format="%.2f", key=f"e_brent_{d_key}", label_visibility="collapsed")
-        b_yeni_in = st.number_input("yeni_brent", value=safe_float(val_brent["son"]), format="%.2f", key=f"y_brent_{d_key}", label_visibility="collapsed")
+        st.markdown("<div class='kutu-enerji'><b>🛢️ Brent ($/Varil)</b>", unsafe_allow_html=True)
+        st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
+        b_eski_in = st.number_input("eski_brent", value=78.0, format="%.2f", key=f"e_brent_{d_key}", label_visibility="collapsed")
+        st.markdown("<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>Düzenle</span></label>", unsafe_allow_html=True)
+        b_yeni_in = st.number_input("yeni_brent", value=82.0, format="%.2f", key=f"y_brent_{d_key}", label_visibility="collapsed")
         d_brent = ((b_yeni_in - b_eski_in) / b_eski_in * 100) if b_eski_in > 0 else 0.0
         st.markdown(f"<div style='text-align:right;'><span class='{'pozitif' if d_brent >= 0 else 'negatif'}'>%{d_brent:+.2f}</span></div></div>", unsafe_allow_html=True)
 
@@ -479,37 +393,43 @@ with st.container(border=True):
     motorin_eski_val = evds_fuel_ilk["motorin"] if evds_fuel_ilk["motorin"] > 0 else motorin_yeni_val * (piyasa["USDTRY"]["ilk"] / piyasa["USDTRY"]["son"])
 
     with e2:
-        st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b>", unsafe_allow_html=True)
+        st.markdown("<div class='kutu-enerji'><b>⛽ Benzin</b>", unsafe_allow_html=True)
+        st.markdown("<label style='font-size:13px;'>Eski (TL)</label>", unsafe_allow_html=True)
         b_eski = st.number_input("bo", value=benzin_eski_val, key=f"bo_{d_key}", label_visibility="collapsed")
+        st.markdown("<label style='font-size:13px;'>Yeni (TL)</label>", unsafe_allow_html=True)
         b_yeni = st.number_input("bn", value=benzin_yeni_val, key=f"bn_{d_key}", label_visibility="collapsed")
         d_benzin = ((b_yeni-b_eski)/b_eski)*100 if b_eski > 0 else 0
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
     with e3:
-        st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b>", unsafe_allow_html=True)
+        st.markdown("<div class='kutu-enerji'><b>🚛 Motorin</b>", unsafe_allow_html=True)
+        st.markdown("<label style='font-size:13px;'>Eski (TL)</label>", unsafe_allow_html=True)
         m_eski = st.number_input("mo", value=motorin_eski_val, key=f"mo_{d_key}", label_visibility="collapsed")
+        st.markdown("<label style='font-size:13px;'>Yeni (TL)</label>", unsafe_allow_html=True)
         m_yeni = st.number_input("mn", value=motorin_yeni_val, key=f"mn_{d_key}", label_visibility="collapsed")
         d_dizel = ((m_yeni-m_eski)/m_eski)*100 if m_eski > 0 else 0
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
-    st.markdown("### 🏗️ Sanayi Emtiaları (API Ninjas)")
+    # 2. SANAYİ EMTİALARI (TradingEconomics / LME uyumlu tam interaktif kontrol)
+    st.markdown("### 🏗️ Sanayi Emtiaları & Ham Madde (Canlı / Manuel Doğrulama)")
     em1, em2, em3 = st.columns(3)
     
-    def emtia_karti(col, baslik, key):
-        val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
+    def emtia_karti(col, baslik, key, default_ilk, default_son):
         with col:
             st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
-            e_input = st.number_input("eski", value=safe_float(val["ilk"]), format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
-            y_input = st.number_input("yeni", value=safe_float(val["son"]), format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
+            st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Sözleşme Tarihi</span></label>", unsafe_allow_html=True)
+            e_input = st.number_input("eski", value=default_ilk, format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
+            st.markdown("<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>Piyasa Değeri</span></label>", unsafe_allow_html=True)
+            y_input = st.number_input("yeni", value=default_son, format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
             deg = ((y_input - e_input) / e_input * 100) if e_input > 0 else 0.0
             st.markdown(f"<div style='text-align:right;'><span class='{'pozitif' if deg >= 0 else 'negatif'}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
         return deg
 
-    d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR")
-    d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
-    d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz", "DOGALGAZ")
+    d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR", 4.10, 4.35)
+    d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM", 2350.0, 2480.0)
+    d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ", 2.20, 2.75)
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ
@@ -560,8 +480,7 @@ with st.container(border=True):
     with c_search: filter_text = st.text_input("🔍 Sektör Ara", value=search_keyword)
     filtered_list = [s for s in tum_sektorler if filter_text.lower() in s.lower()] if filter_text else tum_sektorler
     
-    with c_select:
-        selected_sector = st.selectbox("📋 Sektör", filtered_list, index=0, label_visibility="collapsed")
+    with c_select: selected_sector = st.selectbox("📋 Sektör", filtered_list, index=0, label_visibility="collapsed")
     with c_manuel: st.link_button("🔗 TÜİK", "https://data.tuik.gov.tr/Kategori/GetKategori?p=Enflasyon-ve-Fiyat-106")
 
     val_hufe_final = 0.0
@@ -647,8 +566,7 @@ with st.container(border=True):
     rate_pes = sc3.number_input("Kötümser Aylık Artış (%)", value=base_monthly_inc * 1.5, step=0.1)
 
     def calc_proj(val, rate): 
-        res = []
-        curr = val
+        res, curr = [], val
         for _ in range(proj_months):
             curr = curr * (1 + rate/100)
             res.append(curr)
