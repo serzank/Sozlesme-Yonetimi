@@ -192,6 +192,7 @@ def guncel_akaryakit_cek():
                         fiyatlar["motorin"] = float(raw_motorin)
     except: pass
     return fiyatlar
+
 @st.cache_data(ttl=1800)
 def canli_emtia_cek():
     """
@@ -218,7 +219,6 @@ def canli_emtia_cek():
         except:
             pass
         
-        # İnternet kilitlenirse sistemin çökmesini engelleyen emniyet sübabı
         sonuclar[key] = val if val > 0 else item["default"]
         
     return sonuclar
@@ -251,7 +251,6 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        # EVDS aylık serilerde hata vermemesi için ayın 1'ini ve sonunu baz alıyoruz
         s_date = start_date - relativedelta(months=2)
         e_date = end_date + relativedelta(months=1)
         
@@ -274,15 +273,11 @@ def get_tcmb_data(api_key, start_date, end_date):
             
         raw_df = raw_df.dropna(subset=['Tarih_Dt']).copy()
         
-        # --- ZIRH: EKSİK (GELECEK) VERİ KORUMASI ---
-        # EVDS açıklanmamış aylara 'Boş' atar, bu da %-100 hatasına neden olur.
         data_cols = [c for c in raw_df.columns if c.startswith('TP')]
         for c in data_cols:
-            # Boşlukları veya hatalı metinleri sayısal NaN değere zorla
             raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
             
         if data_cols:
-            # Açıklanmayan henüz boş olan ayı, en son açıklanan ayın verisiyle doldur (Forward Fill)
             raw_df[data_cols] = raw_df[data_cols].ffill()
             raw_df = raw_df.dropna(subset=data_cols, how='all')
             
@@ -321,6 +316,7 @@ def get_tcmb_data(api_key, start_date, end_date):
     except Exception as e: 
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
     return res
+
 @st.cache_data(ttl=3600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
@@ -421,25 +417,25 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
-    canli_emtia = canli_emtia_cek() # <--- YENİ EKLENEN EMTİA SATIRI
+    canli_emtia = canli_emtia_cek()
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
-    
-    # MUHTEMELEN SİLİNEN VE ÇÖKMEYE SEBEP OLAN SATIR AŞAĞIDAKİDİR:
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date) 
-    
-    # Google Sheet'ten H-ÜFE Verisi Çekme (YENİ)
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (GRAFİKLER İÇİN)
+# PİYASA VERİSİ İŞLEME (GRAFİKLER VE EMTİALAR İÇİN)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key):
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_live):
     y_end = d_end
     if y_end > date.today(): y_end = date.today()
     
-    symbol_map = [("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-                  ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX")]
+    # Sembol Haritasına Sanayi Emtiaları Eklendi
+    symbol_map = [
+        ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
+        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX"),
+        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F")
+    ]
     data_dict = {}
     
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
@@ -460,8 +456,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
                     ilk = float(seri.iloc[idx])
                     son = float(seri.iloc[-1])
         except Exception as e:
-            # Brent petrol veya parite patlarsa sidebar'a sessizce yaz, kodu çökertme
-            if key in ["BRENT_PETROL", "EURUSD"]:
+            if key in ["BRENT_PETROL", "EURUSD", "BAKIR", "ALUMINYUM", "DOGALGAZ"]:
                 st.sidebar.caption(f"ℹ️ {key} Yahoo'dan alınamadı, fallback bekleniyor.")
 
         # --- 2. ADIM: TCMB (EVDS) FALLBACK ---
@@ -483,16 +478,18 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
         # --- 3. ADIM: CANLI VERİ EZİŞİ ---
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
+        elif key == "BAKIR" and emtia_live.get("BAKIR", 0) > 0: son = emtia_live["BAKIR"]
+        elif key == "ALUMINYUM" and emtia_live.get("ALUMINYUM", 0) > 0: son = emtia_live["ALUMINYUM"]
+        elif key == "DOGALGAZ" and emtia_live.get("DOGALGAZ", 0) > 0: son = emtia_live["DOGALGAZ"]
         
         degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
     # ============================================================================
-    # DÖNGÜ DIŞI GÜVENLİK BÖLGESİ (ÇÖKMEYİ ENGELLEYEN YER)
+    # DÖNGÜ DIŞI GÜVENLİK BÖLGESİ
     # ============================================================================
     
     # --- EURUSD PARİTE KORUMASI ---
-    # Eğer Yahoo pariteyi getiremediyse veya 0 döndüyse, Dolar ve Euro kurları üzerinden hesapla
     if data_dict["EURUSD"]["ilk"] == 0:
         u_ilk = data_dict["USDTRY"]["ilk"]
         e_ilk = data_dict["EURTRY"]["ilk"]
@@ -504,7 +501,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
         e_son = data_dict["EURTRY"]["son"] if data_dict["EURTRY"]["son"] > 0 else live_data.get("EUR", 1)
         data_dict["EURUSD"]["son"] = e_son / u_son
     
-    # Parite değişimini yeniden hesapla
     p_ilk = data_dict["EURUSD"]["ilk"]
     p_son = data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
@@ -526,16 +522,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
 
     # --- BRENT PETROL KORUMASI ---
-    # Eğer Yahoo kilitlendiyse ve Brent Petrol 0 geldiyse arayüzün patlamasını engelle
     if data_dict.get("BRENT_PETROL", {}).get("son", 0) == 0:
-        # Son Brent fiyatı gelmediyse stabil bir baz puan ata (Örn: 78.0 Dolar)
         if "BRENT_PETROL" in data_dict:
             data_dict["BRENT_PETROL"]["son"] = 78.0
         else:
             data_dict["BRENT_PETROL"] = {"ilk": 78.0, "son": 78.0, "degisim": 0.0}
         
     if data_dict["BRENT_PETROL"]["ilk"] == 0:
-        # Başlangıç fiyatı sıfırsa, kurun erimesi/değişimi oranında geçmiş fiyatı simüle et
         u_ilk = data_dict.get("USDTRY", {}).get("ilk", 0)
         u_son = data_dict.get("USDTRY", {}).get("son", 0)
         if u_ilk > 0 and u_son > 0:
@@ -543,14 +536,28 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key)
         else:
             data_dict["BRENT_PETROL"]["ilk"] = data_dict["BRENT_PETROL"]["son"]
 
-    # Brent Petrol değişimini ve yönünü güncelle
     b_ilk = data_dict["BRENT_PETROL"]["ilk"]
     b_son = data_dict["BRENT_PETROL"]["son"]
     data_dict["BRENT_PETROL"]["degisim"] = ((b_son - b_ilk) / b_ilk * 100) if b_ilk > 0 else 0.0
+
+    # --- SANAYİ EMTİALARI KORUMASI (YENİ) ---
+    for emt in ["BAKIR", "ALUMINYUM", "DOGALGAZ"]:
+        if emt in data_dict:
+            if data_dict[emt]["ilk"] == 0:
+                u_ilk = data_dict.get("USDTRY", {}).get("ilk", 0)
+                u_son = data_dict.get("USDTRY", {}).get("son", 0)
+                if u_ilk > 0 and u_son > 0:
+                    data_dict[emt]["ilk"] = data_dict[emt]["son"] * (u_ilk / u_son)
+                else:
+                    data_dict[emt]["ilk"] = data_dict[emt]["son"]
+
+            e_ilk = data_dict[emt]["ilk"]
+            e_son = data_dict[emt]["son"]
+            data_dict[emt]["degisim"] = ((e_son - e_ilk) / e_ilk * 100) if e_ilk > 0 else 0.0
     
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, canli_emtia)
 
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
@@ -569,7 +576,7 @@ with st.container(border=True):
             else:
                 renk = "pozitif" if deg >= 0 else "negatif"
                 st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
-                ek_bilgi = " (Canlı)" if ("GRAM" in key or "USD" in key or "EUR" in key) and canli_veri.get("USD",0) > 0 else ""
+                ek_bilgi = " (Canlı)" if ("GRAM" in key or "USD" in key or "EUR" in key or "BAKIR" in key or "ALUM" in key or "GAZ" in key) and canli_veri.get("USD",0) > 0 else ""
                 st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
                 if ek_bilgi: st.markdown(f"<div style='font-size:10px; color:#27AE60; text-align:right;'>{ek_bilgi}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
@@ -622,23 +629,16 @@ with st.container(border=True):
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
+
     # ============================================================================
-    # SANAYİ EMTİALARI (YENİ MODÜL)
+    # SANAYİ EMTİALARI (TARİHSEL & CANLI GÖSTERGE)
     # ============================================================================
     st.markdown("### 🏗️ Sanayi Emtiaları & Ham Madde")
     em1, em2, em3 = st.columns(3)
     
-    with em1:
-        bakir_val = canli_emtia.get("BAKIR", 4.15)
-        st.markdown(f"<div class='kutu'><b>🔌 Bakır ($/lb)</b><br/><span class='big-metric'>${tr_fmt(bakir_val)}</span></div>", unsafe_allow_html=True)
-        
-    with em2:
-        alum_val = canli_emtia.get("ALUMINYUM", 2450.0)
-        st.markdown(f"<div class='kutu'><b>🏗️ Alüminyum ($/Ton)</b><br/><span class='big-metric'>${tr_fmt(alum_val)}</span></div>", unsafe_allow_html=True)
-        
-    with em3:
-        gaz_val = canli_emtia.get("DOGALGAZ", 2.30)
-        st.markdown(f"<div class='kutu'><b>🔥 Doğal Gaz ($/MMBtu)</b><br/><span class='big-metric'>${tr_fmt(gaz_val)}</span></div>", unsafe_allow_html=True)
+    d_bakir = kutu(em1, "Bakır ($/lb)", "BAKIR", "🔌")
+    d_alum  = kutu(em2, "Alüminyum ($/T)", "ALUMINYUM", "🏗️")
+    d_gaz   = kutu(em3, "Doğal Gaz", "DOGALGAZ", "🔥")
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ (VALUE MATRIX)
@@ -647,15 +647,12 @@ st.markdown("---")
 with st.container(border=True):
     st.subheader("💱 PNX Value Matrix: Alım Gücü Analizi")
     
-    # Mevcut (Son) kurları al
     u_son = piyasa["USDTRY"]["son"] if piyasa["USDTRY"]["son"] > 0 else 1.0
     e_son = piyasa["EURTRY"]["son"] if piyasa["EURTRY"]["son"] > 0 else 1.0
     
-    # Başlangıç kurlarını al (Eğer çekilemediyse son kuru yazarak hatayı önler)
     u_ilk = piyasa["USDTRY"]["ilk"] if piyasa["USDTRY"]["ilk"] > 0 else u_son
     e_ilk = piyasa["EURTRY"]["ilk"] if piyasa["EURTRY"]["ilk"] > 0 else e_son
     
-    # Değerlemeleri hesapla
     tutar_usd_baslangic = sozlesme_tutari / u_ilk
     tutar_usd_guncel = sozlesme_tutari / u_son
     fark_usd = tutar_usd_guncel - tutar_usd_baslangic
@@ -668,7 +665,6 @@ with st.container(border=True):
     with c_usd:
         st.markdown(f"**💵 USD Bazlı Değerleme**")
         col_u1, col_u2, col_u3 = st.columns(3)
-        # tr_fmt kullanarak binlik nokta, ondalık virgül sağlandı
         col_u1.metric("Başlangıç ($)", tr_fmt(tutar_usd_baslangic))
         col_u2.metric("Güncel ($)", tr_fmt(tutar_usd_guncel))
         col_u3.metric("Erime ($)", tr_fmt(fark_usd), delta_color="normal")
@@ -695,45 +691,38 @@ with st.container(border=True):
     if tcmb["Status"]: st.success(f"✅ {tcmb['Msg']}")
     else: st.warning(f"⚠️ {tcmb['Msg']}")
 
-    # --- H-ÜFE SHEET İŞLEMLERİ ---
     tum_sektorler = []
     if not df_hufe.empty:
         tum_sektorler = [col for col in df_hufe.columns if col not in ['Tarih', 'Donem']]
     else:
         tum_sektorler = ["Veri Yüklenemedi"]
 
-    # Otomatik Sektör Eşleştirme (Mapping)
     preselect_idx = 0
     search_keyword = ""
     
-    # Sözleşme tipine göre arama kelimesini belirle
     if sozlesme_tipi == "Güvenlik Hizmetleri": search_keyword = "Güvenlik"
     elif sozlesme_tipi == "Personel Taşımacılık": search_keyword = "Kara"
     elif sozlesme_tipi == "Yiyecek-İçecek Hizmetleri": search_keyword = "Yiyecek"
     elif sozlesme_tipi == "Yazılım / Lisans": search_keyword = "Bilgi"
     
-    # Listede o kelimeyi bul
     if search_keyword:
         for i, s in enumerate(tum_sektorler):
             if search_keyword in s:
                 preselect_idx = i
                 break
 
-    # --- SEKTÖR SEÇİM VE ARAMA ---
     st.markdown("##### 📊 H-ÜFE Sektör Seçimi")
     c_search, c_select, c_manuel = st.columns([2, 3, 1])
     
     with c_search:
         filter_text = st.text_input("🔍 Sektör Ara (Filtre)", value=search_keyword)
     
-    # Listeyi filtrele
     filtered_list = tum_sektorler
     if filter_text:
         filtered_list = [s for s in tum_sektorler if filter_text.lower() in s.lower()]
-        if not filtered_list: filtered_list = tum_sektorler # Bulamazsa hepsini göster
+        if not filtered_list: filtered_list = tum_sektorler
     
     with c_select:
-        # Eğer otomatik eşleşme (preselect) filtrelenmiş listede varsa onu seç
         final_idx = 0
         if tum_sektorler[preselect_idx] in filtered_list:
             final_idx = filtered_list.index(tum_sektorler[preselect_idx])
@@ -743,27 +732,17 @@ with st.container(border=True):
     with c_manuel:
         st.link_button("🔗 TÜİK Kontrol", "https://data.tuik.gov.tr/Kategori/GetKategori?p=Enflasyon-ve-Fiyat-106")
 
-    # --- SHEET'TEN VERİ HESAPLAMA (GÜÇLENDİRİLMİŞ & DEBUG MODLU) ---
     val_hufe_final = 0.0
-    
-    # Teşhis kutusunu sadece geliştirme aşamasında açık tutalım, sonra kapatabilirsiniz.
     debug_sheet = st.expander(f"🕵️ H-ÜFE Hesaplama Detayı: {selected_sector}", expanded=False)
 
     if not df_hufe.empty and selected_sector:
         try:
-            # 1. Tarihleri Standartlaştır (Timestamp Formatına Çevir)
             target_start = pd.to_datetime(start_date)
             target_end = pd.to_datetime(end_date)
             
-            # 2. En Yakın Tarihleri Bul (Matematiksel Olarak En Yakın Satır)
-            # Bu yöntem "Tam Eşleşme" aramaz, en yakın tarihi bulur. Hata payını sıfırlar.
-            
-            # Başlangıç için en yakın tarih indeksi
             idx_start = (df_hufe['Tarih'] - target_start).abs().idxmin()
-            # Bitiş için en yakın tarih indeksi
             idx_end = (df_hufe['Tarih'] - target_end).abs().idxmin()
             
-            # 3. Değerleri Çek
             row_s = df_hufe.loc[idx_start]
             row_e = df_hufe.loc[idx_end]
             
@@ -773,11 +752,9 @@ with st.container(border=True):
             d1_str = row_s['Tarih'].strftime('%d.%m.%Y')
             d2_str = row_e['Tarih'].strftime('%d.%m.%Y')
 
-            # 4. Debugger'a Yaz (Kanıt)
             debug_sheet.write(f"**Hedef Başlangıç:** {start_date} ➡️ **Bulunan:** {d1_str} (Değer: {v1})")
             debug_sheet.write(f"**Hedef Bitiş:** {end_date} ➡️ **Bulunan:** {d2_str} (Değer: {v2})")
 
-            # 5. Hesapla
             if v1 > 0:
                 val_hufe_final = ((v2 - v1) / v1) * 100
                 debug_sheet.success(f"✅ Hesaplanan Değişim: %{val_hufe_final:.2f}")
@@ -788,7 +765,6 @@ with st.container(border=True):
             debug_sheet.error(f"Hesaplama Hatası: {str(e)}")
             val_hufe_final = 0.0
 
-    # --- VERİ HAZIRLIĞI ---
     val_tufe = safe_float(tcmb["TUFE"])
     val_ufe = safe_float(tcmb["UFE"])
     val_mix = (val_tufe + val_ufe) / 2
@@ -796,28 +772,23 @@ with st.container(border=True):
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
-    # --- INPUT ALANLARI ---
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
     tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     
-    # ✅ Düzeltilmiş Satır (Key kısmına selected_sector eklendi)
     h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}", help=f"Seçilen Sektör: {selected_sector}")
-    
     iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     
     if val_iscilik > 0:
         ec4.markdown(f"<div style='font-size:10px; color:#27AE60'>ASG: {iscilik_notu}</div>", unsafe_allow_html=True)
     
-    # Seçilen sektör bilgisini göster
     ec3.markdown(f"<div style='font-size:10px; color:#F39C12'>{selected_sector[:15]}...</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
 
-    # --- AĞIRLIK INPUTLARI ---
     w1, w2, w3, w4 = st.columns(4)
     w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
     w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
@@ -836,7 +807,6 @@ with st.container(border=True):
     w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
     w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
 
-    # --- TOPLAM KONTROLÜ VE HESAPLAMA ---
     toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
     kalan = 100.0 - toplam
     
@@ -894,12 +864,10 @@ with st.container(border=True):
     with c_p1: st.header("🔮 Jarvis Gelecek Projeksiyonu & Senaryo Analizi")
     with c_p2: st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*Tahminler bileşik faiz etkisiyle hesaplanır.</div>", unsafe_allow_html=True)
     
-    # --- AYARLAR ---
     proj_months = 12
     dates = [date.today() + relativedelta(months=i) for i in range(1, proj_months + 1)]
     dates_str = [d.strftime("%Y-%m") for d in dates]
 
-    # Baz Oran (Mevcut hesaplanan zam oranı üzerinden aylık etki)
     base_monthly_inc = (zam / 12) if zam > 5 else 2.5
     
     col_set1, col_set2, col_set3 = st.columns(3)
@@ -913,7 +881,6 @@ with st.container(border=True):
         st.markdown("**📈 Kötümser Senaryo**")
         rate_pes = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc * 1.5, step=0.1, key="rate_pes")
 
-    # --- HESAPLAMA MOTORU ---
     def calculate_projection(start_val, monthly_rate, months):
         values = []
         curr = start_val
@@ -926,31 +893,26 @@ with st.container(border=True):
     vals_base = calculate_projection(yeni, rate_base, proj_months)
     vals_pes = calculate_projection(yeni, rate_pes, proj_months)
     
-    # Toplam Yıllık Maliyet (Kümülatif)
     total_opt = sum(vals_opt)
     total_base = sum(vals_base)
     total_pes = sum(vals_pes)
 
-    # --- KPI KARTLARI ---
     st.markdown("##### 🗓️ 12 Aylık Toplam Tahmini Bütçe")
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("İyimser Toplam", f"{tr_fmt(total_opt)} TL", delta=f"Ort. Aylık: {tr_fmt(total_opt/12)}")
     kpi2.metric("Gerçekçi Toplam", f"{tr_fmt(total_base)} TL", delta=f"Ort. Aylık: {tr_fmt(total_base/12)}", delta_color="off")
     kpi3.metric("Kötümser Toplam", f"{tr_fmt(total_pes)} TL", delta=f"Risk Farkı: {tr_fmt(total_pes - total_base)}", delta_color="inverse")
 
-    # --- GRAFİKLER (TAB YAPISI) ---
     tab_line, tab_bar = st.tabs(["📈 Aylık Trend Analizi", "📊 Kümülatif Bütçe Yükü"])
 
     with tab_line:
         if HAS_MATPLOTLIB:
             fig, ax = plt.subplots(figsize=(10, 5))
             
-            # Senaryo Çizgileri
             ax.plot(dates_str, vals_pes, color='#C0392B', linestyle='--', marker='o', linewidth=2, label=f'Kötümser (%{rate_pes:.1f}/ay)')
             ax.plot(dates_str, vals_base, color='#2980B9', marker='s', linewidth=3, label=f'Gerçekçi (%{rate_base:.1f}/ay)')
             ax.plot(dates_str, vals_opt, color='#27AE60', linestyle='-.', marker='^', linewidth=2, label=f'İyimser (%{rate_opt:.1f}/ay)')
             
-            # Alan Boyama (Range)
             ax.fill_between(dates_str, vals_opt, vals_pes, color='gray', alpha=0.1)
             
             ax.set_title(f"Gelecek 12 Ay Fiyat Projeksiyonu (Başlangıç: {tr_fmt(yeni)} TL)", fontsize=12)
@@ -959,7 +921,6 @@ with st.container(border=True):
             ax.grid(True, alpha=0.3, linestyle='--')
             plt.xticks(rotation=45)
             
-            # Değerleri Göster (Sadece Baş ve Son)
             for i, val in enumerate([vals_base[0], vals_base[-1]]):
                 idx = 0 if i==0 else -1
                 ax.annotate(f"{tr_fmt(val)}", (dates_str[idx], vals_base[idx]), xytext=(0,10), textcoords='offset points', ha='center', fontsize=9, fontweight='bold', color='#2980B9')
@@ -969,13 +930,11 @@ with st.container(border=True):
             st.line_chart(pd.DataFrame({"İyimser": vals_opt, "Gerçekçi": vals_base, "Kötümser": vals_pes}, index=dates_str))
 
     with tab_bar:
-        # Kümülatif Artış Grafiği
         if HAS_MATPLOTLIB:
             fig2, ax2 = plt.subplots(figsize=(10, 5))
             x = np.arange(len(dates_str))
             width = 0.25
             
-            # Kümülatif Veri Hazırlığı
             cum_opt = np.cumsum(vals_opt)
             cum_base = np.cumsum(vals_base)
             cum_pes = np.cumsum(vals_pes)
@@ -993,7 +952,7 @@ with st.container(border=True):
             
             st.pyplot(fig2)
         else:
-             st.info("Kümülatif grafik için matplotlib gereklidir.")
+            st.info("Kümülatif grafik için matplotlib gereklidir.")
 
 # ============================================================================
 # JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.6 - FUTURE READY / 2.5 FLASH)
@@ -1004,7 +963,6 @@ with st.container(border=True):
     
     col_j1, col_j2 = st.columns([1, 4])
     
-    # Risk Skoru Hesabı
     risk_durumu = "Yüksek" if zam > 20 else "Düşük"
     with col_j1:
         st.metric("Risk Skoru", risk_durumu, delta="Dikkat" if zam > 20 else "Stabil", delta_color="inverse")
@@ -1016,11 +974,7 @@ with st.container(border=True):
             else:
                 with st.spinner("Jarvis (Gemini 2.5 Flash) verileri işliyor..."):
                     try:
-                        # AI Konfigürasyonu
                         genai.configure(api_key=GEMINI_API_KEY)
-                        
-                        # --- TAV STANDARDI: GÜNCEL MODEL SEÇİMİ ---
-                        # Sizin listenizdeki en hızlı ve güncel model:
                         model_name = "gemini-2.5-flash" 
                         
                         prompt = f"""
@@ -1042,6 +996,8 @@ with st.container(border=True):
                         - Enflasyon (TÜFE): %{val_tufe:.2f}
                         - İşçilik: %{iscilik:.2f}
                         - Akaryakıt: %{d_dizel:.2f}
+                        - Bakır: %{piyasa.get('BAKIR', {}).get('degisim', 0):.2f}
+                        - Alüminyum: %{piyasa.get('ALUMINYUM', {}).get('degisim', 0):.2f}
                         
                         SEPET AĞIRLIKLARI:
                         - Döviz: %{w_usd + w_eur}
@@ -1066,7 +1022,3 @@ with st.container(border=True):
                         st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
-
-
-
-
