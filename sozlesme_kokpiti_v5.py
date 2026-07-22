@@ -196,30 +196,32 @@ def guncel_akaryakit_cek():
 @st.cache_data(ttl=1800)
 def canli_emtia_cek():
     """
-    Bakır, Alüminyum ve Doğal Gaz verilerini canlı ve stabil şekilde çeker.
+    Bakır, Alüminyum ve Doğal Gaz verilerini sayfa başlığından değil, 
+    nokta atışı kimlik kodlarıyla (data-socket-key) stabil çeker.
     """
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     emtialar = {
-        "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "default": 4.15},
-        "ALUMINYUM": {"url": "https://www.doviz.com/emtia/aluminyum", "default": 2450.0},
-        "DOGALGAZ": {"url": "https://www.doviz.com/emtia/dogalgaz", "default": 2.30}
+        "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "key": "bakir", "default": 4.15},
+        "ALUMINYUM": {"url": "https://www.doviz.com/emtia/aluminyum", "key": "aluminyum", "default": 2450.0},
+        "DOGALGAZ": {"url": "https://www.doviz.com/emtia/dogalgaz", "key": "dogalgaz", "default": 2.30}
     }
     sonuclar = {}
     
-    for key, item in emtialar.items():
+    for k, item in emtialar.items():
         val = 0.0
         try:
             res = requests.get(item["url"], headers=headers, timeout=5)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, "html.parser")
-                box = soup.find("span", {"class": "value up"}) or soup.find("span", {"class": "value down"}) or soup.find("span", {"class": "value"})
+                # DİKKAT: Sayfadaki ilk fiyatı değil, sadece hedef emtianın fiyatını bul
+                box = soup.find(attrs={"data-socket-key": item["key"], "data-socket-attr": "s"})
                 if box:
                     raw = box.get_text().strip().replace(".", "").replace(",", ".")
                     val = float(raw)
         except:
             pass
         
-        sonuclar[key] = val if val > 0 else item["default"]
+        sonuclar[k] = val if val > 0 else item["default"]
         
     return sonuclar
 
@@ -442,22 +444,34 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
 
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
-        # --- 1. ADIM: Yahoo Finance Denemesi ---
+       # --- 1. ADIM: YENİ NESİL DOĞRUDAN YAHOO API (yfinance kütüphanesi KULLANMADAN) ---
         try:
-            tik = yf.Ticker(symbol)
-            df = tik.history(period="2y")
-            if not df.empty:
-                seri = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
-                if seri.index.tz is not None: seri.index = seri.index.tz_localize(None)
-                seri = pd.to_numeric(seri, errors='coerce').dropna()
+            # Doğrudan arka kapı JSON servisine tarayıcı kimliğiyle bağlanıyoruz
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            res = requests.get(url, headers=headers, timeout=5)
+            
+            if res.status_code == 200:
+                data = res.json()
+                result = data.get('chart', {}).get('result', [])
+                if result:
+                    timestamps = result[0].get('timestamp', [])
+                    quotes = result[0].get('indicators', {}).get('quote', [{}])[0].get('close', [])
+                    
+                    # Geçerli verileri Pandas DataFrame'e dönüştür
+                    valid_data = [(pd.to_datetime(t, unit='s'), c) for t, c in zip(timestamps, quotes) if c is not None]
+                    if valid_data:
+                        df = pd.DataFrame(valid_data, columns=['Date', 'Close']).set_index('Date')
+                        if not df.empty:
+                            idx = (df.index - target_start).abs().argmin()
+                            ilk = float(df.iloc[idx]['Close'])
+                            son = float(df.iloc[-1]['Close'])
+            else:
+                raise Exception(f"HTTP {res.status_code}")
                 
-                if not seri.empty:
-                    idx = (seri.index - target_start).abs().argmin()
-                    ilk = float(seri.iloc[idx])
-                    son = float(seri.iloc[-1])
         except Exception as e:
             if key in ["BRENT_PETROL", "EURUSD", "BAKIR", "ALUMINYUM", "DOGALGAZ"]:
-                st.sidebar.caption(f"ℹ️ {key} Yahoo'dan alınamadı, fallback bekleniyor.")
+                st.sidebar.caption(f"ℹ️ {key} API'den alınamadı, yedek motor devrede.")
 
         # --- 2. ADIM: TCMB (EVDS) FALLBACK ---
         if ilk == 0 and evds_key and (key == "USDTRY" or key == "EURTRY"):
