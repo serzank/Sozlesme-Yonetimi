@@ -196,14 +196,14 @@ def guncel_akaryakit_cek():
 @st.cache_data(ttl=1800)
 def canli_emtia_cek():
     """
-    Bakır, Alüminyum ve Doğal Gaz verilerini sayfa başlığından değil, 
-    nokta atışı kimlik kodlarıyla (data-socket-key) stabil çeker.
+    Bakır, Alüminyum ve Doğal Gaz verilerini canlı ve stabil şekilde çeker.
+    Uydurma/varsayılan veri kullanılmaz. Veri yoksa 0.0 döner.
     """
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     emtialar = {
-        "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "key": "bakir", "default": 4.15},
-        "ALUMINYUM": {"url": "https://www.doviz.com/emtia/aluminyum", "key": "aluminyum", "default": 2450.0},
-        "DOGALGAZ": {"url": "https://www.doviz.com/emtia/dogalgaz", "key": "dogalgaz", "default": 2.30}
+        "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "key": "bakir"},
+        "ALUMINYUM": {"url": "https://www.doviz.com/emtia/aluminyum", "key": "aluminyum"},
+        "DOGALGAZ": {"url": "https://www.doviz.com/emtia/dogalgaz", "key": "dogalgaz"}
     }
     sonuclar = {}
     
@@ -213,7 +213,6 @@ def canli_emtia_cek():
             res = requests.get(item["url"], headers=headers, timeout=5)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, "html.parser")
-                # DİKKAT: Sayfadaki ilk fiyatı değil, sadece hedef emtianın fiyatını bul
                 box = soup.find(attrs={"data-socket-key": item["key"], "data-socket-attr": "s"})
                 if box:
                     raw = box.get_text().strip().replace(".", "").replace(",", ".")
@@ -221,7 +220,8 @@ def canli_emtia_cek():
         except:
             pass
         
-        sonuclar[k] = val if val > 0 else item["default"]
+        # Sadece gerçek canlı veriyi sözlüğe yaz (çekemediyse 0.0 kalır, uydurmaz)
+        sonuclar[k] = val
         
     return sonuclar
 
@@ -668,9 +668,9 @@ with st.container(border=True):
             
         return deg
 
-    d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR", 4.15)
-    d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM", 2450.0)
-    d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz", "DOGALGAZ", 2.30)
+    d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR", 0.0)
+    d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM", 0.0)
+    d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz", "DOGALGAZ", 0.0)
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ (VALUE MATRIX)
