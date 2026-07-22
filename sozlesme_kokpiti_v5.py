@@ -643,14 +643,34 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
     # ============================================================================
-    # SANAYİ EMTİALARI (TARİHSEL & CANLI GÖSTERGE)
+    # SANAYİ EMTİALARI (İNTERAKTİF VE EDİLEBİLİR GÖSTERGE)
     # ============================================================================
     st.markdown("### 🏗️ Sanayi Emtiaları & Ham Madde")
     em1, em2, em3 = st.columns(3)
     
-    d_bakir = kutu(em1, "Bakır ($/lb)", "BAKIR", "🔌")
-    d_alum  = kutu(em2, "Alüminyum ($/T)", "ALUMINYUM", "🏗️")
-    d_gaz   = kutu(em3, "Doğal Gaz", "DOGALGAZ", "🔥")
+    def emtia_karti(col, baslik, key, default_val):
+        val = piyasa.get(key, {"ilk": default_val, "son": default_val, "degisim": 0.0})
+        ilk = safe_float(val["ilk"])
+        son = safe_float(val["son"])
+        
+        with col:
+            st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
+            
+            st.markdown(f"<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
+            e_input = st.number_input("eski", value=ilk, format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
+            
+            st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>CANLI</span></label>", unsafe_allow_html=True)
+            y_input = st.number_input("yeni", value=son, format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
+            
+            deg = ((y_input - e_input) / e_input * 100) if e_input > 0 else 0.0
+            renk = "pozitif" if deg >= 0 else "negatif"
+            st.markdown(f"<div style='text-align:right;'><span class='{renk}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
+            
+        return deg
+
+    d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR", 4.15)
+    d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM", 2450.0)
+    d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz", "DOGALGAZ", 2.30)
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ (VALUE MATRIX)
@@ -813,13 +833,20 @@ with st.container(border=True):
     w_eur = w7.number_input("EUR %", value=auto_weights["eur"])
     w_altin = w8.number_input("Altın %", value=auto_weights["altin"])
     
-    w9, w10, w11, w12 = st.columns(4)
+   w9, w10, w11, w12 = st.columns(4)
     w_benzin = w9.number_input("Benzin %", value=auto_weights["benzin"])
     w_dizel = w10.number_input("Motorin %", value=auto_weights["dizel"])
     w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
     w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
 
-    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd
+    # YENİ EKLENEN EMTİA AĞIRLIK KONTROLLERİ
+    w13, w14, w15, w16 = st.columns(4)
+    w_bakir = w13.number_input("Bakır %", value=0.0)
+    w_alum = w14.number_input("Alüminyum %", value=0.0)
+    w_gaz = w15.number_input("Doğal Gaz %", value=0.0)
+
+    # --- TOPLAM KONTROLÜ VE HESAPLAMA ---
+    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz
     kalan = 100.0 - toplam
     
     if kalan == 0:
@@ -841,7 +868,10 @@ with st.container(border=True):
         ("Benzin", safe_float(d_benzin), safe_float(w_benzin)), 
         ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
         ("Brent", safe_float(d_brent), safe_float(w_brent)), 
-        ("ABD Enf", safe_float(abd_enf), safe_float(w_abd))
+        ("ABD Enf", safe_float(abd_enf), safe_float(w_abd)),
+        ("Bakır", safe_float(d_bakir), safe_float(w_bakir)),       # YENİ
+        ("Alüminyum", safe_float(d_alum), safe_float(w_alum)),     # YENİ
+        ("Doğal Gaz", safe_float(d_gaz), safe_float(w_gaz))        # YENİ
     ]
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
