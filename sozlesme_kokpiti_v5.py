@@ -833,7 +833,7 @@ with st.container(border=True):
     w_eur = w7.number_input("EUR %", value=auto_weights["eur"])
     w_altin = w8.number_input("Altın %", value=auto_weights["altin"])
     
-   w9, w10, w11, w12 = st.columns(4)
+    w9, w10, w11, w12 = st.columns(4)
     w_benzin = w9.number_input("Benzin %", value=auto_weights["benzin"])
     w_dizel = w10.number_input("Motorin %", value=auto_weights["dizel"])
     w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
