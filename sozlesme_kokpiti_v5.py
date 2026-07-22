@@ -170,9 +170,6 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# -------------------------------------------------------------------------
-# API-NINJAS GÜÇLENDİRİLMİŞ ENTEGRASYONU
-# -------------------------------------------------------------------------
 @st.cache_data(ttl=600)
 def api_ninjas_emtia_cek(api_key):
     sonuclar = {"BAKIR": 0.0, "ALUMINYUM": 0.0, "DOGALGAZ": 0.0, "BRENT_PETROL": 0.0}
@@ -183,7 +180,7 @@ def api_ninjas_emtia_cek(api_key):
         "BAKIR": "copper",
         "ALUMINYUM": "aluminum",
         "DOGALGAZ": "natural gas",
-        "BRENT_PETROL": "crude oil" # Brent için daha stabil karşılık
+        "BRENT_PETROL": "crude oil"
     }
 
     for key, name in targets.items():
@@ -195,7 +192,6 @@ def api_ninjas_emtia_cek(api_key):
                 if data and "price" in data:
                     sonuclar[key] = float(data["price"])
         except: pass
-            
     return sonuclar
 
 @st.cache_data(ttl=300)
@@ -636,7 +632,7 @@ with st.container(border=True):
     st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
 
 # ============================================================================
-# JARVIS PROJEKSİYONU & GRAFİKLER (GERİ GETİRİLDİ)
+# JARVIS PROJEKSİYONU & GRAFİKLER
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -650,7 +646,14 @@ with st.container(border=True):
     rate_base = sc2.number_input("Gerçekçi Aylık Artış (%)", value=base_monthly_inc, step=0.1)
     rate_pes = sc3.number_input("Kötümser Aylık Artış (%)", value=base_monthly_inc * 1.5, step=0.1)
 
-    def calc_proj(val, rate): return [val := val * (1 + rate/100) for _ in range(proj_months)]
+    def calc_proj(val, rate): 
+        res = []
+        curr = val
+        for _ in range(proj_months):
+            curr = curr * (1 + rate/100)
+            res.append(curr)
+        return res
+
     vals_opt, vals_base, vals_pes = calc_proj(yeni, rate_opt), calc_proj(yeni, rate_base), calc_proj(yeni, rate_pes)
 
     kpi1, kpi2, kpi3 = st.columns(3)
