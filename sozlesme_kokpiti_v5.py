@@ -470,8 +470,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                 raise Exception(f"HTTP {res.status_code}")
                 
         except Exception as e:
-            if key in ["BRENT_PETROL", "EURUSD", "BAKIR", "ALUMINYUM", "DOGALGAZ"]:
-                st.sidebar.caption(f"ℹ️ {key} API'den alınamadı, yedek motor devrede.")
+            pass # Hata yakalandığında sessizce yedek motora geç, arayüze uyarı basma
 
         # --- 2. ADIM: TCMB (EVDS) FALLBACK ---
         if ilk == 0 and evds_key and (key == "USDTRY" or key == "EURTRY"):
