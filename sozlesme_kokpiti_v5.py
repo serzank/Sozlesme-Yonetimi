@@ -421,9 +421,12 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
-    canli_emtia = canli_emtia_cek() # <--- YENİ EKLENEN SATIR
+    canli_emtia = canli_emtia_cek() # <--- YENİ EKLENEN EMTİA SATIRI
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
-   
+    
+    # MUHTEMELEN SİLİNEN VE ÇÖKMEYE SEBEP OLAN SATIR AŞAĞIDAKİDİR:
+    evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date) 
+    
     # Google Sheet'ten H-ÜFE Verisi Çekme (YENİ)
     df_hufe = get_google_sheet_data()
 
