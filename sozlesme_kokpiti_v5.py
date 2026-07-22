@@ -192,6 +192,36 @@ def guncel_akaryakit_cek():
                         fiyatlar["motorin"] = float(raw_motorin)
     except: pass
     return fiyatlar
+    @st.cache_data(ttl=1800)
+def canli_emtia_cek():
+    """
+    Bakır, Alüminyum ve Doğal Gaz verilerini canlı ve stabil şekilde çeker.
+    """
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    emtialar = {
+        "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "default": 4.15},
+        "ALUMINYUM": {"url": "https://www.doviz.com/emtia/aluminyum", "default": 2450.0},
+        "DOGALGAZ": {"url": "https://www.doviz.com/emtia/dogalgaz", "default": 2.30}
+    }
+    sonuclar = {}
+    
+    for key, item in emtialar.items():
+        val = 0.0
+        try:
+            res = requests.get(item["url"], headers=headers, timeout=5)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.content, "html.parser")
+                box = soup.find("span", {"class": "value up"}) or soup.find("span", {"class": "value down"}) or soup.find("span", {"class": "value"})
+                if box:
+                    raw = box.get_text().strip().replace(".", "").replace(",", ".")
+                    val = float(raw)
+        except:
+            pass
+        
+        # İnternet kilitlenirse sistemin çökmesini engelleyen emniyet sübabı
+        sonuclar[key] = val if val > 0 else item["default"]
+        
+    return sonuclar
 
 @st.cache_data(ttl=300)
 def canli_piyasa_cek():
@@ -391,9 +421,9 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
+    canli_emtia = canli_emtia_cek() # <--- YENİ EKLENEN SATIR
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
-    evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
-    
+   
     # Google Sheet'ten H-ÜFE Verisi Çekme (YENİ)
     df_hufe = get_google_sheet_data()
 
@@ -589,6 +619,23 @@ with st.container(border=True):
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
+    # ============================================================================
+    # SANAYİ EMTİALARI (YENİ MODÜL)
+    # ============================================================================
+    st.markdown("### 🏗️ Sanayi Emtiaları & Ham Madde")
+    em1, em2, em3 = st.columns(3)
+    
+    with em1:
+        bakir_val = canli_emtia.get("BAKIR", 4.15)
+        st.markdown(f"<div class='kutu'><b>🔌 Bakır ($/lb)</b><br/><span class='big-metric'>${tr_fmt(bakir_val)}</span></div>", unsafe_allow_html=True)
+        
+    with em2:
+        alum_val = canli_emtia.get("ALUMINYUM", 2450.0)
+        st.markdown(f"<div class='kutu'><b>🏗️ Alüminyum ($/Ton)</b><br/><span class='big-metric'>${tr_fmt(alum_val)}</span></div>", unsafe_allow_html=True)
+        
+    with em3:
+        gaz_val = canli_emtia.get("DOGALGAZ", 2.30)
+        st.markdown(f"<div class='kutu'><b>🔥 Doğal Gaz ($/MMBtu)</b><br/><span class='big-metric'>${tr_fmt(gaz_val)}</span></div>", unsafe_allow_html=True)
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ (VALUE MATRIX)
