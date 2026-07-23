@@ -39,6 +39,11 @@ try:
 except:
     GEMINI_API_KEY = None
 
+try:
+    ALPHA_VANTAGE_KEY = st.secrets["ALPHA_VANTAGE_KEY"]
+except:
+    ALPHA_VANTAGE_KEY = None
+
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="PNX | Procurement Nexus", layout="wide", page_icon="💠")
 
@@ -121,9 +126,6 @@ def get_auto_weights(contract_type):
 
 # --- ASGARİ ÜCRET HESAPLAYICI ---
 def get_asgari_ucret_degisim(d_start, d_end):
-    """
-    Seçilen tarih aralığındaki Net Asgari Ücret değişimini hesaplar.
-    """
     maas_tablosu = [
         (date(2026, 1, 1), 28732.0),
         (date(2025, 7, 1), 22102.0),
@@ -166,6 +168,49 @@ def get_google_sheet_data():
     except Exception:
         return pd.DataFrame()
 
+# -------------------------------------------------------------------------
+# ALPHA VANTAGE EMTİA API ÇEKİCİSİ (RESMİ RESİM & TARİHSEL VERİ)
+# -------------------------------------------------------------------------
+@st.cache_data(ttl=3600)
+def alpha_vantage_emtia_al(api_key, function_name, target_start_date):
+    """
+    Alpha Vantage API üzerinden emtianın güncel fiyatını ve 
+    seçilen başlangıç tarihindeki (Eski) fiyatını güvenle çeker.
+    """
+    ilk_fiyat, son_fiyat = 0.0, 0.0
+    if not api_key:
+        return ilk_fiyat, son_fiyat
+
+    url = f"https://www.alphavantage.co/query?function={function_name}&interval=daily&apikey={api_key}"
+    
+    try:
+        res = requests.get(url, timeout=8)
+        if res.status_code == 200:
+            raw = res.json()
+            data_list = raw.get("data", [])
+            
+            if data_list:
+                # 1. Güncel Fiyat (Valid ilk kayıt)
+                for item in data_list:
+                    if item.get("value") not in [None, ".", ""]:
+                        son_fiyat = float(item["value"])
+                        break
+                
+                # 2. Tarihsel Başlangıç Fiyatı
+                target_dt = pd.to_datetime(target_start_date)
+                valid_items = [{"date": pd.to_datetime(x["date"]), "val": float(x["value"])} 
+                               for x in data_list if x.get("value") not in [None, ".", ""]]
+                
+                if valid_items:
+                    df = pd.DataFrame(valid_items).set_index("date")
+                    idx = (df.index - target_dt).abs().argmin()
+                    ilk_fiyat = float(df.iloc[idx]["val"])
+                    
+    except Exception:
+        pass
+
+    return ilk_fiyat, son_fiyat
+
 # --- DİĞER VERİ ÇEKME FONKSİYONLARI ---
 @st.cache_data(ttl=3600)
 def guncel_akaryakit_cek():
@@ -191,9 +236,6 @@ def guncel_akaryakit_cek():
 
 @st.cache_data(ttl=1800)
 def canli_emtia_cek():
-    """
-    Bakır, Alüminyum ve Doğal Gaz canlı piyasa verilerini nokta atışı soket kimlikleriyle çeker.
-    """
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     emtialar = {
         "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "key": "bakir"},
@@ -355,6 +397,10 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba, finansal düğümlerin çözüldüğü yerdesiniz.")
+    if ALPHA_VANTAGE_KEY:
+        st.success("✅ Alpha Vantage API Aktif")
+    else:
+        st.caption("ℹ️ Secrets'a 'ALPHA_VANTAGE_KEY' ekleyerek resmi emtia verilerini bağlayabilirsiniz.")
     st.markdown("---")
     
     sozlesme_tipi = st.selectbox(
@@ -402,7 +448,7 @@ with st.container(border=True):
 if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
-# --- VERİ KÖPRÜSÜ (TCMB, EVDS, SHEET, WEB) ---
+# --- VERİ KÖPRÜSÜ (TCMB, EVDS, SHEET, WEB, ALPHA VANTAGE) ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
@@ -413,10 +459,10 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (GRAFİKLER & OTOMASYON İÇİN)
+# PİYASA VERİSİ İŞLEME (ALPHA VANTAGE VE DİNAMİK YEDEK MOTORLU)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_canli):
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_canli, av_key):
     y_end = d_end
     if y_end > date.today(): y_end = date.today()
     
@@ -429,9 +475,9 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
     
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
+    # 1. STANDART VE HYBRID YAHOO / EVDS / SCRAPING AKIŞI
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
-        # --- 1. ADIM: YENİ NESİL YAHOO API (HAYALET İSTEK) ---
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -450,10 +496,8 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                             idx = (df.index - target_start).abs().argmin()
                             ilk = float(df.iloc[idx]['Close'])
                             son = float(df.iloc[-1]['Close'])
-        except:
-            pass # Hata durumunda sessizce yedeğe geç
+        except: pass
 
-        # --- 2. ADIM: TCMB (EVDS) FALLBACK ---
         if ilk == 0 and evds_key and (key in ["USDTRY", "EURTRY"]):
             try:
                 evds_service = evdsAPI(evds_key)
@@ -467,7 +511,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                     ilk = float(evds_df[val_col].dropna().iloc[-1])
             except: pass
 
-        # --- 3. ADIM: CANLI VERİ EZİŞİ (CANLI SCRAPING) ---
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
         elif key == "BAKIR" and emtia_canli.get("BAKIR", 0) > 0: son = emtia_canli["BAKIR"]
@@ -477,24 +520,34 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
         degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # ============================================================================
-    # DÖNGÜ DIŞI GÜVENLİK VE OTO-SİMÜLASYON BÖLGESİ
-    # ============================================================================
-    
+    # 2. ALPHA VANTAGE ENTEGRASYONU (EĞER KEY VARSA EMTİA VE BRENT'İ RESMİ API İLE EZ)
+    if av_key:
+        av_map = {
+            "BRENT_PETROL": "BRENT",
+            "BAKIR": "COPPER",
+            "ALUMINYUM": "ALUMINUM",
+            "DOGALGAZ": "NATURAL_GAS"
+        }
+        for key, av_func in av_map.items():
+            av_ilk, av_son = alpha_vantage_emtia_al(av_key, av_func, d_start)
+            if av_son > 0:
+                data_dict[key]["son"] = av_son
+                if av_ilk > 0:
+                    data_dict[key]["ilk"] = av_ilk
+                    data_dict[key]["degisim"] = ((av_son - av_ilk) / av_ilk * 100)
+
     # --- EURUSD PARİTE KORUMASI ---
     if data_dict["EURUSD"]["ilk"] == 0:
         u_ilk = data_dict["USDTRY"]["ilk"]
         e_ilk = data_dict["EURTRY"]["ilk"]
-        if u_ilk > 0 and e_ilk > 0:
-            data_dict["EURUSD"]["ilk"] = e_ilk / u_ilk
+        if u_ilk > 0 and e_ilk > 0: data_dict["EURUSD"]["ilk"] = e_ilk / u_ilk
             
     if data_dict["EURUSD"]["son"] == 0 or live_data.get("USD", 0) > 0:
         u_son = data_dict["USDTRY"]["son"] if data_dict["USDTRY"]["son"] > 0 else live_data.get("USD", 1)
         e_son = data_dict["EURTRY"]["son"] if data_dict["EURTRY"]["son"] > 0 else live_data.get("EUR", 1)
         data_dict["EURUSD"]["son"] = e_son / u_son
     
-    p_ilk = data_dict["EURUSD"]["ilk"]
-    p_son = data_dict["EURUSD"]["son"]
+    p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
 
     # --- GRAM ALTIN MANTIĞI ---
@@ -513,28 +566,23 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
     g_deg = ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": g_deg}
 
-    # --- BRENT PETROL KORUMASI & KURSAL ERİME SİMÜLASYONU ---
+    # --- BRENT PETROL OTOMASYONU VE KORUMASI ---
     if data_dict.get("BRENT_PETROL", {}).get("son", 0) == 0:
-        if "BRENT_PETROL" in data_dict:
-            data_dict["BRENT_PETROL"]["son"] = 78.0
-        else:
-            data_dict["BRENT_PETROL"] = {"ilk": 78.0, "son": 78.0, "degisim": 0.0}
+        data_dict["BRENT_PETROL"]["son"] = 78.0
         
     if data_dict["BRENT_PETROL"]["ilk"] == 0:
-        u_ilk = data_dict.get("USDTRY", {}).get("ilk", 0)
-        u_son = data_dict.get("USDTRY", {}).get("son", 0)
+        u_ilk, u_son = data_dict.get("USDTRY", {}).get("ilk", 0), data_dict.get("USDTRY", {}).get("son", 0)
         if u_ilk > 0 and u_son > 0:
             data_dict["BRENT_PETROL"]["ilk"] = data_dict["BRENT_PETROL"]["son"] * (u_ilk / u_son)
         else:
             data_dict["BRENT_PETROL"]["ilk"] = data_dict["BRENT_PETROL"]["son"]
 
-    b_ilk = data_dict["BRENT_PETROL"]["ilk"]
-    b_son = data_dict["BRENT_PETROL"]["son"]
+    b_ilk, b_son = data_dict["BRENT_PETROL"]["ilk"], data_dict["BRENT_PETROL"]["son"]
     data_dict["BRENT_PETROL"]["degisim"] = ((b_son - b_ilk) / b_ilk * 100) if b_ilk > 0 else 0.0
 
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, canli_emtia)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, canli_emtia, ALPHA_VANTAGE_KEY)
 
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
@@ -608,7 +656,7 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
     # ============================================================================
-    # SANAYİ EMTİALARI (TAM ENTEGRE EDİLEBİLİR VE CANLI BİRLEŞİK MODÜL)
+    # SANAYİ EMTİALARI (ALPHA VANTAGE / DÜZENLENEBİLİR VE CANLI BİRLEŞİK MODÜL)
     # ============================================================================
     st.markdown("### 🏗️ Sanayi Emtiaları & Ham Madde")
     em1, em2, em3 = st.columns(3)
@@ -624,7 +672,8 @@ with st.container(border=True):
             st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
             e_input = st.number_input("eski", value=ilk, format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
             
-            st.markdown("<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>CANLI</span></label>", unsafe_allow_html=True)
+            badge_txt = "ALPHA VANTAGE" if ALPHA_VANTAGE_KEY else "CANLI"
+            st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>{badge_txt}</span></label>", unsafe_allow_html=True)
             y_input = st.number_input("yeni", value=son, format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
             
             deg = ((y_input - e_input) / e_input * 100) if e_input > 0 else 0.0
@@ -804,7 +853,6 @@ with st.container(border=True):
     w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
     w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
 
-    # YENİ EKLENEN SANAYİ EMTİASI AĞIRLIKLARI
     w13, w14, w15, w16 = st.columns(4)
     w_bakir = w13.number_input("Bakır %", value=auto_weights.get("bakir", 0))
     w_alum  = w14.number_input("Alüminyum %", value=auto_weights.get("alum", 0))
