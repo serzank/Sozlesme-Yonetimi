@@ -30,14 +30,20 @@ except ImportError:
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- AYARLAR ve GÜVENLİK (SECRETS) ---
-try: MY_API_KEY = st.secrets["EVDS_KEY"]
-except: MY_API_KEY = None 
+try:
+    MY_API_KEY = st.secrets["EVDS_KEY"]
+except:
+    MY_API_KEY = None 
 
-try: GEMINI_API_KEY = st.secrets["GEMINI_KEY"]
-except: GEMINI_API_KEY = None
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_KEY"]
+except:
+    GEMINI_API_KEY = None
 
-try: FMP_KEY = st.secrets["FMP_KEY"]
-except: FMP_KEY = None
+try:
+    FMP_KEY = st.secrets["FMP_KEY"]
+except:
+    FMP_KEY = None
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="PNX | Procurement Nexus", layout="wide", page_icon="💠")
@@ -154,7 +160,7 @@ def get_google_sheet_data():
     except: return pd.DataFrame()
 
 # -------------------------------------------------------------------------
-# FINANCIAL MODELING PREP (FMP) API ENTEGRASYON FONKSİYONU
+# FINANCIAL MODELING PREP (FMP) API ENTEGRASYONU
 # -------------------------------------------------------------------------
 @st.cache_data(ttl=1800)
 def fmp_emtia_al(api_key, symbol, target_start_date):
@@ -308,7 +314,7 @@ with st.sidebar:
     if FMP_KEY:
         st.success("✅ FMP API (Genişletilmiş Emtia Modülü Aktif)")
     else:
-        st.caption("ℹ️ Secrets'a 'FMP_KEY' ekleyerek emtiaları borsa verileriyle bağlayabilirsiniz.")
+        st.caption("ℹ️ Secrets'a 'FMP_KEY' ekleyerek emtiaları doğrudan borsadan bağlayabilirsiniz.")
     st.markdown("---")
     
     sozlesme_tipi = st.selectbox(
@@ -438,7 +444,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
 
     gold_ilk = evds_gold_start
     if gold_ilk <= 0 and data_dict.get("ONS_ALTIN", {}).get("ilk", 0) > 0 and data_dict.get("USDTRY", {}).get("ilk", 0) > 0:
-        gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
+        gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk']"
 
     gold_son = live_data.get("ALTIN", 0)
     if gold_son <= 0 and data_dict.get("ONS_ALTIN", {}).get("son", 0) > 0 and data_dict.get("USDTRY", {}).get("son", 0) > 0:
@@ -638,7 +644,6 @@ with st.container(border=True):
     st.markdown("---")
     st.markdown("#### ⚖️ Kapsamlı Sepet Ağırlıkları Matrisi")
     
-    # Ağırlık Inputları (4 Sütunlu Grid)
     aw1, aw2, aw3, aw4 = st.columns(4)
     w_mix_oran = aw1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights.get("mix", 0))
     w_tufe = aw2.number_input("Saf TÜFE %", value=auto_weights.get("tufe", 0))
@@ -772,14 +777,12 @@ with st.container(border=True):
             try:
                 genai.configure(api_key=GEMINI_API_KEY)
                 model = genai.GenerativeModel("gemini-2.5-flash")
-                
-                # Dinamik olarak ağırlığı olan kalemleri filtreleyip yoruma ekle
                 aktif_etkiler = [f"- {e[0]}: Değişim %{e[1]:.2f}, Ağırlık %{e[2]:.2f}" for e in etkiler if e[2] > 0]
                 etki_str = "\n".join(aktif_etkiler)
                 
                 prompt = f"""
                 Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis). Kullanıcıya 'Sir' de.
-                Aşağıdaki genişletilmiş emtia ve piyasa verilerini analiz ederek, sözleşmedeki fiyat artışının (veya düşüşünün) temel sebeplerini ve projeksiyon risklerini 3-4 cümle ile özetle.
+                Aşağıdaki genişletilmiş emtia ve piyasa verilerini analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
                 
                 VERİLER:
                 - Toplam Fiyat Artışı: %{zam:.2f}
@@ -788,10 +791,6 @@ with st.container(border=True):
                 
                 SEPETİ ETKİLEYEN KALEMLER:
                 {etki_str}
-                
-                YÖNERGE:
-                Sepette en çok ağırlığı ve değişimi olan "maliyet sürücülerini" tespit et.
-                Değerli metaller, enerji veya tarım emtialarında bir ralli varsa bunu hedging açısından değerlendir.
                 """
                 st.markdown(model.generate_content(prompt).text)
             except Exception as e: st.error(f"Hata: {str(e)}")
