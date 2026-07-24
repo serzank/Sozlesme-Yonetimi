@@ -151,12 +151,13 @@ def get_global_inflation_change(api_key, series_id, target_start_date, target_en
 
     return 0.0,0.0,0.0
 def get_fred_index_change(api_key, series_id, target_start_date):
-    return get_global_inflation_change(
+    _, _, degisim = get_global_inflation_change(
         api_key,
         series_id,
         target_start_date,
-        datetime.today().date()
-    )        
+        datetime.today().date())
+        
+    return degisim
 def render_svg_logo():
     return """
     <svg width="100%" height="auto" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
@@ -695,13 +696,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
     # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
-    euro_ilk, euro_son, euro_deg = get_global_inflation_data(
+    euro_ilk, euro_son, euro_deg = get_global_inflation_change(
     fred_key,
     "CP0000EZ19M086NEST",
     d_start,
     d_end)
     
-    abd_ilk, abd_son, abd_deg = get_global_inflation_data(
+    abd_ilk, abd_son, abd_deg = get_global_inflation_change(
     fred_key,
     "CPIAUCSL",
     d_start,
