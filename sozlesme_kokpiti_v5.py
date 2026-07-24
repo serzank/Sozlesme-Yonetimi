@@ -114,7 +114,7 @@ def get_fred_index_change(api_key, series_id, target_start_date):
     if not api_key:
         return 0.0
     try:
-        s_date = (target_start_date - timedelta(days=180)).strftime("%Y-%m-%d")
+        s_date = (target_start_date - timedelta(days=240)).strftime("%Y-%m-%d")
         e_date = datetime.today().strftime("%Y-%m-%d")
         url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
         res = requests.get(url, timeout=5)
@@ -323,7 +323,7 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- %100 DÜZELTİLMİŞ VE VİRGÜL TEMİZLİKLİ EVDS TÜFE/ÜFE MOTORU ---
+# --- AKILLI DÖNEM BAZLI (PERIOD MATCHING) ZIRHLI TCMB TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -331,8 +331,9 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        s_q = (start_date - relativedelta(months=18)).replace(day=1).strftime("%d-%m-%Y")
-        e_q = (datetime.today() + relativedelta(months=1)).replace(day=1).strftime("%d-%m-%Y")
+        # EVDS isteği için geniş tarih penceresi
+        s_q = (start_date - relativedelta(months=24)).replace(day=1).strftime("%d-%m-%Y")
+        e_q = (datetime.today() + relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         raw_df = evds_service.get_data(series, startdate=s_q, enddate=e_q)
@@ -352,17 +353,31 @@ def get_tcmb_data(api_key, start_date, end_date):
             raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih_Raw'], errors='coerce')
             raw_df = raw_df.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
             
-            # VİRGÜL -> NOKTA TEMİZLİĞİ (TÜFE'nin 0,00 kalmasını engelleyen kritik düzeltme)
+            # Sayı dönüştürme ve virgül temizliği
             for c in ["TUFE_COL", "UFE_COL", "HUFE_COL"]:
                 if c in raw_df.columns:
                     raw_df[c] = raw_df[c].astype(str).str.replace(',', '.')
                     raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
             
-            raw_df = raw_df.ffill()
-
+            raw_df = raw_df.dropna(subset=["TUFE_COL"]).copy()
+            
+            # YIL-AY (PERIOD) MANTIĞIYLA EŞLEŞTİRME (GÜN SIKIŞMASINI ÇÖZEN KRİTİK ADIM)
+            raw_df['Period'] = raw_df['Tarih_Dt'].dt.to_period('M')
+            
+            p_start = pd.Period(start_date, freq='M')
+            p_end = pd.Period(end_date, freq='M')
+            
+            # En son açıklanmış resmi veriyi bulma
             latest_row = raw_df.iloc[-1]
-            past_df = raw_df[raw_df['Tarih_Dt'] <= pd.Timestamp(start_date)]
-            start_row = past_df.iloc[-1] if not past_df.empty else raw_df.iloc[0]
+            latest_p = latest_row['Period']
+
+            # Başlangıç dönemini arama
+            row_s_df = raw_df[raw_df['Period'] == p_start]
+            if not row_s_df.empty:
+                start_row = row_s_df.iloc[0]
+            else:
+                past_df = raw_df[raw_df['Period'] <= p_start]
+                start_row = past_df.iloc[-1] if not past_df.empty else raw_df.iloc[0]
 
             def calc_diff(col_name):
                 if col_name in raw_df.columns:
@@ -377,7 +392,7 @@ def get_tcmb_data(api_key, start_date, end_date):
                 "UFE": calc_diff("UFE_COL"),
                 "HUFE": calc_diff("HUFE_COL"),
                 "Status": True,
-                "Msg": f"TCMB Enflasyon Dönemi: {start_row['Tarih_Dt'].strftime('%m.%Y')} ➡️ {latest_row['Tarih_Dt'].strftime('%m.%Y')}"
+                "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_p}"
             })
     except Exception as e: 
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
@@ -414,11 +429,11 @@ def get_evds_fuel_history(api_key, d_start):
         if df is not None and not df.empty:
             cols_b = [c for c in df.columns if "TP_AK_U95" in c or "TP.AK.U95" in c]
             if cols_b:
-                s_b = pd.to_numeric(df[cols_b[0]], errors='coerce').dropna()
+                s_b = pd.to_numeric(df[cols_b[0]].astype(str).str.replace(',', '.'), errors='coerce').dropna()
                 if not s_b.empty: res["benzin"] = float(s_b.iloc[-1])
             cols_m = [c for c in df.columns if "TP_AK_MTR" in c or "TP.AK.MTR" in c]
             if cols_m:
-                s_m = pd.to_numeric(df[cols_m[0]], errors='coerce').dropna()
+                s_m = pd.to_numeric(df[cols_m[0]].astype(str).str.replace(',', '.'), errors='coerce').dropna()
                 if not s_m.empty: res["motorin"] = float(s_m.iloc[-1])
     except: pass
     return res
@@ -431,8 +446,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-    if FRED_API_KEY:
-        st.success("✅ FRED API (Endeksleme Motoru) Aktif")
+    
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
@@ -490,7 +504,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (STABİL DÖVİZ VE FRED ENGINE)
+# PİYASA VERİSİ İŞLEME (KAPATILMIŞ FRED HARİTASI & YFINANCE YEDEKLERİ)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
@@ -565,12 +579,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
         if te_key not in data_dict:
             data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
 
-    # FRED ENDEKS YÜZDESİ İLE GEÇMİŞ FİYAT TÜRETME (SADECE FRED)
+    # %100 TAM HARİTALANDIRILMIŞ FRED EMTİA KODLARI (DOĞAL GAZ VE POLİMER/PLASTİK EKLENDİ)
     if fred_key:
         fred_map = {
             "BAKIR": "PCOPPUSDM",
             "ALUMINYUM": "PALUMUSDM",
-            "DOGALGAZ": "PNGASUSDM",
+            "DOGALGAZ": "PNGASUSDM",       # US Henry Hub Natural Gas
+            "PLASTIK": "WPU066",           # Producer Price Index: Plastic Materials and Resins
             "PROPAN": "PROPANEM",
             "SCRAP_STEEL": "WPU1012",
             "SCRAP_ALUM": "WPU102301",
@@ -586,6 +601,20 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
         for k_fred, series_id in fred_map.items():
             if k_fred in data_dict and data_dict[k_fred]["son"] > 0:
                 pct = get_fred_index_change(fred_key, series_id, d_start)
+                
+                # Eğer FRED'den veri alınamadıysa yfinance Borsa Vadeli Kontrat Yedeklemesi
+                if pct == 0.0:
+                    yf_backup_map = {"DOGALGAZ": "NG=F", "PLASTIK": "PLASTIK.L", "BAKIR": "HG=F"}
+                    if k_fred in yf_backup_map:
+                        try:
+                            yt = yf.Ticker(yf_backup_map[k_fred])
+                            yh = yt.history(start=d_start - timedelta(days=5), end=d_start + timedelta(days=5))
+                            if not yh.empty:
+                                y_ilk = float(yh['Close'].iloc[0])
+                                y_son = float(yh['Close'].iloc[-1])
+                                if y_ilk > 0: pct = ((y_son - y_ilk) / y_ilk) * 100
+                        except: pass
+
                 data_dict[k_fred]["degisim"] = pct
                 if (1 + pct/100) != 0:
                     data_dict[k_fred]["ilk"] = round(data_dict[k_fred]["son"] / (1 + pct/100), 2)
@@ -703,7 +732,7 @@ with st.container(border=True):
     # ============================================================================
     # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (FRED Indexation)")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
@@ -960,12 +989,12 @@ with st.container(border=True):
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
-    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}_{val_tufe:.2f}")
-    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}_{val_ufe:.2f}")
-    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}_{val_mix:.2f}")
+    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
+    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
+    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     
-    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}_{val_hufe_final:.2f}", help=f"Seçilen Sektör: {selected_sector}")
-    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}_{val_iscilik:.2f}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}", help=f"Seçilen Sektör: {selected_sector}")
+    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     
     if val_iscilik > 0:
