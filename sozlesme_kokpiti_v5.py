@@ -207,6 +207,7 @@ def get_auto_weights(contract_type):
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
         "benzin": 0, "dizel": 0, "brent": 0, "abd": 0,
+        "jet_fuel": 0, # <--- JET FUEL EKLENDİ
         "bakir": 0, "alum": 0, "gaz": 0, "celik": 0, "demir": 0, "nikel": 0, "cinko": 0,
         "pamuk": 0, "buğday": 0, "kakao": 0, "plastik": 0, "propan": 0, "scrap_steel": 0,
         "scrap_alum": 0, "lityum": 0, "gumus": 0, "coal": 0, "eugas": 0, "naphtha": 0
@@ -637,6 +638,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     # %100 TAM HARİTALANDIRILMIŞ FRED EMTİA KODLARI (DOĞAL GAZ VE POLİMER/PLASTİK EKLENDİ)
     if fred_key:
         fred_map = {
+            "JET_FUEL": "PJETUSDM", # <--- Global Price of Jet Fuel
             "BAKIR": "PCOPPUSDM",
             "ALUMINYUM": "PALUMUSDM",
             "DOGALGAZ": "PNGASUSDM",       # US Henry Hub Natural Gas
@@ -764,8 +766,9 @@ with st.container(border=True):
     d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
     st.markdown("### 🛢️ Enerji Emtiaları")
-    e1, e2, e3, e4 = st.columns(4)
+    e1, e2, e3, e4, e5 = st.columns(5) # Kolon sayısını 5 yapıyoruz
     d_brent = kutu(e1, "Brent Petrol ($/Bbl)", "BRENT_PETROL", "🛢️")
+    d_jet = emtia_karti(e5, "✈️ Jet A-1 ($/Bbl)", "JET_FUEL") # <--- JET FUEL KARTI
 
     benzin_yeni_val = yakit_guncel.get("benzin", 0.0) if yakit_guncel.get("benzin", 0) > 0 else 44.0
     motorin_yeni_val = yakit_guncel.get("motorin", 0.0) if yakit_guncel.get("motorin", 0) > 0 else 45.0
@@ -1125,6 +1128,7 @@ with st.container(border=True):
     w_bugday  = w25.number_input("Buğday %", value=auto_weights.get("buğday", 0))
     w_kakao   = w26.number_input("Kakao %", value=auto_weights.get("kakao", 0))
     w_plastik = w27.number_input("Plastik %", value=auto_weights.get("plastik", 0))
+    w_jet_fuel = w28.number_input("Jet A-1 %", value=auto_weights.get("jet_fuel", 0))
 
     toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik
     kalan = 100.0 - toplam
@@ -1148,6 +1152,7 @@ with st.container(border=True):
         ("Benzin", safe_float(d_benzin), safe_float(w_benzin)), 
         ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
         ("Brent", safe_float(d_brent), safe_float(w_brent)), 
+        ("Jet A-1 Yakıt", safe_float(d_jet), safe_float(w_jet_fuel)),
         ("ABD Enf", safe_float(abd_enf), safe_float(w_abd)),
         ("Bakır", safe_float(d_bakir), safe_float(w_bakir)),
         ("Alüminyum", safe_float(d_alum), safe_float(w_alum)),
