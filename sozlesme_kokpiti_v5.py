@@ -343,6 +343,7 @@ def guncel_akaryakit_cek():
 
 # --- AKILLI DÖNEM BAZLI (PERIOD MATCHING) ZIRHLI TCMB TÜFE/ÜFE MOTORU ---
 # --- KESİN TESHİS VE ÇÖZÜM MOTORU ---
+# --- DEBUG DESTEKLİ KESİN TESPİT MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -360,28 +361,32 @@ def get_tcmb_data(api_key, start_date, end_date):
             res["Msg"] = "EVDS'den veri dönmedi."
             return res
             
-        # EVDS'den gelen sütun isimlerini ekranda görmek için yazdırıyoruz
-        columns_found = list(raw_df.columns)
-        
+        # 1. KONTROL: EVDS'den dönen ham sütun isimlerini ekrana yazdırıyoruz
+        st.write("🔍 **EVDS Ham Kolon Çıktısı:**", raw_df.columns.tolist())
+
         tarih_col = next((c for c in raw_df.columns if "TARIH" in c.upper() or "DATE" in c.upper()), None)
-        value_cols = [c for c in raw_df.columns if c != tarih_col]
-        
-        if not tarih_col or len(value_cols) == 0:
-            res["Msg"] = f"Kolon bulunamadı. Gelen kolonlar: {columns_found}"
+        if not tarih_col:
+            res["Msg"] = "Tarih kolonu bulunamadı."
             return res
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
         
-        # Sırasıyla gelen ilk sütun TÜFE, ikinci ÜFE olsun
-        if len(value_cols) >= 1:
-            df_clean['TUFE_COL'] = pd.to_numeric(raw_df[value_cols[0]].astype(str).str.replace(',', '.'), errors='coerce')
-        if len(value_cols) >= 2:
-            df_clean['UFE_COL'] = pd.to_numeric(raw_df[value_cols[1]].astype(str).str.replace(',', '.'), errors='coerce')
-        if len(value_cols) >= 3:
-            df_clean['HUFE_COL'] = pd.to_numeric(raw_df[value_cols[2]].astype(str).str.replace(',', '.'), errors='coerce')
+        # Seri kodlarına göre dinamik ve güvenli sütun eşleştirme
+        for c in raw_df.columns:
+            cu = c.upper()
+            if "FG_J0" in cu or "FG.J0" in cu:
+                df_clean['TUFE_COL'] = pd.to_numeric(raw_df[c].astype(str).str.replace(',', '.'), errors='coerce')
+            elif "TUFE1YI" in cu or "YI" in cu:
+                df_clean['UFE_COL'] = pd.to_numeric(raw_df[c].astype(str).str.replace(',', '.'), errors='coerce')
+            elif "HKFE01" in cu:
+                df_clean['HUFE_COL'] = pd.to_numeric(raw_df[c].astype(str).str.replace(',', '.'), errors='coerce')
 
         df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt').ffill()
+        
+        # 2. KONTROL: Temizlenen veri çerçevesinin son 5 ayını ekrana yazdırıyoruz
+        st.write("📊 **Temizlenmiş Veri Çerçevesi (Son 5 Ay):**", df_clean.tail(5))
+
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
@@ -406,7 +411,7 @@ def get_tcmb_data(api_key, start_date, end_date):
             "UFE": calc_diff("UFE_COL"),
             "HUFE": calc_diff("HUFE_COL"),
             "Status": True,
-            "Msg": f"Dönem: {start_row['Period']} ➡️ {latest_row['Period']} | Sütunlar: {value_cols}"
+            "Msg": f"Dönem: {start_row['Period']} ➡️ {latest_row['Period']}"
         })
     except Exception as e: 
         res["Msg"] = f"EVDS Hatası: {str(e)}"
