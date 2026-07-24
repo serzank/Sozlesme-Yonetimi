@@ -341,82 +341,84 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- FFILL TUZAĞINDAN ARINDIRILMIŞ NET ENDESK MOTORU ---
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
         
-        s_q = (start_date - relativedelta(months=48)).replace(day=1).strftime("%d-%m-%Y")
-        e_q = (datetime.today() + relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
+        # EVDS aylık serilerde hata vermemesi için ayın 1'ini ve sonunu baz alıyoruz
+        s_date = start_date - relativedelta(months=2)
+        e_date = end_date + relativedelta(months=1)
+        
+        start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
+        
+        next_month = e_date + relativedelta(months=1)
+        last_day_date = next_month.replace(day=1) - timedelta(days=1)
+        end_q = last_day_date.strftime("%d-%m-%Y")
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
-        raw_df = evds_service.get_data(series, startdate=s_q, enddate=e_q)
         
+        raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
         if raw_df is None or raw_df.empty:
-            res["Msg"] = "EVDS'den veri dönmedi."
+            res["Msg"] = "EVDS'den veri dönmedi. Tarih aralığını kontrol edin."
             return res
             
-        tarih_col = next((c for c in raw_df.columns if "TARIH" in c.upper() or "DATE" in c.upper()), None)
-        if not tarih_col:
-            res["Msg"] = "Tarih kolonu bulunamadı."
-            return res
-
-        value_cols = [c for c in raw_df.columns if c != tarih_col]
-
-        df_clean = pd.DataFrame()
-        df_clean['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
+        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m', errors='coerce')
+        if raw_df['Tarih_Dt'].isna().all():
+            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
+            
+        raw_df = raw_df.dropna(subset=['Tarih_Dt']).copy()
         
-        if len(value_cols) >= 1:
-            df_clean['TUFE_COL'] = pd.to_numeric(raw_df[value_cols[0]].astype(str).str.replace(',', '.'), errors='coerce')
-        if len(value_cols) >= 2:
-            df_clean['UFE_COL'] = pd.to_numeric(raw_df[value_cols[1]].astype(str).str.replace(',', '.'), errors='coerce')
-        if len(value_cols) >= 3:
-            df_clean['HUFE_COL'] = pd.to_numeric(raw_df[value_cols[2]].astype(str).str.replace(',', '.'), errors='coerce')
-
-        # Geçersiz tarihleri ve TÜFE'si NaN olan (henüz açıklanmamış) güncel ayları temizliyoruz
-        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
-        df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
-
+        # --- ZIRH: EKSİK (GELECEK) VERİ KORUMASI ---
+        # EVDS açıklanmamış aylara 'Boş' atar, bu da %-100 hatasına neden olur.
+        data_cols = [c for c in raw_df.columns if c.startswith('TP')]
+        for c in data_cols:
+            # Boşlukları veya hatalı metinleri sayısal NaN değere zorla
+            raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
+            
+        if data_cols:
+            # Açıklanmayan henüz boş olan ayı, en son açıklanan ayın verisiyle doldur (Forward Fill)
+            raw_df[data_cols] = raw_df[data_cols].ffill()
+            raw_df = raw_df.dropna(subset=data_cols, how='all')
+            
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # Başlangıç ve Bitiş için gerçek veri olan en yakın ayları seçiyoruz
-        matches_s = df_clean[df_clean['Period'] <= p_start]
-        start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
+        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
+        if row_start.empty:
+            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date.replace(day=1))].head(1)
+        
+        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
+        if row_end.empty:
+            row_end = raw_df.tail(1)
 
-        matches_e = df_clean[df_clean['Period'] <= p_end]
-        latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
-
-        # Eğer aynı ay seçildiyse bir önceki aya git ki oran 0 çıkmasın
-        if start_row['Period'] == latest_row['Period'] and len(df_clean) > 1:
-            idx_list = df_clean[df_clean['Period'] <= p_start].index
-            if len(idx_list) > 0:
-                s_idx = idx_list[-1]
-                months_diff = (p_end.year - p_start.year) * 12 + (p_end.month - p_start.month)
-                target_e_idx = min(s_idx + max(months_diff, 1), len(df_clean) - 1)
-                latest_row = df_clean.loc[target_e_idx]
-
-        def calc_index_diff(col_name):
-            if col_name in df_clean.columns:
-                v_start = safe_float(start_row[col_name])
-                v_end = safe_float(latest_row[col_name])
-                if v_start > 0 and v_end > 0:
-                    return round(((v_end / v_start) - 1) * 100, 2)
+        def get_val(row, codes):
+            if row.empty: return 0.0
+            for c in codes:
+                c_clean = c.replace(".", "_") 
+                if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
+                if c_clean in row.columns and pd.notna(row[c_clean].values[0]): return float(row[c_clean].values[0])
             return 0.0
-
+            
+        t_start, t_end = get_val(row_start, ["TP.FG.J0"]), get_val(row_end, ["TP.FG.J0"])
+        u_start, u_end = get_val(row_start, ["TP.TUFE1YI.T1"]), get_val(row_end, ["TP.TUFE1YI.T1"])
+        h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
+        
+        calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
+            
         res.update({
-            "TUFE": calc_index_diff("TUFE_COL"),
-            "UFE": calc_index_diff("UFE_COL"),
-            "HUFE": calc_index_diff("HUFE_COL"),
+            "TUFE": round(calc(t_end, t_start), 2),
+            "UFE": round(calc(u_end, u_start), 2),
+            "HUFE": round(calc(h_end, h_start), 2),
             "Status": True,
-            "Msg": f"Endeks Dönemi: {start_row['Period']} ({safe_float(start_row.get('TUFE_COL', 0))}) ➡️ {latest_row['Period']} ({safe_float(latest_row.get('TUFE_COL', 0))})"
+            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0] if not row_start.empty else '?'} - {row_end['Tarih'].values[0] if not row_end.empty else '?'}"
         })
     except Exception as e: 
-        res["Msg"] = f"Endeks Hesaplama Hatası: {str(e)}"
+        res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
     return res
+
 
 
 @st.cache_data(ttl=600)
