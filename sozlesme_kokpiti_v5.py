@@ -822,8 +822,16 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
 
-    data_dict["EURO_HICP"] = euro_enf_val
-    data_dict["ABD_CPI"] = abd_cpi_val
+    data_dict["EURO_HICP"] = {
+    "ilk": 0.0,
+    "son": euro_enf_val,
+    "degisim": euro_enf_val
+}
+    data_dict["ABD_CPI"] = {
+    "ilk": 0.0,
+    "son": abd_cpi_val,
+    "degisim": abd_cpi_val
+}
 
     return data_dict
 
@@ -901,6 +909,11 @@ with st.container(border=True):
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
+
+    st.markdown("### 🌍 Küresel Enflasyon")
+    i1, i2, _, _ = st.columns(4)
+    d_euro_enf = kutu(i1, "Avrupa Enf. (HICP)", "EURO_HICP", "🇪🇺")
+    d_abd_cpi  = kutu(i2, "ABD CPI", "ABD_CPI", "🇺🇸")
 
     st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
     
