@@ -342,6 +342,7 @@ def guncel_akaryakit_cek():
     return fiyatlar
 
 # --- AKILLI DÖNEM BAZLI (PERIOD MATCHING) ZIRHLI TCMB TÜFE/ÜFE MOTORU ---
+# --- KESİN TESHİS VE ÇÖZÜM MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -354,26 +355,31 @@ def get_tcmb_data(api_key, start_date, end_date):
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         raw_df = evds_service.get_data(series, startdate=s_q, enddate=e_q)
+        
         if raw_df is None or raw_df.empty:
             res["Msg"] = "EVDS'den veri dönmedi."
             return res
             
-        tarih_col, tufe_col, ufe_col, hufe_col = None, None, None, None
-        for c in raw_df.columns:
-            cu = c.upper()
-            if "TARIH" in cu or "DATE" in cu: tarih_col = c
-            elif "FG" in cu or "J0" in cu: tufe_col = c
-            elif "TUFE1YI" in cu or "YI" in cu: ufe_col = c
-            elif "HKFE01" in cu: hufe_col = c
-
-        if not tarih_col: return res
+        # EVDS'den gelen sütun isimlerini ekranda görmek için yazdırıyoruz
+        columns_found = list(raw_df.columns)
+        
+        tarih_col = next((c for c in raw_df.columns if "TARIH" in c.upper() or "DATE" in c.upper()), None)
+        value_cols = [c for c in raw_df.columns if c != tarih_col]
+        
+        if not tarih_col or len(value_cols) == 0:
+            res["Msg"] = f"Kolon bulunamadı. Gelen kolonlar: {columns_found}"
+            return res
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
         
-        for col_src, col_dst in [(tufe_col, 'TUFE_COL'), (ufe_col, 'UFE_COL'), (hufe_col, 'HUFE_COL')]:
-            if col_src and col_src in raw_df.columns:
-                df_clean[col_dst] = pd.to_numeric(raw_df[col_src].astype(str).str.replace(',', '.'), errors='coerce')
+        # Sırasıyla gelen ilk sütun TÜFE, ikinci ÜFE olsun
+        if len(value_cols) >= 1:
+            df_clean['TUFE_COL'] = pd.to_numeric(raw_df[value_cols[0]].astype(str).str.replace(',', '.'), errors='coerce')
+        if len(value_cols) >= 2:
+            df_clean['UFE_COL'] = pd.to_numeric(raw_df[value_cols[1]].astype(str).str.replace(',', '.'), errors='coerce')
+        if len(value_cols) >= 3:
+            df_clean['HUFE_COL'] = pd.to_numeric(raw_df[value_cols[2]].astype(str).str.replace(',', '.'), errors='coerce')
 
         df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt').ffill()
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
@@ -381,15 +387,10 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # 3 Ay, 6 Ay, 1 Yıl veya özel vadelerde en yakın geçerli ay satırlarını bulma
-        row_s_df = df_clean[df_clean['Period'] == p_start]
-        if row_s_df.empty:
-            row_s_df = df_clean[df_clean['Period'] <= p_start]
+        row_s_df = df_clean[df_clean['Period'] <= p_start]
         start_row = row_s_df.iloc[-1] if not row_s_df.empty else df_clean.iloc[0]
 
-        row_e_df = df_clean[df_clean['Period'] == p_end]
-        if row_e_df.empty:
-            row_e_df = df_clean[df_clean['Period'] <= p_end]
+        row_e_df = df_clean[df_clean['Period'] <= p_end]
         latest_row = row_e_df.iloc[-1] if not row_e_df.empty else df_clean.iloc[-1]
 
         def calc_diff(col_name):
@@ -405,7 +406,7 @@ def get_tcmb_data(api_key, start_date, end_date):
             "UFE": calc_diff("UFE_COL"),
             "HUFE": calc_diff("HUFE_COL"),
             "Status": True,
-            "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
+            "Msg": f"Dönem: {start_row['Period']} ➡️ {latest_row['Period']} | Sütunlar: {value_cols}"
         })
     except Exception as e: 
         res["Msg"] = f"EVDS Hatası: {str(e)}"
