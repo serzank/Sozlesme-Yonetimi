@@ -1060,8 +1060,9 @@ with st.container(border=True):
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
-    # Hafızadaki eski değerin kalmasını engellemek için session_state'i güncelliyoruz
-    st.session_state[f"t_{d_key}"] = val_tufe
+   # Eğer key daha önce yoksa veya güncellenecekse session state'i güvenli şekilde set ediyoruz
+    if f"t_{d_key}" not in st.session_state:
+        st.session_state[f"t_{d_key}"] = val_tufe
 
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
     tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
