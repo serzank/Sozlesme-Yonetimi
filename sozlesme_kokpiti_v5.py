@@ -505,15 +505,29 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": 0.0}
 
-    # 2. BRENT PETROL & DÖVİZ CANLI DÜZELTME
-    if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
-    if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
+    # --- BRENT PETROL TARİHSEL (ESKİ) DEĞER ÇEKİM MOTORU ---
+    if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0:
+        # 1. YOL: Direct yfinance Kütüphanesi
+        try:
+            brent_ticker = yf.Ticker("BZ=F")
+            hist = brent_ticker.history(start=d_start - timedelta(days=5), end=d_start + timedelta(days=5))
+            if not hist.empty:
+                data_dict["BRENT_PETROL"]["ilk"] = float(hist['Close'].iloc[0])
+        except: pass
 
-    # Brent Petrol Canlı Değer Garantisi
-    if doviz_data.get("BRENT_PETROL", 0) > 0:
-        data_dict["BRENT_PETROL"]["son"] = doviz_data["BRENT_PETROL"]
-    elif te_data.get("BRENT_PETROL", 0) > 0:
-        data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
+    # 2. YOL: EVDS (TCMB) Brent Petrol Serisi Yedeği (TP.AK.BRENT)
+    if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0 and evds_key:
+        try:
+            evds_service = evdsAPI(evds_key)
+            s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+            e_evds = d_start.strftime("%d-%m-%Y")
+            evds_brent = evds_service.get_data(["TP.AK.BRENT"], startdate=s_evds, enddate=e_evds)
+            if evds_brent is not None and not evds_brent.empty:
+                val_col = [c for c in evds_brent.columns if "BRENT" in c][0]
+                s_b = pd.to_numeric(evds_brent[val_col], errors='coerce').dropna()
+                if not s_b.empty:
+                    data_dict["BRENT_PETROL"]["ilk"] = float(s_b.iloc[-1])
+        except: pass
 
     # 3. EVDS DÖVİZ VE ONS ALTIN ESKİ FİYAT YEDEKLERİ
     if data_dict["USDTRY"]["ilk"] == 0 and evds_key:
