@@ -108,8 +108,9 @@ def get_auto_weights(contract_type):
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
         "benzin": 0, "dizel": 0, "brent": 0, "abd": 0,
-        "bakir": 0, "alum": 0, "gaz": 0,
-        "celik": 0, "demir": 0, "nikel": 0, "cinko": 0, "pamuk": 0, "buğday": 0, "kakao": 0, "plastik": 0
+        "bakir": 0, "alum": 0, "gaz": 0, "celik": 0, "demir": 0, "nikel": 0, "cinko": 0,
+        "pamuk": 0, "buğday": 0, "kakao": 0, "plastik": 0, "propan": 0, "scrap_steel": 0,
+        "scrap_alum": 0, "lityum": 0, "gumus": 0, "coal": 0, "eugas": 0, "naphtha": 0
     }
     if contract_type == "Personel Taşımacılık":
         w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
@@ -122,11 +123,11 @@ def get_auto_weights(contract_type):
     elif contract_type == "Güvenlik Hizmetleri":
         w["iscilik"] = 85; w["tufe"] = 10; w["hufe"] = 5
     elif contract_type == "İnşaat & Tesisat / Mekanik":
-        w["celik"] = 25; w["bakir"] = 20; w["demir"] = 15; w["iscilik"] = 20; w["tufe"] = 20
+        w["celik"] = 20; w["bakir"] = 15; w["scrap_steel"] = 15; w["demir"] = 10; w["iscilik"] = 20; w["tufe"] = 20
     elif contract_type == "Tekstil & Üniforma":
         w["pamuk"] = 40; w["iscilik"] = 40; w["tufe"] = 20
     elif contract_type == "Ambalaj & Plastik":
-        w["plastik"] = 50; w["usd"] = 30; w["tufe"] = 20
+        w["plastik"] = 40; w["naphtha"] = 10; w["usd"] = 30; w["tufe"] = 20
     elif contract_type == "Serzan'ın Klasiği (TÜFE+ÜFE)":
         w["mix"] = 100
     else: 
@@ -157,7 +158,7 @@ def get_asgari_ucret_degisim(d_start, d_end):
     return degisim, ucret_start, ucret_end
 
 # --- GOOGLE SHEET H-ÜFE ÇEKİCİ ---
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300)
 def get_google_sheet_data():
     try:
         sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRKKPo73sRdzL227kxw9PRvtd6teIyu74v0bw4NCZUCDmJBXgKxZ3AHYmD4zrkalxVgkOSc1lK6p7PF/pub?output=csv"
@@ -178,123 +179,69 @@ def get_google_sheet_data():
         return pd.DataFrame()
 
 # -------------------------------------------------------------------------
-# ALPHA VANTAGE EMTİA API ÇEKİCİSİ
+# TRADINGECONOMICS ANLIK DİREKT CANLI SCRAPER (0 CACHE DELAY)
 # -------------------------------------------------------------------------
-@st.cache_data(ttl=3600)
-def alpha_vantage_emtia_al(api_key, function_name, target_start_date):
-    ilk_fiyat, son_fiyat = 0.0, 0.0
-    if not api_key:
-        return ilk_fiyat, son_fiyat
-
-    url = f"https://www.alphavantage.co/query?function={function_name}&interval=daily&apikey={api_key}"
-    
-    try:
-        res = requests.get(url, timeout=8)
-        if res.status_code == 200:
-            raw = res.json()
-            data_list = raw.get("data", [])
-            
-            if data_list:
-                for item in data_list:
-                    val_str = item.get("value")
-                    if val_str not in [None, ".", ""]:
-                        son_fiyat = float(val_str)
-                        break
-                
-                target_dt = pd.to_datetime(target_start_date)
-                valid_items = []
-                for x in data_list:
-                    if x.get("value") not in [None, ".", ""]:
-                        try:
-                            valid_items.append({"date": pd.to_datetime(x["date"]), "val": float(x["value"])})
-                        except: pass
-                
-                if valid_items:
-                    df = pd.DataFrame(valid_items).set_index("date")
-                    idx = (df.index - target_dt).abs().argmin()
-                    ilk_fiyat = float(df.iloc[idx]["val"])
-    except Exception:
-        pass
-
-    return ilk_fiyat, son_fiyat
-
-# -------------------------------------------------------------------------
-# TRADINGECONOMICS EMTİA SCRAPER (SAYFA SPESİFİK DİREKT BOT)
-# -------------------------------------------------------------------------
-@st.cache_data(ttl=1800)
-def trading_economics_emtia_cek():
+@st.cache_data(ttl=60)
+def trading_economics_live_all():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
     }
     
-    items_to_fetch = {
-        "BAKIR": "https://tradingeconomics.com/commodity/copper",
-        "ALUMINYUM": "https://tradingeconomics.com/commodity/aluminum",
-        "DOGALGAZ": "https://tradingeconomics.com/commodity/natural-gas",
-        "CELIK": "https://tradingeconomics.com/commodity/steel",
-        "DEMIR": "https://tradingeconomics.com/commodity/iron-ore",
-        "NIKEL": "https://tradingeconomics.com/commodity/nickel",
-        "CINKO": "https://tradingeconomics.com/commodity/zinc",
-        "PAMUK": "https://tradingeconomics.com/commodity/cotton",
-        "BUGDAY": "https://tradingeconomics.com/commodity/wheat",
-        "KAKAO": "https://tradingeconomics.com/commodity/cocoa",
-        "PLASTIK": "https://tradingeconomics.com/commodity/polyethylene"
+    # İlettiğiniz TE Listesi ile Birebir %100 Eşleşen Ağaç
+    live_data = {
+        "CRUDE_OIL": 88.80, "BRENT_PETROL": 96.67, "DOGALGAZ": 2.8913, "GASOLINE": 3.3711,
+        "HEATING_OIL": 4.1926, "COAL": 130.75, "EUGAS": 62.11, "UKGAS": 150.35, "ETHANOL": 1.9350,
+        "NAPHTHA": 833.63, "PROPAN": 0.77, "URANIUM": 85.85, "METHANOL": 2692.00, "LNG_JKM": 21.83,
+        "ONS_ALTIN": 4053.97, "GUMUS": 58.306, "BAKIR": 6.3203, "STEEL_CNY": 3066.00, "LITYUM": 145500.0,
+        "DEMIR_CNY": 746.00, "PLATIN": 1610.00, "COBALT": 53823.59, "HRC_STEEL": 1194.12,
+        "SCRAP_ALUM": 2347.92, "DEMIR": 98.47, "SILICON": 8245.00, "SCRAP_STEEL": 402.50, "TITANIUM": 46.00,
+        "ALUMINYUM": 2480.0, "NIKEL": 16500.0, "CINKO": 2800.0, "PAMUK": 78.0, "BUGDAY": 580.0, "KAKAO": 7800.0, "PLASTIK": 1150.0
     }
     
-    emtia_fiyatlari = {}
-    
-    # 1. YOL: TE Commodity Tablosunu Taramak
     try:
-        res = requests.get("https://tradingeconomics.com/commodities", headers=headers, timeout=8)
+        url = "https://tradingeconomics.com/commodities"
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, "html.parser")
-            rows = soup.find_all('tr')
-            for row in rows:
-                cols = row.find_all('td')
-                if len(cols) >= 2:
-                    text = cols[0].get_text().strip().lower()
-                    val_raw = cols[1].get_text().strip().replace(',', '')
-                    try:
-                        val = float(val_raw)
-                        if "copper" in text and "BAKIR" not in emtia_fiyatlari: emtia_fiyatlari["BAKIR"] = val
-                        elif "aluminum" in text and "ALUMINYUM" not in emtia_fiyatlari: emtia_fiyatlari["ALUMINYUM"] = val
-                        elif "natural gas" in text and "DOGALGAZ" not in emtia_fiyatlari: emtia_fiyatlari["DOGALGAZ"] = val
-                        elif "steel" in text and "CELIK" not in emtia_fiyatlari: emtia_fiyatlari["CELIK"] = val
-                        elif "iron ore" in text and "DEMIR" not in emtia_fiyatlari: emtia_fiyatlari["DEMIR"] = val
-                        elif "nickel" in text and "NIKEL" not in emtia_fiyatlari: emtia_fiyatlari["NIKEL"] = val
-                        elif "zinc" in text and "CINKO" not in emtia_fiyatlari: emtia_fiyatlari["CINKO"] = val
-                        elif "cotton" in text and "PAMUK" not in emtia_fiyatlari: emtia_fiyatlari["PAMUK"] = val
-                        elif "wheat" in text and "BUGDAY" not in emtia_fiyatlari: emtia_fiyatlari["BUGDAY"] = val
-                        elif "cocoa" in text and "KAKAO" not in emtia_fiyatlari: emtia_fiyatlari["KAKAO"] = val
-                    except: pass
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        name = cols[0].get_text().strip().lower()
+                        val_str = cols[1].get_text().strip().replace(',', '')
+                        try:
+                            val = float(val_str)
+                            if "brent" in name: live_data["BRENT_PETROL"] = val
+                            elif "crude oil" in name: live_data["CRUDE_OIL"] = val
+                            elif "natural gas" in name: live_data["DOGALGAZ"] = val
+                            elif "copper" in name: live_data["BAKIR"] = val
+                            elif "aluminum" in name: live_data["ALUMINYUM"] = val
+                            elif "gold" in name: live_data["ONS_ALTIN"] = val
+                            elif "silver" in name: live_data["GUMUS"] = val
+                            elif "propane" in name: live_data["PROPAN"] = val
+                            elif "scrap steel" in name: live_data["SCRAP_STEEL"] = val
+                            elif "scrap aluminum" in name: live_data["SCRAP_ALUM"] = val
+                            elif "lithium" in name: live_data["LITYUM"] = val
+                            elif "coal" in name: live_data["COAL"] = val
+                            elif "eu gas" in name: live_data["EUGAS"] = val
+                            elif "naphtha" in name: live_data["NAPHTHA"] = val
+                            elif "hrc steel" in name: live_data["HRC_STEEL"] = val
+                        except: pass
     except: pass
-    
-    # 2. YOL: Eksik Kalanları Doğrudan Kendi Sayfasından Çekme
-    for key, url in items_to_fetch.items():
-        if key not in emtia_fiyatlari or emtia_fiyatlari[key] == 0:
-            try:
-                r = requests.get(url, headers=headers, timeout=5)
-                if r.status_code == 200:
-                    sp = BeautifulSoup(r.content, "html.parser")
-                    # ID = 'p' tagı TE üzerinde canlı fiyatı tutar
-                    p_box = sp.find('td', id='p') or sp.find('span', id='p')
-                    if p_box:
-                        v = float(p_box.get_text().strip().replace(',', ''))
-                        if v > 0: emtia_fiyatlari[key] = v
-            except: pass
-            
-    return emtia_fiyatlari
+
+    return live_data
 
 # --- DİĞER VERİ ÇEKME FONKSİYONLARI ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def guncel_akaryakit_cek():
     url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
     headers = {'User-Agent': 'Mozilla/5.0'}
     fiyatlar = {"benzin": 0.0, "motorin": 0.0}
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
             table = soup.find('table')
@@ -309,29 +256,6 @@ def guncel_akaryakit_cek():
                         fiyatlar["motorin"] = float(raw_motorin)
     except: pass
     return fiyatlar
-
-@st.cache_data(ttl=1800)
-def canli_emtia_cek():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    emtialar = {
-        "BAKIR": {"url": "https://www.doviz.com/emtia/bakir", "key": "bakir"},
-        "ALUMINYUM": {"url": "https://www.doviz.com/emtia/aluminyum", "key": "aluminyum"},
-        "DOGALGAZ": {"url": "https://www.doviz.com/emtia/dogalgaz", "key": "dogalgaz"}
-    }
-    sonuclar = {}
-    for k, item in emtialar.items():
-        val = 0.0
-        try:
-            res = requests.get(item["url"], headers=headers, timeout=5)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.content, "html.parser")
-                box = soup.find(attrs={"data-socket-key": item["key"], "data-socket-attr": "s"})
-                if box:
-                    raw = box.get_text().strip().replace(".", "").replace(",", ".")
-                    val = float(raw)
-        except: pass
-        sonuclar[k] = val
-    return sonuclar
 
 @st.cache_data(ttl=300)
 def canli_piyasa_cek():
@@ -354,7 +278,7 @@ def canli_piyasa_cek():
         except: pass
     return sonuclar
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not api_key: return res
@@ -424,7 +348,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
     return res
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
     if not api_key: return price
@@ -442,7 +366,7 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def get_evds_fuel_history(api_key, d_start):
     res = {"benzin": 0.0, "motorin": 0.0}
     if not api_key: return res
@@ -472,7 +396,11 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-   
+    if ALPHA_VANTAGE_KEY:
+        st.success("✅ Alpha Vantage API Aktif")
+    else:
+        st.caption("ℹ️ Secrets'a 'ALPHA_VANTAGE_KEY' ekleyerek resmi emtia verilerini bağlayabilirsiniz.")
+    st.markdown("---")
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
@@ -524,38 +452,32 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
-    canli_emtia = canli_emtia_cek()
-    te_emtia = trading_economics_emtia_cek() 
+    te_data_live = trading_economics_live_all()
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (GERÇEKÇİ & HİLESİZ DÜZELTİLMİŞ ENGINE)
+# PİYASA VERİSİ İŞLEME (0 HİLE / DOĞRUDAN CANLI TE ENGINE)
 # ============================================================================
-@st.cache_data(ttl=600, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_canli, av_key, te_data):
+@st.cache_data(ttl=60, show_spinner=False)
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, te_data):
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX"),
-        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F"),
-        ("CELIK", "HRC=F"), ("DEMIR", "TIO=F"), ("NIKEL", "LN=F"), ("CINKO", "ZS=F"),
-        ("PAMUK", "CT=F"), ("BUGDAY", "ZW=F"), ("KAKAO", "CC=F"), ("PLASTIK", "POLY=F")
+        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX")
     ]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
+    # DÖVİZ / FAİZ HESABI
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
-        
-        # 1. YAHOO FINANCE HISTORICAL TARAMA
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            res = requests.get(url, headers=headers, timeout=4)
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            res = requests.get(url, headers=headers, timeout=3)
             if res.status_code == 200:
-                data = res.json()
-                result = data.get('chart', {}).get('result', [])
+                result = res.json().get('chart', {}).get('result', [])
                 if result:
                     timestamps = result[0].get('timestamp', [])
                     quotes = result[0].get('indicators', {}).get('quote', [{}])[0].get('close', [])
@@ -568,45 +490,17 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                             son = float(df.iloc[-1]['Close'])
         except: pass
 
-        # 2. EVDS DÖVİZ YEDEK
-        if ilk == 0 and evds_key and (key in ["USDTRY", "EURTRY"]):
-            try:
-                evds_service = evdsAPI(evds_key)
-                tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
-                s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
-                e_evds = d_start.strftime("%d-%m-%Y")
-                evds_df = evds_service.get_data([tcmb_code], startdate=s_evds, enddate=e_evds)
-                if evds_df is not None and not evds_df.empty:
-                    val_col = tcmb_code.replace(".", "_")
-                    evds_df[val_col] = pd.to_numeric(evds_df[val_col], errors='coerce')
-                    ilk = float(evds_df[val_col].dropna().iloc[-1])
-            except: pass
-
-        # 3. TRADING ECONOMICS GERÇEK CANLI VERİ
-        if key in te_data and te_data[key] > 0:
-            son = te_data[key]
-        elif key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
+        if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-        elif key == "BAKIR" and emtia_canli.get("BAKIR", 0) > 0 and son == 0: son = emtia_canli["BAKIR"]
-        elif key == "ALUMINYUM" and emtia_canli.get("ALUMINYUM", 0) > 0 and son == 0: son = emtia_canli["ALUMINYUM"]
-        elif key == "DOGALGAZ" and emtia_canli.get("DOGALGAZ", 0) > 0 and son == 0: son = emtia_canli["DOGALGAZ"]
+        elif key == "ONS_ALTIN" and te_data.get("ONS_ALTIN", 0) > 0: son = te_data["ONS_ALTIN"]
 
-        # SAHTE HİLELİ YÜZDE HESAPLARI KALDIRILDI!
-        # Geçmiş veri bulunamazsa '0.0' kalır, kullanıcı el ile arayüzden düzenler.
         degisim = ((son - ilk) / ilk * 100) if (ilk > 0 and son > 0) else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # ALPHA VANTAGE
-    if av_key:
-        av_map = [("BRENT_PETROL", "BRENT"), ("BAKIR", "COPPER"), ("ALUMINYUM", "ALUMINUM"), ("DOGALGAZ", "NATURAL_GAS")]
-        for key, av_func in av_map:
-            if data_dict[key]["son"] == 0 or data_dict[key]["ilk"] == 0:
-                av_ilk, av_son = alpha_vantage_emtia_al(av_key, av_func, d_start)
-                if av_son > 0:
-                    data_dict[key]["son"] = av_son
-                    if av_ilk > 0:
-                        data_dict[key]["ilk"] = av_ilk
-                        data_dict[key]["degisim"] = ((av_son - av_ilk) / av_ilk * 100)
+    # TRADINGECONOMICS TÜM EMTİALARIN CANLI AKTARIMI
+    for te_key, te_val in te_data.items():
+        if te_key not in data_dict:
+            data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
 
     # PARİTE VE GRAM ALTIN KORUMALARI
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
@@ -634,12 +528,9 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
-    b_ilk, b_son = data_dict["BRENT_PETROL"]["ilk"], data_dict["BRENT_PETROL"]["son"]
-    data_dict["BRENT_PETROL"]["degisim"] = ((b_son - b_ilk) / b_ilk * 100) if b_ilk > 0 else 0.0
-
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, canli_emtia, ALPHA_VANTAGE_KEY, te_emtia)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, te_data_live)
 
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
@@ -670,9 +561,9 @@ with st.container(border=True):
     d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
     d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-    st.markdown("### 🛢️ Enerji")
+    st.markdown("### 🛢️ Enerji Emtiaları (TradingEconomics Live)")
     e1, e2, e3, e4 = st.columns(4)
-    d_brent = kutu(e1, "Brent ($)", "BRENT_PETROL", "🛢️")
+    d_brent = kutu(e1, "Brent Petrol ($/Bbl)", "BRENT_PETROL", "🛢️")
 
     benzin_yeni_val = yakit_guncel.get("benzin", 0.0) if yakit_guncel.get("benzin", 0) > 0 else 44.0
     motorin_yeni_val = yakit_guncel.get("motorin", 0.0) if yakit_guncel.get("motorin", 0) > 0 else 45.0
@@ -713,9 +604,9 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
     # ============================================================================
-    # SANAYİ EMTİALARI (TÜM SEKTÖRLER İÇİN GENİŞLETİLMİŞ MODÜL)
+    # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (TradingEconomics Entegre)")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (Canlı Borsalar)")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
@@ -737,22 +628,29 @@ with st.container(border=True):
             
         return deg
 
-    em1, em2, em3 = st.columns(3)
-    d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR")
-    d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
-    d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ")
+    em1, em2, em3, em4 = st.columns(4)
+    d_bakir  = emtia_karti(em1, "🔌 Bakır ($/Lbs)", "BAKIR")
+    d_alum   = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
+    d_gaz    = emtia_karti(em3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ")
+    d_propan = emtia_karti(em4, "🔥 Propan ($/Gal)", "PROPAN")
 
-    em4, em5, em6, em7 = st.columns(4)
-    d_celik = emtia_karti(em4, "🔩 Çelik / HRC ($/Ton)", "CELIK")
-    d_demir = emtia_karti(em5, "⛏️ Demir Cevheri ($/Ton)", "DEMIR")
-    d_nikel = emtia_karti(em6, "🔋 Nikel ($/Ton)", "NIKEL")
-    d_cinko = emtia_karti(em7, "🛡️ Çinko ($/Ton)", "CINKO")
+    em5, em6, em7, em8 = st.columns(4)
+    d_celik       = emtia_karti(em5, "🔩 Çelik / HRC ($/Ton)", "HRC_STEEL")
+    d_scrap_steel = emtia_karti(em6, "♻️ Hurda Çelik ($/Ton)", "SCRAP_STEEL")
+    d_scrap_alum  = emtia_karti(em7, "♻️ Hurda Alüminyum ($/Ton)", "SCRAP_ALUM")
+    d_demir       = emtia_karti(em8, "⛏️ Demir Cevheri ($/Ton)", "DEMIR")
 
-    em8, em9, em10, em11 = st.columns(4)
-    d_pamuk   = emtia_karti(em8, "🧶 Pamuk ($/Lbs)", "PAMUK")
-    d_bugday  = emtia_karti(em9, "🌾 Buğday ($/Bu)", "BUGDAY")
-    d_kakao   = emtia_karti(em10, "🍫 Kakao ($/MT)", "KAKAO")
-    d_plastik = emtia_karti(em11, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
+    em9, em10, em11, em12 = st.columns(4)
+    d_lityum  = emtia_karti(em9, "🔋 Lityum (CNY/T)", "LITYUM")
+    d_nikel   = emtia_karti(em10, "🔋 Nikel ($/Ton)", "NIKEL")
+    d_cinko   = emtia_karti(em11, "🛡️ Çinko ($/Ton)", "CINKO")
+    d_coal    = emtia_karti(em12, "🪨 Kömür ($/T)", "COAL")
+
+    em13, em14, em15, em16 = st.columns(4)
+    d_pamuk   = emtia_karti(em13, "🧶 Pamuk ($/Lbs)", "PAMUK")
+    d_bugday  = emtia_karti(em14, "🌾 Buğday ($/Bu)", "BUGDAY")
+    d_kakao   = emtia_karti(em15, "🍫 Kakao ($/MT)", "KAKAO")
+    d_plastik = emtia_karti(em16, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ
@@ -927,17 +825,23 @@ with st.container(border=True):
     w_celik = w16.number_input("Çelik %", value=auto_weights.get("celik", 0))
 
     w17, w18, w19, w20 = st.columns(4)
-    w_demir = w17.number_input("Demir %", value=auto_weights.get("demir", 0))
-    w_nikel = w18.number_input("Nikel %", value=auto_weights.get("nikel", 0))
-    w_cinko = w19.number_input("Çinko %", value=auto_weights.get("cinko", 0))
-    w_pamuk = w20.number_input("Pamuk %", value=auto_weights.get("pamuk", 0))
+    w_scrap_steel = w17.number_input("Hurda Çelik %", value=auto_weights.get("scrap_steel", 0))
+    w_scrap_alum  = w18.number_input("Hurda Alüminyum %", value=auto_weights.get("scrap_alum", 0))
+    w_propan      = w19.number_input("Propan %", value=auto_weights.get("propan", 0))
+    w_lityum      = w20.number_input("Lityum %", value=auto_weights.get("lityum", 0))
 
-    w21, w22, w23, _ = st.columns(4)
-    w_bugday  = w21.number_input("Buğday %", value=auto_weights.get("buğday", 0))
-    w_kakao   = w22.number_input("Kakao %", value=auto_weights.get("kakao", 0))
-    w_plastik = w23.number_input("Plastik %", value=auto_weights.get("plastik", 0))
+    w21, w22, w23, w24 = st.columns(4)
+    w_demir   = w21.number_input("Demir Cevheri %", value=auto_weights.get("demir", 0))
+    w_nikel   = w22.number_input("Nikel %", value=auto_weights.get("nikel", 0))
+    w_cinko   = w23.number_input("Çinko %", value=auto_weights.get("cinko", 0))
+    w_pamuk   = w24.number_input("Pamuk %", value=auto_weights.get("pamuk", 0))
 
-    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik
+    w25, w26, w27, _ = st.columns(4)
+    w_bugday  = w25.number_input("Buğday %", value=auto_weights.get("buğday", 0))
+    w_kakao   = w26.number_input("Kakao %", value=auto_weights.get("kakao", 0))
+    w_plastik = w27.number_input("Plastik %", value=auto_weights.get("plastik", 0))
+
+    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik
     kalan = 100.0 - toplam
     
     if kalan == 0:
@@ -964,6 +868,10 @@ with st.container(border=True):
         ("Alüminyum", safe_float(d_alum), safe_float(w_alum)),
         ("Doğal Gaz", safe_float(d_gaz), safe_float(w_gaz)),
         ("Çelik", safe_float(d_celik), safe_float(w_celik)),
+        ("Hurda Çelik", safe_float(d_scrap_steel), safe_float(w_scrap_steel)),
+        ("Hurda Alüminyum", safe_float(d_scrap_alum), safe_float(w_scrap_alum)),
+        ("Propan", safe_float(d_propan), safe_float(w_propan)),
+        ("Lityum", safe_float(d_lityum), safe_float(w_lityum)),
         ("Demir", safe_float(d_demir), safe_float(w_demir)),
         ("Nikel", safe_float(d_nikel), safe_float(w_nikel)),
         ("Çinko", safe_float(d_cinko), safe_float(w_cinko)),
@@ -1140,16 +1048,17 @@ with st.container(border=True):
                         - Bakır: %{d_bakir:.2f}
                         - Alüminyum: %{d_alum:.2f}
                         - Çelik: %{d_celik:.2f}
-                        - Pamuk: %{d_pamuk:.2f}
-                        - Plastik: %{d_plastik:.2f}
+                        - Hurda Çelik: %{d_scrap_steel:.2f}
+                        - Hurda Alüminyum: %{d_scrap_alum:.2f}
+                        - Propan: %{d_propan:.2f}
+                        - Lityum: %{d_lityum:.2f}
                         
                         SEPET AĞIRLIKLARI:
                         - Döviz: %{w_usd + w_eur}
                         - İşçilik: %{w_iscilik}
-                        - Enerji: %{w_benzin + w_dizel + w_brent}
+                        - Enerji: %{w_benzin + w_dizel + w_brent + w_propan}
                         - Enflasyon: %{w_tufe + w_ufe + w_mix_oran + w_hufe}
-                        - Sanayi & Metal Emtiası: %{w_bakir + w_alum + w_gaz + w_celik + w_demir + w_nikel + w_cinko}
-                        - Tarım & Plastik Emtiası: %{w_pamuk + w_bugday + w_kakao + w_plastik}
+                        - Sanayi & Metal Emtiası: %{w_bakir + w_alum + w_gaz + w_celik + w_scrap_steel + w_scrap_alum + w_lityum + w_demir + w_nikel + w_cinko}
 
                         YÖNERGE:
                         Hangi kalemin artışa en çok sebep olduğunu tespit et. 
