@@ -101,7 +101,7 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- SÖZLEŞME AĞIRLIK MANTIĞI (GENİŞLETİLMİŞ) ---
+# --- SÖZLEŞME AĞIRLIK MANTIĞI (TÜM EMTİALAR DAHİL) ---
 def get_auto_weights(contract_type):
     w = {
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0, "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
@@ -271,7 +271,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
         
         calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
-        res.update({ "TUFE": round(calc(t_end, t_start), 2), "UFE": round(calc(u_end, u_start), 2), "HUFE": round(calc(h_end, h_start), 2), "Status": True, "Msg": "EVDS Bağlantısı Başarılı" })
+        res.update({ "TUFE": round(calc(t_end, t_start), 2), "UFE": round(calc(u_end, u_start), 2), "HUFE": round(calc(h_end, h_start), 2), "Status": True, "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0] if not row_start.empty else '?'} - {row_end['Tarih'].values[0] if not row_end.empty else '?'}" })
     except: pass
     return res
 
@@ -397,7 +397,8 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                 tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
                 evds_df = evds_service.get_data([tcmb_code], startdate=(d_start - timedelta(days=10)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
                 if evds_df is not None and not evds_df.empty:
-                    ilk = float(pd.to_numeric(evds_df[tcmb_code.replace(".", "_")], errors='coerce').dropna().iloc[-1])
+                    val_col = tcmb_code.replace(".", "_")
+                    ilk = float(pd.to_numeric(evds_df[val_col], errors='coerce').dropna().iloc[-1])
             except: pass
 
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
@@ -444,7 +445,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
 
     gold_ilk = evds_gold_start
     if gold_ilk <= 0 and data_dict.get("ONS_ALTIN", {}).get("ilk", 0) > 0 and data_dict.get("USDTRY", {}).get("ilk", 0) > 0:
-        gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk']"
+        gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
 
     gold_son = live_data.get("ALTIN", 0)
     if gold_son <= 0 and data_dict.get("ONS_ALTIN", {}).get("son", 0) > 0 and data_dict.get("USDTRY", {}).get("son", 0) > 0:
@@ -536,7 +537,6 @@ with st.container(border=True):
         d_dizel = ((m_yeni-m_eski)/m_eski)*100 if m_eski > 0 else 0
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
-
     st.markdown("### 🏗️ Endüstriyel & Değerli Metaller")
     m1, m2, m3 = st.columns(3)
     d_bakir = emtia_karti(m1, "🔌 Bakır ($/lb)", "BAKIR", 4.10, 4.35)
@@ -547,7 +547,6 @@ with st.container(border=True):
     d_platin = emtia_karti(m4, "💍 Platin ($/oz)", "PLATIN", 980.0, 1020.0)
     d_paladyum = emtia_karti(m5, "🔋 Paladyum ($/oz)", "PALADYUM", 950.0, 990.0)
     kutu(m6, "ABD 10Y Tahvil", "ABD_TAHVIL", "🇺🇸")
-
 
     st.markdown("### 🌾 Tarım & Soft Emtialar")
     t1, t2, t3 = st.columns(3)
@@ -637,7 +636,7 @@ with st.container(border=True):
     tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=((val_tufe+val_ufe)/2), key=f"mix_{d_key}")
-    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}")
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}")
     iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
 
@@ -772,26 +771,56 @@ with st.container(border=True):
 st.markdown("---")
 with st.container(border=True):
     st.markdown("### 🤖 Jarvis Finansal Yorumu")
-    if st.button("🧠 Yapay Zeka ile Analiz Et"):
-        if GEMINI_API_KEY:
-            try:
-                genai.configure(api_key=GEMINI_API_KEY)
-                model = genai.GenerativeModel("gemini-2.5-flash")
-                aktif_etkiler = [f"- {e[0]}: Değişim %{e[1]:.2f}, Ağırlık %{e[2]:.2f}" for e in etkiler if e[2] > 0]
-                etki_str = "\n".join(aktif_etkiler)
-                
-                prompt = f"""
-                Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis). Kullanıcıya 'Sir' de.
-                Aşağıdaki genişletilmiş emtia ve piyasa verilerini analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
-                
-                VERİLER:
-                - Toplam Fiyat Artışı: %{zam:.2f}
-                - Eski Tutar: {tr_fmt(sozlesme_tutari)} TL
-                - Yeni Tutar: {tr_fmt(yeni)} TL
-                
-                SEPETİ ETKİLEYEN KALEMLER:
-                {etki_str}
-                """
-                st.markdown(model.generate_content(prompt).text)
-            except Exception as e: st.error(f"Hata: {str(e)}")
-        else: st.error("Gemini API Key bulunamadı.")
+    
+    col_j1, col_j2 = st.columns([1, 4])
+    
+    risk_durumu = "Yüksek" if zam > 20 else "Düşük"
+    with col_j1:
+        st.metric("Risk Skoru", risk_durumu, delta="Dikkat" if zam > 20 else "Stabil", delta_color="inverse")
+
+    with col_j2:
+        if st.button("🧠 Yapay Zeka ile Analiz Et"):
+            if not GEMINI_API_KEY:
+                st.error("⚠️ API Anahtarı Bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
+            else:
+                with st.spinner("Jarvis (Gemini 2.5 Flash) verileri işliyor..."):
+                    try:
+                        genai.configure(api_key=GEMINI_API_KEY)
+                        model_name = "gemini-2.5-flash" 
+                        
+                        aktif_etkiler = [f"- {e[0]}: Değişim %{e[1]:.2f}, Ağırlık %{e[2]:.2f}" for e in etkiler if e[2] > 0]
+                        etki_str = "\n".join(aktif_etkiler)
+                        
+                        prompt = f"""
+                        Sen TAV Havalimanları Holding standartlarında çalışan kıdemli bir Satın Alma Yöneticisi ve Finansal Danışmansın (Jarvis).
+                        Aşağıdaki verileri analiz ederek, sözleşmedeki fiyat artışının temel sebeplerini ve riskleri 3-4 cümle ile özetle.
+                        
+                        Kullanıcıya "Sir" diye hitap et. Profesyonel, net ve kurumsal bir dil kullan.
+
+                        VERİLER:
+                        - Sözleşme Tipi: {sozlesme_tipi}
+                        - Toplam Fiyat Artışı: %{zam:.2f}
+                        - Eski Tutar: {tr_fmt(sozlesme_tutari)} TL
+                        - Yeni Tutar: {tr_fmt(yeni)} TL
+                        - SEPET TOPLAM KONTROL: %{toplam}
+                        
+                        SEPETİ ETKİLEYEN AKTİF KALEMLER:
+                        {etki_str}
+
+                        YÖNERGE:
+                        Hangi kalemin artışa en çok sebep olduğunu tespit et. 
+                        Eğer artış piyasa ortalamasının üzerindeyse uyar, altındaysa "başarılı bir hedging" olduğunu belirt.
+                        Sonuçları akıcı bir paragraf olarak sun.
+                        """
+                        
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content(prompt)
+                        
+                        st.success(f"Analiz Tamamlandı (Motor: {model_name})")
+                        st.markdown(response.text)
+                        
+                    except Exception as e:
+                        st.error(f"Bir hata oluştu: {str(e)}")
+                        st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
+        else:
+            st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
