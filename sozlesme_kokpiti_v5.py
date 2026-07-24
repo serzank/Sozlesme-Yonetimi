@@ -342,6 +342,7 @@ def guncel_akaryakit_cek():
     return fiyatlar
 
 # --- ENDEKS BAZLI NET HESAPLAMA MOTORU ---
+# --- İNDİS TABANLI KUSURSUZ ENDEKS HESAPLAMA MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -349,7 +350,6 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        # Geniş tarih aralığıyla endeks tablosunu çekiyoruz
         s_q = (start_date - relativedelta(months=48)).replace(day=1).strftime("%d-%m-%Y")
         e_q = (datetime.today() + relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
 
@@ -367,7 +367,6 @@ def get_tcmb_data(api_key, start_date, end_date):
 
         value_cols = [c for c in raw_df.columns if c != tarih_col]
 
-        # Temiz DataFrame oluşturma ve endeksleri sayısal değere çevirme
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
         
@@ -378,23 +377,31 @@ def get_tcmb_data(api_key, start_date, end_date):
         if len(value_cols) >= 3:
             df_clean['HUFE_COL'] = pd.to_numeric(raw_df[value_cols[2]].astype(str).str.replace(',', '.'), errors='coerce')
 
-        df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
+        df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt').ffill()
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
-
-        # Eksik endeksleri bir önceki aya göre doldur (forward fill)
-        df_clean = df_clean.ffill()
 
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # Başlangıç ve Bitiş aylarındaki endeks satırlarını bulma
-        row_s_df = df_clean[df_clean['Period'] <= p_start]
-        start_row = row_s_df.iloc[-1] if not row_s_df.empty else df_clean.iloc[0]
+        # 1. Başlangıç Satırı: p_start tarihine en yakın önceki/eşit ay
+        matches_s = df_clean[df_clean['Period'] <= p_start]
+        start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
 
-        row_e_df = df_clean[df_clean['Period'] <= p_end]
-        latest_row = row_e_df.iloc[-1] if not row_e_df.empty else df_clean.iloc[-1]
+        # 2. Bitiş Satırı: p_end tarihine en yakın önceki/eşit ay
+        matches_e = df_clean[df_clean['Period'] <= p_end]
+        latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
-        # Doğrudan Endeks Formülü: ((Güncel Endeks / Başlangıç Endeksi) - 1) * 100
+        # EĞİLER HATAEN AYNI SATIR SEÇİLDİYSE (Çakışma varsa): Doğru aralığı yakalamak için endeks pozisyonuna başvur
+        if start_row['Period'] == latest_row['Period'] and len(df_clean) > 1:
+            # Başlangıç indexini bul
+            idx_list = df_clean[df_clean['Period'] <= p_start].index
+            if len(idx_list) > 0:
+                s_idx = idx_list[-1]
+                # Periyoda göre kaç ay ileri gideceğimizi hesapla (Örn: 3 ay, 6 ay vb.)
+                months_diff = (p_end.year - p_start.year) * 12 + (p_end.month - p_start.month)
+                target_e_idx = min(s_idx + max(months_diff, 1), len(df_clean) - 1)
+                latest_row = df_clean.loc[target_e_idx]
+
         def calc_index_diff(col_name):
             if col_name in df_clean.columns:
                 v_start = safe_float(start_row[col_name])
