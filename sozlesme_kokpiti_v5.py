@@ -632,7 +632,6 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
-    data_dict = {}
 
 st.write("FRED KEY:", fred_key)
 st.write("Euro:", get_global_inflation_change(
@@ -648,6 +647,7 @@ st.write("ABD:", get_global_inflation_change(
     start_date,
     end_date
 ))
+    data_dict = {}
 
     fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
     for k_fx, ticker_code in fx_map.items():
@@ -688,8 +688,8 @@ st.write("ABD:", get_global_inflation_change(
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
     # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
-    euro_enf_val = get_global_inflation_change(fred_key, "CP0000EZ19M086NEST", start_date, end_date) if FRED_API_KEY else 0.0
-    abd_cpi_val = get_global_inflation_change(fred_key, "CPIAUCSL", start_date, end_date) if FRED_API_KEY else 0.0
+    euro_enf_val = get_global_inflation_change(fred_key, "CP0000EZ19M086NEST", start_date, end_date) if fred_key else 0.0
+    abd_cpi_val = get_global_inflation_change(fred_key, "CPIAUCSL", start_date, end_date) if fred_key else 0.0
 
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
