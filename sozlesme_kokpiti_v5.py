@@ -170,11 +170,11 @@ def emtia_karti(col, baslik, key):
 
 # --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
 @st.cache_data(ttl=3600)
-def get_fred_index_change(api_key, series_id, target_start_date):
+def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
     if not api_key:
         return 0.0
     try:
-        s_date = (target_start_date - timedelta(days=240)).strftime("%Y-%m-%d")
+        s_date = (target_start_date - timedelta(days=60)).strftime("%Y-%m-%d")
         e_date = datetime.today().strftime("%Y-%m-%d")
         url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
         res = requests.get(url, timeout=5)
@@ -189,13 +189,17 @@ def get_fred_index_change(api_key, series_id, target_start_date):
                     except: pass
             if valid:
                 df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
+                
+                # Başlangıç tarihindeki endeks değeri
                 past_df = df[df.index <= pd.Timestamp(target_start_date)]
                 val_start = float(past_df.iloc[-1]["Value"]) if not past_df.empty else float(df.iloc[0]["Value"])
-                val_latest = float(df.iloc[-1]["Value"])
+                
+                # Bitiş (güncel) tarihindeki endeks değeri
+                latest_df = df[df.index <= pd.Timestamp(target_end_date)]
+                val_latest = float(latest_df.iloc[-1]["Value"]) if not latest_df.empty else float(df.iloc[-1]["Value"])
                 
                 if val_start > 0:
-                    pct_change = ((val_latest - val_start) / val_start) * 100
-                    return pct_change
+                    return round(((val_latest - val_start) / val_start) * 100, 2)
     except: pass
     return 0.0
 
@@ -659,6 +663,10 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
+
+    # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
+    euro_enf_val = get_global_inflation_change(FRED_API_KEY, "CP0000EZ19M086NEST", start_date, end_date) if FRED_API_KEY else 0.0
+    abd_cpi_val = get_global_inflation_change(FRED_API_KEY, "CPIAUCSL", start_date, end_date) if FRED_API_KEY else 0.0
 
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
@@ -1198,7 +1206,11 @@ with st.container(border=True):
     w_plastik = w27.number_input("Plastik %", key="w_plastik")
     w_jet_fuel = w28.number_input("Jet A-1 %", key="w_jet_fuel")
 
-    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik+w_jet_fuel
+    w29, w30, _, _ = st.columns(4)
+    w_euro_enf = w29.number_input("Avrupa Enf. (HICP) %", value=0.0, key="w_euro_enf")
+    w_abd_enf_new = w30.number_input("ABD CPI Enf. %", value=0.0, key="w_abd_enf")
+
+    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik+w_jet_fuel+w_euro_enf+w_abd_enf_new
     kalan = 100.0 - toplam
     
     if kalan == 0:
@@ -1221,6 +1233,8 @@ with st.container(border=True):
         ("Motorin", safe_float(d_dizel), safe_float(w_dizel)), 
         ("Brent", safe_float(d_brent), safe_float(w_brent)), 
         ("Jet A-1 Yakıt", safe_float(d_jet), safe_float(w_jet_fuel)),
+        ("Avrupa Enf. (HICP)", safe_float(euro_enf_val), safe_float(w_euro_enf)),
+        ("ABD CPI Enf.", safe_float(abd_cpi_val), safe_float(w_abd_enf_new)),
         ("ABD Enf", safe_float(abd_enf), safe_float(w_abd)),
         ("Bakır", safe_float(d_bakir), safe_float(w_bakir)),
         ("Alüminyum", safe_float(d_alum), safe_float(w_alum)),
