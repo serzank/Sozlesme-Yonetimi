@@ -437,6 +437,9 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         matches_e = df_clean[df_clean['Period'] <= p_end]
         latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
+        v_start = float(start_row["TUFE_COL"])
+        v_end = float(latest_row["TUFE_COL"])
+
         
         if v_start > 0 and v_end > 0:
             res.update({
