@@ -343,53 +343,56 @@ def guncel_akaryakit_cek():
 
 # --- AKILLI DÖNEM BAZLI (PERIOD MATCHING) ZIRHLI TCMB TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
+@st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
         
-        # Geniş tarih penceresi ile veriyi çek
-        s_q = (start_date - relativedelta(months=24)).replace(day=1).strftime("%d-%m-%Y")
+        # Geniş tarih aralığı
+        s_q = (start_date - relativedelta(months=36)).replace(day=1).strftime("%d-%m-%Y")
         e_q = (datetime.today() + relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         raw_df = evds_service.get_data(series, startdate=s_q, enddate=e_q)
         if raw_df is None or raw_df.empty:
-            res["Msg"] = "EVDS bağlantısı kuruldu ancak veri dönmedi."
+            res["Msg"] = "EVDS'den veri dönmedi."
             return res
             
-        clean_cols = {}
+        # Sütunları net olarak map ediyoruz
+        cols_map = {}
         for c in raw_df.columns:
-            if "FG_J0" in c or "FG.J0" in c: clean_cols[c] = "TUFE_COL"
-            elif "TUFE1YI" in c: clean_cols[c] = "UFE_COL"
-            elif "HKFE01" in c: clean_cols[c] = "HUFE_COL"
-            elif "Tarih" in c: clean_cols[c] = "Tarih_Raw"
-        raw_df = raw_df.rename(columns=clean_cols)
+            c_upper = c.upper()
+            if "FG" in c_upper or "J0" in c_upper: cols_map[c] = "TUFE_COL"
+            elif "TUFE1YI" in c or "YI" in c_upper: cols_map[c] = "UFE_COL"
+            elif "HKFE01" in c: cols_map[c] = "HUFE_COL"
+            elif "TARIH" in c_upper: cols_map[c] = "Tarih_Raw"
+            
+        raw_df = raw_df.rename(columns=cols_map)
 
         if 'Tarih_Raw' in raw_df.columns:
             raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih_Raw'], errors='coerce')
             raw_df = raw_df.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
             
-            # Sayısal dönüştürme ve virgül/nokta temizliği
+            # Sayısal dönüştürme ve virgül temizliği
             for c in ["TUFE_COL", "UFE_COL", "HUFE_COL"]:
                 if c in raw_df.columns:
                     raw_df[c] = raw_df[c].astype(str).str.replace(',', '.')
                     raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
             
-            # YIL-AY (Period) eşleştirmesi
+            raw_df = raw_df.ffill()
             raw_df['Period'] = raw_df['Tarih_Dt'].dt.to_period('M')
             
             p_start = pd.Period(start_date, freq='M')
             p_end = pd.Period(end_date, freq='M')
             
-            # 1. BAŞLANGIÇ AYI EŞLEŞTİRME
-            row_s_df = raw_df[raw_df['Period'] <= p_start]
-            start_row = row_s_df.iloc[-1] if not row_s_df.empty else raw_df.iloc[0]
-
-            # 2. BİTİŞ AYI EŞLEŞTİRME (Kullanıcının seçtiği end_date dikkate alınıyor!)
+            # Bitiş ve başlangıç satırlarını net seçme
             row_e_df = raw_df[raw_df['Period'] <= p_end]
             latest_row = row_e_df.iloc[-1] if not row_e_df.empty else raw_df.iloc[-1]
+
+            row_s_df = raw_df[raw_df['Period'] <= p_start]
+            start_row = row_s_df.iloc[-1] if not row_s_df.empty else raw_df.iloc[0]
 
             def calc_diff(col_name):
                 if col_name in raw_df.columns:
@@ -407,7 +410,7 @@ def get_tcmb_data(api_key, start_date, end_date):
                 "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
             })
     except Exception as e: 
-        res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
+        res["Msg"] = f"EVDS Hatası: {str(e)}"
     return res
 
 @st.cache_data(ttl=600)
