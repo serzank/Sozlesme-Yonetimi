@@ -1126,7 +1126,7 @@ with st.container(border=True):
     w_cinko   = w23.number_input("Çinko %", value=auto_weights.get("cinko", 0))
     w_pamuk   = w24.number_input("Pamuk %", value=auto_weights.get("pamuk", 0))
 
-    w25, w26, w27, _ = st.columns(4)
+    w25, w26, w27, w28 = st.columns(4)
     w_bugday  = w25.number_input("Buğday %", value=auto_weights.get("buğday", 0))
     w_kakao   = w26.number_input("Kakao %", value=auto_weights.get("kakao", 0))
     w_plastik = w27.number_input("Plastik %", value=auto_weights.get("plastik", 0))
