@@ -165,9 +165,7 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
     if not sheet_url: return res
     try:
         df_raw = pd.read_csv(sheet_url)
-        if df_raw.empty:
-            res["Msg"] = "Sheet verisi boş."
-            return res
+        if df_raw.empty: return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
@@ -178,7 +176,6 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
         
-        # Görünmeyen karakterleri, boşlukları ve format bozukluklarını temizleyen gelişmiş temizlik
         cleaned_vals = (
             df_raw[tufe_col]
             .astype(str)
@@ -188,16 +185,9 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
             .str.replace(',', '.', regex=False)
         )
         df_clean['TUFE_COL'] = pd.to_numeric(cleaned_vals, errors='coerce')
-        
         df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
-        
-        # Kritik Kontrol: Dönüşen veriyi ve son satırları görelim
-        st.write("--- DF_CLEAN TAIL KONTROLÜ ---")
-        st.write(df_clean.tail())
 
-        if df_clean.empty:
-            res["Msg"] = "Tarih veya TÜFE değerleri sayısal formata çevrilemedi (Hepsi NaN oldu)."
-            return res
+        if df_clean.empty: return res
 
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
@@ -210,22 +200,29 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         matches_e = df_clean[df_clean['Period'] <= p_end]
         latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
-        v_start = safe_float(start_row['TUFE_COL'])
-        v_end = safe_float(latest_row['TUFE_COL'])
+        # safe_float KULLANMADAN DOĞRUDAN TİP KONTROLÜ VE DÖNÜŞÜM
+        st.write("Tip Kontrolü -> Başlangıç:", type(start_row["TUFE_COL"]), start_row["TUFE_COL"])
+        st.write("Tip Kontrolü -> Bitiş:", type(latest_row["TUFE_COL"]), latest_row["TUFE_COL"])
 
-        st.write(f"Bulunan Değerler -> v_start: {v_start} | v_end: {v_end}")
+        v_start = float(start_row['TUFE_COL'])
+        v_end = float(latest_row['TUFE_COL'])
+
+        st.write(f"Saf Float Değerler -> v_start: {v_start} | v_end: {v_end}")
 
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
+            st.error(f"Hesaplanan tufe_diff = {tufe_diff}")
+            
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
                 "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
             })
+            st.error(f"Dönen Sözlük res: {res}")
         else:
-            res["Msg"] = f"Değerler sıfır çıktı: v_start={v_start}, v_end={v_end}"
+            res["Msg"] = f"Değerler sıfır: v_start={v_start}, v_end={v_end}"
     except Exception as e:
-        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
+        res["Msg"] = f"Kritik Hata: {str(e)}"
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
