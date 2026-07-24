@@ -691,6 +691,27 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
+    # --- ABD 10 YILLIK TAHVİL FAİZİ (FRED: DGS10) ---
+    if fred_key and data_dict.get("ABD_TAHVIL", {}).get("son", 0) == 0:
+        try:
+            pct_tnx = get_fred_index_change(fred_key, "DGS10", d_start)
+            # FRED serisinin son değerini almak için API çağrısı
+            url_tnx = f"https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&api_key={fred_key}&file_type=json&sort_order=desc&limit=1"
+            res_tnx = requests.get(url_tnx, timeout=5)
+            if res_tnx.status_code == 200:
+                obs = res_tnx.json().get("observations", [])
+                if obs and obs[0].get("value") not in [None, ".", ""]:
+                    latest_val = float(obs[0]["value"])
+                    start_val = round(latest_val / (1 + pct_tnx / 100), 2) if (1 + pct_tnx / 100) != 0 else 0.0
+                    
+                    data_dict["ABD_TAHVIL"] = {
+                        "ilk": start_val,
+                        "son": latest_val,
+                        "degisim": pct_tnx
+                    }
+        except Exception:
+            pass
+
     # DÖVİZ & BRENT YÜZDE HESABI
     for k in ["USDTRY", "EURTRY", "BRENT_PETROL"]:
         v = data_dict[k]
