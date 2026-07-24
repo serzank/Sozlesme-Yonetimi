@@ -323,7 +323,7 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- %100 ZIRHLI VE GARANTİLİ EVDS TÜFE/ÜFE HESAPLAMA MOTORU ---
+# --- TCMB TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -331,7 +331,6 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        # EVDS sorgusu için geniş tarih aralığı
         s_q = (start_date - relativedelta(months=18)).replace(day=1).strftime("%d-%m-%Y")
         e_q = (datetime.today() + relativedelta(months=1)).replace(day=1).strftime("%d-%m-%Y")
 
@@ -341,7 +340,6 @@ def get_tcmb_data(api_key, start_date, end_date):
             res["Msg"] = "EVDS bağlantısı kuruldu ancak veri dönmedi."
             return res
             
-        # Sütun isimlerini standartlaştırma
         clean_cols = {}
         for c in raw_df.columns:
             if "FG_J0" in c or "FG.J0" in c: clean_cols[c] = "TUFE_COL"
@@ -360,10 +358,7 @@ def get_tcmb_data(api_key, start_date, end_date):
             
             raw_df = raw_df.ffill()
 
-            # En son mevcut açıklanmış endeks (Bitiş Ayı)
             latest_row = raw_df.iloc[-1]
-            
-            # Başlangıç tarihine denk gelen en yakın endeks
             past_df = raw_df[raw_df['Tarih_Dt'] <= pd.Timestamp(start_date)]
             start_row = past_df.iloc[-1] if not past_df.empty else raw_df.iloc[0]
 
@@ -434,8 +429,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-
-    
+        
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
@@ -492,65 +486,72 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (STABİL DÖVİZ VE FRED ENGINE)
+# PİYASA VERİSİ İŞLEME (ZIRHLANDIRILMIŞ DÖVİZ & EMTİA MOTORU)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
-    symbol_map = [
-        ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")
-    ]
     data_dict = {}
-    target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
-    # DÖVİZ VE FINANSAL SEMBOLLER
-    for key, symbol in symbol_map:
-        ilk, son = 0.0, 0.0
+    # 1. DÖVİZ HİSTORİCAL ZIRHLAMA (yfinance Direct Ticker)
+    fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
+    for k_fx, ticker_code in fx_map.items():
+        ilk_val, son_val = 0.0, 0.0
         try:
-            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            res = requests.get(url, headers=headers, timeout=4)
-            if res.status_code == 200:
-                result = res.json().get('chart', {}).get('result', [])
-                if result:
-                    timestamps = result[0].get('timestamp', [])
-                    quotes = result[0].get('indicators', {}).get('quote', [{}])[0].get('close', [])
-                    valid_data = [(pd.to_datetime(t, unit='s'), c) for t, c in zip(timestamps, quotes) if c is not None]
-                    if valid_data:
-                        df = pd.DataFrame(valid_data, columns=['Date', 'Close']).set_index('Date')
-                        if not df.empty:
-                            idx = (df.index - target_start).abs().argmin()
-                            ilk = float(df.iloc[idx]['Close'])
-                            son = float(df.iloc[-1]['Close'])
+            t = yf.Ticker(ticker_code)
+            h = t.history(start=d_start - timedelta(days=5), end=d_start + timedelta(days=5))
+            if not h.empty:
+                ilk_val = float(h['Close'].iloc[0])
+                son_val = float(h['Close'].iloc[-1])
         except: pass
 
-        data_dict[key] = {"ilk": ilk, "son": son, "degisim": 0.0}
+        data_dict[k_fx] = {"ilk": ilk_val, "son": son_val, "degisim": 0.0}
 
-    # BRENT PETROL TARİHSEL ZIRH
-    if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0:
+    # 2. EVDS DÖVİZ YEDEĞİ (YFINANCE PATLARSA)
+    if data_dict["USDTRY"]["ilk"] == 0 and evds_key:
         try:
-            brent_ticker = yf.Ticker("BZ=F")
-            hist = brent_ticker.history(start=d_start - timedelta(days=5), end=d_start + timedelta(days=5))
-            if not hist.empty:
-                data_dict["BRENT_PETROL"]["ilk"] = float(hist['Close'].iloc[0])
+            evds_service = evdsAPI(evds_key)
+            s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+            e_evds = d_start.strftime("%d-%m-%Y")
+            evds_df = evds_service.get_data(["TP.DK.USD.A.YTL"], startdate=s_evds, enddate=e_evds)
+            if evds_df is not None and not evds_df.empty:
+                v_col = [c for c in evds_df.columns if "USD" in c or "TP" in c][0]
+                data_dict["USDTRY"]["ilk"] = float(pd.to_numeric(evds_df[v_col], errors='coerce').dropna().iloc[-1])
         except: pass
 
-    if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0 and evds_key:
+    if data_dict["EURTRY"]["ilk"] == 0 and evds_key:
+        try:
+            evds_service = evdsAPI(evds_key)
+            s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
+            e_evds = d_start.strftime("%d-%m-%Y")
+            evds_df = evds_service.get_data(["TP.DK.EUR.A.YTL"], startdate=s_evds, enddate=e_evds)
+            if evds_df is not None and not evds_df.empty:
+                v_col = [c for c in evds_df.columns if "EUR" in c or "TP" in c][0]
+                data_dict["EURTRY"]["ilk"] = float(pd.to_numeric(evds_df[v_col], errors='coerce').dropna().iloc[-1])
+        except: pass
+
+    # DÖVİZ CANLI GÜNCELLEME (DOVIZ.COM)
+    if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
+    if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
+
+    # 3. BRENT PETROL TARİHSEL ZIRH
+    data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
+    try:
+        b_ticker = yf.Ticker("BZ=F")
+        b_hist = b_ticker.history(start=d_start - timedelta(days=5), end=d_start + timedelta(days=5))
+        if not b_hist.empty:
+            data_dict["BRENT_PETROL"]["ilk"] = float(b_hist['Close'].iloc[0])
+    except: pass
+
+    if data_dict["BRENT_PETROL"]["ilk"] == 0 and evds_key:
         try:
             evds_service = evdsAPI(evds_key)
             s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
             e_evds = d_start.strftime("%d-%m-%Y")
             evds_brent = evds_service.get_data(["TP.AK.BRENT"], startdate=s_evds, enddate=e_evds)
             if evds_brent is not None and not evds_brent.empty:
-                val_col = [c for c in evds_brent.columns if "BRENT" in c or "TP" in c][0]
-                s_b = pd.to_numeric(evds_brent[val_col], errors='coerce').dropna()
-                if not s_b.empty:
-                    data_dict["BRENT_PETROL"]["ilk"] = float(s_b.iloc[-1])
+                v_col = [c for c in evds_brent.columns if "BRENT" in c or "TP" in c][0]
+                data_dict["BRENT_PETROL"]["ilk"] = float(pd.to_numeric(evds_brent[v_col], errors='coerce').dropna().iloc[-1])
         except: pass
-
-    # DÖVİZ & BRENT CANLI DEĞERLERİ
-    if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
-    if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
     if doviz_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = doviz_data["BRENT_PETROL"]
@@ -590,7 +591,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     # GRAM ALTIN GARANTİ MOTORU
     gold_son = doviz_data.get("ALTIN", 0.0)
     if gold_son <= 0:
-        ons_s = te_data.get("ONS_ALTIN", 0.0) if te_data.get("ONS_ALTIN", 0) > 0 else data_dict.get("ONS_ALTIN", {}).get("son", 0)
+        ons_s = te_data.get("ONS_ALTIN", 0.0)
         usd_s = data_dict.get("USDTRY", {}).get("son", 0)
         if ons_s > 0 and usd_s > 0: 
             gold_son = (ons_s / 31.1035) * usd_s
@@ -604,8 +605,8 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
-    # DÖVİZ & BRENT İÇİN YÜZDE HESABI
-    for k in ["USDTRY", "EURTRY", "BRENT_PETROL", "ABD_TAHVIL"]:
+    # DÖVİZ & BRENT YÜZDE HESABI
+    for k in ["USDTRY", "EURTRY", "BRENT_PETROL"]:
         v = data_dict[k]
         ilk_val, son_val = safe_float(v["ilk"]), safe_float(v["son"])
         v["degisim"] = ((son_val - ilk_val) / ilk_val * 100) if (ilk_val > 0 and son_val > 0) else 0.0
@@ -788,7 +789,6 @@ with st.container(border=True):
                 
             close_series = close_series.dropna()
             
-            # Plotly Interactive Figure
             fig_plotly = go.Figure()
             
             fig_plotly.add_trace(go.Scatter(
@@ -922,16 +922,14 @@ with st.container(border=True):
     val_hufe_final = 0.0
     debug_sheet = st.expander(f"🕵️ H-ÜFE Hesaplama Detayı: {selected_sector}", expanded=False)
 
-    # GOOGLE SHEETS H-ÜFE GARANTİ HESAPLAMA BLOĞU
     if not df_hufe.empty and selected_sector:
         try:
             target_start = pd.to_datetime(start_date)
             target_end = pd.to_datetime(end_date)
             
-            # Tarih aralığında en yakın endeks değerlerini eşleme
             past_hufe = df_hufe[df_hufe['Tarih'] <= target_start]
             row_s = past_hufe.iloc[-1] if not past_hufe.empty else df_hufe.iloc[0]
-            row_e = df_hufe.iloc[-1] # En güncel açıklanmış H-ÜFE ayı
+            row_e = df_hufe.iloc[-1] 
             
             v1 = safe_float(row_s[selected_sector])
             v2 = safe_float(row_e[selected_sector])
