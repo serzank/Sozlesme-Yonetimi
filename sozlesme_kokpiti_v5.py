@@ -386,7 +386,8 @@ def guncel_akaryakit_cek():
     return fiyatlar
 
 # --- GOOGLE SHEET TABANLI KUSURSUZ TÜFE VE H-ÜFE MOTORU ---
-@st.cache_data(ttl=300)
+# --- KESİN KANIT MODÜLÜ: TÜFE MOTORU ---
+@st.cache_data(ttl=0)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
@@ -404,20 +405,27 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        # Tarih kolonunu bulma
-        tarih_col = next((c for c in df_raw.columns if "TARIH" in c.upper() or "DATE" in c.upper() or "AY" in c.upper()), df_raw.columns[0])
-        tufe_col = next((c for c in df_raw.columns if "TUFE" in c.upper() or "ENDEKS" in c.upper()), None)
-        ufe_col = next((c for c in df_raw.columns if "UFE" in c.upper() or "YI-ÜFE" in c.upper() or "YI_UFE" in c.upper()), None)
+        tarih_col = df_raw.columns[0]
+        tufe_col = df_raw.columns[1]
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
         
-        if tufe_col:
-            df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
-        if ufe_col:
-            df_clean['UFE_COL'] = pd.to_numeric(df_raw[ufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        cleaned_vals = (
+            df_raw[tufe_col]
+            .astype(str)
+            .str.strip()
+            .str.replace("\u00A0", "", regex=False)
+            .str.replace("%", "", regex=False)
+            .str.replace(',', '.', regex=False)
+        )
+        df_clean['TUFE_COL'] = pd.to_numeric(cleaned_vals, errors='coerce')
+        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
 
-        df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
+        if df_clean.empty:
+            res["Msg"] = "Tarih veya TÜFE değerleri sayısal formata çevrilemedi."
+            return res
+
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
@@ -429,20 +437,33 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         matches_e = df_clean[df_clean['Period'] <= p_end]
         latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
-        def calc_diff(col_name):
-            if col_name in df_clean.columns:
-                v_start = safe_float(start_row[col_name])
-                v_end = safe_float(latest_row[col_name])
-                if v_start > 0 and v_end > 0:
-                    return round(((v_end / v_start) - 1) * 100, 2)
-            return 0.0
+        # --- İSTEDİĞİN KANIT / DEBUG NOKTASI ---
+        st.write("==== DEBUG ====")
+        st.write("start_row")
+        st.write(start_row)
+        st.write("latest_row")
+        st.write(latest_row)
+        st.write("v_start", start_row["TUFE_COL"], type(start_row["TUFE_COL"]))
+        st.write("v_end", latest_row["TUFE_COL"], type(latest_row["TUFE_COL"]))
+        
+        v_start = float(start_row["TUFE_COL"])
+        v_end = float(latest_row["TUFE_COL"])
+        
+        st.write("float start", v_start)
+        st.write("float end", v_end)
+        
+        tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
+        st.write("HESAP", tufe_diff)
+        # ----------------------------------------
 
-        res.update({
-            "TUFE": calc_diff("TUFE_COL"),
-            "UFE": calc_diff("UFE_COL"),
-            "Status": True,
-            "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
-        })
+        if v_start > 0 and v_end > 0:
+            res.update({
+                "TUFE": tufe_diff,
+                "Status": True,
+                "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
+            })
+        else:
+            res["Msg"] = f"Değerler sıfır: v_start={v_start}, v_end={v_end}"
     except Exception as e:
         res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
