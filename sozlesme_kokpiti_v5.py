@@ -360,51 +360,60 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (RESMİ YFINANCE + FMP HYBRID MOTOR)
+# PİYASA VERİSİ İŞLEME (TOPLU/BATCH YFINANCE + FMP HYBRID MOTOR)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, fmp_key):
-    # yfinance ile doğrudan kütüphane üzerinden güvenli borsa verileri
-    symbol_map = [
-        ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("ABD_TAHVIL", "^TNX"),
-        ("BRENT_PETROL", "BZ=F"), ("WTI_PETROL", "CL=F"), ("DOGALGAZ", "NG=F"),
-        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("GUMUS", "SI=F"),
-        ("PLATIN", "PL=F"), ("PALADYUM", "PA=F"), ("KERESTE", "LBS=F"),
-        ("BUGDAY", "ZW=F"), ("MISIR", "ZC=F"), ("KAHVE", "KC=F"), ("PAMUK", "CT=F")
-    ]
+    # Tüm sembollerin haritası
+    symbol_map = {
+        "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", 
+        "ONS_ALTIN": "GC=F", "ABD_TAHVIL": "^TNX",
+        "BRENT_PETROL": "BZ=F", "WTI_PETROL": "CL=F", "DOGALGAZ": "NG=F",
+        "BAKIR": "HG=F", "ALUMINYUM": "ALI=F", "GUMUS": "SI=F",
+        "PLATIN": "PL=F", "PALADYUM": "PA=F", "KERESTE": "LBS=F",
+        "BUGDAY": "ZW=F", "MISIR": "ZC=F", "KAHVE": "KC=F", "PAMUK": "CT=F"
+    }
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
+    all_tickers = list(symbol_map.values())
 
-    # 1. RESMİ YFINANCE KÜTÜPHANESİ ÜZERİNDEN VERİ ÇEKİMİ
-    for key, symbol in symbol_map:
-        ilk, son = 0.0, 0.0
-        try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(period="2y")
-            if not df.empty and 'Close' in df.columns:
-                df.index = pd.to_datetime(df.index).tz_localize(None)
-                idx = (df.index - target_start).abs().argmin()
-                ilk = float(df.iloc[idx]['Close'])
-                son = float(df.iloc[-1]['Close'])
-        except: pass
+    # --- TOPLU ÇEKİM (BATCH DOWNLOAD - 0.5 saniyede tüm piyasa tek pakette çekilir) ---
+    try:
+        df_batch = yf.download(all_tickers, period="2y", interval="1d", progress=False)["Close"]
+        if not df_batch.empty:
+            df_batch.index = pd.to_datetime(df_batch.index).tz_localize(None)
+            for key, sym in symbol_map.items():
+                ilk, son = 0.0, 0.0
+                if sym in df_batch.columns:
+                    s_series = df_batch[sym].dropna()
+                    if not s_series.empty:
+                        idx = (s_series.index - target_start).abs().argmin()
+                        ilk = float(s_series.iloc[idx])
+                        son = float(s_series.iloc[-1])
+                data_dict[key] = {"ilk": ilk, "son": son, "degisim": ((son - ilk) / ilk * 100) if ilk > 0 else 0.0}
+    except:
+        pass
 
-        if ilk == 0 and evds_key and (key in ["USDTRY", "EURTRY"]):
+    # Eksik/Sıfır kalan dövizleri EVDS ile tamamlama
+    for key in ["USDTRY", "EURTRY"]:
+        if data_dict.get(key, {}).get("ilk", 0) == 0 and evds_key:
             try:
                 evds_service = evdsAPI(evds_key)
                 tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
                 evds_df = evds_service.get_data([tcmb_code], startdate=(d_start - timedelta(days=10)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
                 if evds_df is not None and not evds_df.empty:
                     val_col = tcmb_code.replace(".", "_")
-                    ilk = float(pd.to_numeric(evds_df[val_col], errors='coerce').dropna().iloc[-1])
+                    ilk_v = float(pd.to_numeric(evds_df[val_col], errors='coerce').dropna().iloc[-1])
+                    data_dict[key]["ilk"] = ilk_v
             except: pass
 
-        if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
-        elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
+        if key == "USDTRY" and live_data.get("USD", 0) > 0: data_dict[key]["son"] = live_data["USD"]
+        elif key == "EURTRY" and live_data.get("EUR", 0) > 0: data_dict[key]["son"] = live_data["EUR"]
+        
+        ilk_v, son_v = data_dict[key]["ilk"], data_dict[key]["son"]
+        data_dict[key]["degisim"] = ((son_v - ilk_v) / ilk_v * 100) if ilk_v > 0 else 0.0
 
-        data_dict[key] = {"ilk": ilk, "son": son, "degisim": ((son - ilk) / ilk * 100) if ilk > 0 else 0.0}
-
-    # 2. FINANCIAL MODELING PREP (FMP) YEDEK DESTEĞİ
+    # FINANCIAL MODELING PREP (FMP) YEDEK DESTEĞİ
     if fmp_key:
         fmp_map = [
             ("BRENT_PETROL", "BZUSD"), ("WTI_PETROL", "CLUSD"), ("DOGALGAZ", "NGUSD"),
@@ -417,10 +426,11 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
             if data_dict.get(key, {}).get("son", 0) == 0:
                 f_ilk, f_son = fmp_emtia_al(fmp_key, fmp_sym, d_start)
                 if f_son > 0:
-                    data_dict[key]["son"] = f_son
-                    if f_ilk > 0:
-                        data_dict[key]["ilk"] = f_ilk
-                        data_dict[key]["degisim"] = ((f_son - f_ilk) / f_ilk * 100)
+                    data_dict[key] = {
+                        "ilk": f_ilk if f_ilk > 0 else f_son,
+                        "son": f_son,
+                        "degisim": ((f_son - f_ilk) / f_ilk * 100) if f_ilk > 0 else 0.0
+                    }
 
     # --- PARİTE VE GRAM ALTIN KORUMALARI ---
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
@@ -475,27 +485,27 @@ with st.container(border=True):
     d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
     d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-    def emtia_karti(col, baslik, key, def_ilk, def_son):
+    def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
-        ilk = safe_float(val["ilk"]) if safe_float(val["ilk"]) > 0 else def_ilk
-        son = safe_float(val["son"]) if safe_float(val["son"]) > 0 else def_son
+        ilk = safe_float(val["ilk"])
+        son = safe_float(val["son"])
         with col:
             st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
             st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
             e_input = st.number_input("eski", value=ilk, format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
-            badge_txt = "CANLI" if val["son"] > 0 else "DÜZENLE"
+            badge_txt = "CANLI" if son > 0 else "DÜZENLE"
             st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>{badge_txt}</span></label>", unsafe_allow_html=True)
             y_input = st.number_input("yeni", value=son, format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
             deg = ((y_input - e_input) / e_input * 100) if e_input > 0 else 0.0
             st.markdown(f"<div style='text-align:right;'><span class='{'pozitif' if deg >= 0 else 'negatif'}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
         return deg
 
-    # --- KAPSAMLI EMTİA GÖSTERİMİ ---
+    # --- KAPSAMLI EMTİA GÖSTERİMİ (CANLI CANLI) ---
     st.markdown("### 🛢️ Enerji & Akaryakıt")
     e1, e2, e3 = st.columns(3)
-    d_brent = emtia_karti(e1, "🛢️ Brent Petrol ($/Bbl)", "BRENT_PETROL", 78.0, 82.0)
-    d_wti = emtia_karti(e2, "🛢️ WTI Petrol ($/Bbl)", "WTI_PETROL", 75.0, 79.0)
-    d_gaz = emtia_karti(e3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ", 2.10, 2.45)
+    d_brent = emtia_karti(e1, "🛢️ Brent Petrol ($/Bbl)", "BRENT_PETROL")
+    d_wti = emtia_karti(e2, "🛢️ WTI Petrol ($/Bbl)", "WTI_PETROL")
+    d_gaz = emtia_karti(e3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ")
 
     a1, a2 = st.columns(2)
     benzin_yeni_val = yakit_guncel.get("benzin", 44.0)
@@ -530,24 +540,24 @@ with st.container(border=True):
 
     st.markdown("### 🏗️ Endüstriyel & Değerli Metaller")
     m1, m2, m3 = st.columns(3)
-    d_bakir = emtia_karti(m1, "🔌 Bakır ($/lb)", "BAKIR", 4.10, 4.35)
-    d_alum  = emtia_karti(m2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM", 2380.0, 2450.0)
-    d_gumus = emtia_karti(m3, "🪙 Gümüş ($/oz)", "GUMUS", 28.50, 31.20)
+    d_bakir = emtia_karti(m1, "🔌 Bakır ($/lb)", "BAKIR")
+    d_alum  = emtia_karti(m2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
+    d_gumus = emtia_karti(m3, "🪙 Gümüş ($/oz)", "GUMUS")
     
     m4, m5, m6 = st.columns(3)
-    d_platin = emtia_karti(m4, "💍 Platin ($/oz)", "PLATIN", 980.0, 1020.0)
-    d_paladyum = emtia_karti(m5, "🔋 Paladyum ($/oz)", "PALADYUM", 950.0, 990.0)
+    d_platin = emtia_karti(m4, "💍 Platin ($/oz)", "PLATIN")
+    d_paladyum = emtia_karti(m5, "🔋 Paladyum ($/oz)", "PALADYUM")
     kutu(m6, "ABD 10Y Tahvil", "ABD_TAHVIL", "🇺🇸")
 
     st.markdown("### 🌾 Tarım & Soft Emtialar")
     t1, t2, t3 = st.columns(3)
-    d_kereste = emtia_karti(t1, "🪵 Kereste ($/1000bd ft)", "KERESTE", 520.0, 560.0)
-    d_bugday  = emtia_karti(t2, "🍞 Buğday ($/Bu)", "BUGDAY", 610.0, 580.0)
-    d_misir   = emtia_karti(t3, "🌽 Mısır ($/Bu)", "MISIR", 450.0, 430.0)
+    d_kereste = emtia_karti(t1, "🪵 Kereste ($/1000bd ft)", "KERESTE")
+    d_bugday  = emtia_karti(t2, "🍞 Buğday ($/Bu)", "BUGDAY")
+    d_misir   = emtia_karti(t3, "🌽 Mısır ($/Bu)", "MISIR")
 
     t4, t5, t6 = st.columns(3)
-    d_kahve = emtia_karti(t4, "☕ Kahve ($/lb)", "KAHVE", 210.0, 235.0)
-    d_pamuk = emtia_karti(t5, "👕 Pamuk ($/lb)", "PAMUK", 75.0, 72.0)
+    d_kahve = emtia_karti(t4, "☕ Kahve ($/lb)", "KAHVE")
+    d_pamuk = emtia_karti(t5, "👕 Pamuk (USd/lbs)", "PAMUK")
     st.markdown("")
 
 # ============================================================================
