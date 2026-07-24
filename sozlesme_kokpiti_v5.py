@@ -341,10 +341,6 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- AKILLI DÖNEM BAZLI (PERIOD MATCHING) ZIRHLI TCMB TÜFE/ÜFE MOTORU ---
-# --- KESİN TESHİS VE ÇÖZÜM MOTORU ---
-# --- DEBUG DESTEKLİ KESİN TESPİT MOTORU ---
-@# --- POZİSYON BAZLI KUSURSUZ TCMB TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
