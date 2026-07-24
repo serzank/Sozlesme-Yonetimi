@@ -1066,9 +1066,6 @@ with st.container(border=True):
 
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
     tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
-    
-    ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
-    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
     ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
     ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     
