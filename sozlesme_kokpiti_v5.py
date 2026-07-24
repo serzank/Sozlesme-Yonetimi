@@ -108,6 +108,25 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
+# --- ALTIN GEÇMİŞİ EVDS MOTORU ---
+@st.cache_data(ttl=600)
+def get_evds_gold_history(api_key, d_start):
+    price = 0.0
+    if not api_key: return price
+    try:
+        evds = evdsAPI(api_key)
+        s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
+        e_date_str = d_start.strftime("%d-%m-%Y")
+        series = ["TP.MK.KUL.YTL"]
+        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
+        if df is not None and not df.empty:
+             col = [c for c in df.columns if "TP" in c][0]
+             df[col] = pd.to_numeric(df[col], errors='coerce')
+             df.dropna(subset=[col], inplace=True)
+             if not df.empty: price = float(df.iloc[-1][col])
+    except: pass
+    return price
+
 # --- 1. TÜFE: KULLANICI GOOGLE SHEET TABLOSUNDAN ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
