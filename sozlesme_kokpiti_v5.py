@@ -158,49 +158,50 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- KESİN ÇÖZÜM: DİKEY FORMAT TÜFE MOTORU ---
+# --- GOOGLE SHEET TABANLI KUSURSUZ TÜFE MOTORU (H-ÜFE MANTIĞI) ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
-    res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
     try:
         df_raw = pd.read_csv(sheet_url)
-        if df_raw.empty: return res
+        if df_raw.empty:
+            res["Msg"] = "Sheet verisi boş."
+            return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
+        # H-ÜFE mantığıyla aynı: İlk sütun Tarih, ikinci sütun Değer
         tarih_col = df_raw.columns[0]
         tufe_col = df_raw.columns[1]
 
         df_clean = pd.DataFrame()
-        df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        df_clean['Tarih'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
         
-        # Değerleri temizleme ve float'a çevirme (Türkçe format garantili)
-        s_val = df_raw[tufe_col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df_clean['TUFE_COL'] = pd.to_numeric(s_val, errors='coerce')
+        # Değerleri sayısal formata çevirme
+        df_clean['TUFE_VAL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        df_clean = df_clean.dropna(subset=['Tarih', 'TUFE_VAL']).sort_values('Tarih')
 
-        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
-        df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
+        target_start = pd.to_datetime(start_date)
+        
+        # Başlangıç tarihine en yakın geçmiş veriyi bulma (H-ÜFE mantığı)
+        past_data = df_clean[df_clean['Tarih'] <= target_start]
+        row_s = past_data.iloc[-1] if not past_data.empty else df_clean.iloc[0]
+        row_e = df_clean.iloc[-1] # En güncel satır (tablonun sonu)
 
-        p_start = pd.Period(start_date, freq='M')
-        p_end = pd.Period(end_date, freq='M')
+        v_start = safe_float(row_s['TUFE_VAL'])
+        v_end = safe_float(row_e['TUFE_VAL'])
 
-        matches_s = df_clean[df_clean['Period'] <= p_start]
-        start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
-
-        matches_e = df_clean[df_clean['Period'] <= p_end]
-        latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
-
-        v_start = float(start_row['TUFE_COL'])
-        v_end = float(latest_row['TUFE_COL'])
+        d1_str = row_s['Tarih'].strftime('%d.%m.%Y')
+        d2_str = row_e['Tarih'].strftime('%d.%m.%Y')
 
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
-                "Msg": f"Sheet TÜFE Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
+                "Msg": f"Sheet TÜFE Dönemi: {d1_str} ({v_start}) ➡️ {d2_str} ({v_end})"
             })
     except Exception as e:
         res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
