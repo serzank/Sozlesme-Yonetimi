@@ -343,14 +343,12 @@ def guncel_akaryakit_cek():
 
 # --- AKILLI DÖNEM BAZLI (PERIOD MATCHING) ZIRHLI TCMB TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
-@st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not api_key: return res
     try:
         evds_service = evdsAPI(api_key)
         
-        # Geniş tarih aralığı
         s_q = (start_date - relativedelta(months=36)).replace(day=1).strftime("%d-%m-%Y")
         e_q = (datetime.today() + relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
 
@@ -360,55 +358,55 @@ def get_tcmb_data(api_key, start_date, end_date):
             res["Msg"] = "EVDS'den veri dönmedi."
             return res
             
-        # Sütunları net olarak map ediyoruz
-        cols_map = {}
+        # Sütunları isme göre esnek bulma
+        tarih_col, tufe_col, ufe_col, hufe_col = None, None, None, None
         for c in raw_df.columns:
-            c_upper = c.upper()
-            if "FG" in c_upper or "J0" in c_upper: cols_map[c] = "TUFE_COL"
-            elif "TUFE1YI" in c or "YI" in c_upper: cols_map[c] = "UFE_COL"
-            elif "HKFE01" in c: cols_map[c] = "HUFE_COL"
-            elif "TARIH" in c_upper: cols_map[c] = "Tarih_Raw"
-            
-        raw_df = raw_df.rename(columns=cols_map)
+            cu = c.upper()
+            if "TARIH" in cu or "DATE" in cu: tarih_col = c
+            elif "FG" in cu or "J0" in cu: tufe_col = c
+            elif "TUFE1YI" in cu or "YI" in cu: ufe_col = c
+            elif "HKFE01" in cu: hufe_col = c
 
-        if 'Tarih_Raw' in raw_df.columns:
-            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih_Raw'], errors='coerce')
-            raw_df = raw_df.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
-            
-            # Sayısal dönüştürme ve virgül temizliği
-            for c in ["TUFE_COL", "UFE_COL", "HUFE_COL"]:
-                if c in raw_df.columns:
-                    raw_df[c] = raw_df[c].astype(str).str.replace(',', '.')
-                    raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
-            
-            raw_df = raw_df.ffill()
-            raw_df['Period'] = raw_df['Tarih_Dt'].dt.to_period('M')
-            
-            p_start = pd.Period(start_date, freq='M')
-            p_end = pd.Period(end_date, freq='M')
-            
-            # Bitiş ve başlangıç satırlarını net seçme
-            row_e_df = raw_df[raw_df['Period'] <= p_end]
-            latest_row = row_e_df.iloc[-1] if not row_e_df.empty else raw_df.iloc[-1]
+        if not tarih_col:
+            return res
 
-            row_s_df = raw_df[raw_df['Period'] <= p_start]
-            start_row = row_s_df.iloc[-1] if not row_s_df.empty else raw_df.iloc[0]
+        df_clean = pd.DataFrame()
+        df_clean['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
+        
+        if tufe_col in raw_df.columns:
+            df_clean['TUFE_COL'] = pd.to_numeric(raw_df[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        if ufe_col in raw_df.columns:
+            df_clean['UFE_COL'] = pd.to_numeric(raw_df[ufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        if hufe_col in raw_df.columns:
+            df_clean['HUFE_COL'] = pd.to_numeric(raw_df[hufe_col].astype(str).str.replace(',', '.'), errors='coerce')
 
-            def calc_diff(col_name):
-                if col_name in raw_df.columns:
-                    v_start = safe_float(start_row[col_name])
-                    v_end = safe_float(latest_row[col_name])
-                    if v_start > 0:
-                        return round(((v_end - v_start) / v_start) * 100, 2)
-                return 0.0
+        df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt').ffill()
+        df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
-            res.update({
-                "TUFE": calc_diff("TUFE_COL"),
-                "UFE": calc_diff("UFE_COL"),
-                "HUFE": calc_diff("HUFE_COL"),
-                "Status": True,
-                "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
-            })
+        p_start = pd.Period(start_date, freq='M')
+        p_end = pd.Period(end_date, freq='M')
+
+        row_s_df = df_clean[df_clean['Period'] <= p_start]
+        start_row = row_s_df.iloc[-1] if not row_s_df.empty else df_clean.iloc[0]
+
+        row_e_df = df_clean[df_clean['Period'] <= p_end]
+        latest_row = row_e_df.iloc[-1] if not row_e_df.empty else df_clean.iloc[-1]
+
+        def calc_diff(col_name):
+            if col_name in df_clean.columns:
+                v_start = safe_float(start_row[col_name])
+                v_end = safe_float(latest_row[col_name])
+                if v_start > 0:
+                    return round(((v_end - v_start) / v_start) * 100, 2)
+            return 0.0
+
+        res.update({
+            "TUFE": calc_diff("TUFE_COL"),
+            "UFE": calc_diff("UFE_COL"),
+            "HUFE": calc_diff("HUFE_COL"),
+            "Status": True,
+            "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
+        })
     except Exception as e: 
         res["Msg"] = f"EVDS Hatası: {str(e)}"
     return res
