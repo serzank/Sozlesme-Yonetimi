@@ -158,46 +158,67 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- KESİN VE NET TÜFE MOTORU ---
+# --- GOOGLE SHEET TABANLI KUSURSUZ VE TEK TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
-    res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
     try:
         df_raw = pd.read_csv(sheet_url)
-        if df_raw.empty: return res
+        if df_raw.empty:
+            res["Msg"] = "Sheet verisi boş."
+            return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        tarih_col = df_raw.columns[0]
-        tufe_col = df_raw.columns[1]
+        # Türkçe karakterleri normalize et (Ü->U, İ->I vb.)
+        def normalize_str(s):
+            return str(s).upper().replace('Ü', 'U').replace('İ', 'I').replace('Ş', 'S').replace('Ğ', 'G').replace('Ö', 'O').replace('Ç', 'C')
+
+        normalized_cols = {c: normalize_str(c) for c in df_raw.columns}
+        
+        tarih_col = next((c for c, norm in normalized_cols.items() if "TARIH" in norm or "DATE" in norm or "AY" in norm), df_raw.columns[0])
+        tufe_col = next((c for c, norm in normalized_cols.items() if "TUFE" in norm or "ENDEKS" in norm), df_raw.columns[1] if len(df_raw.columns) > 1 else None)
+
+        if not tufe_col:
+            res["Msg"] = f"TÜFE kolonu bulunamadı! Mevcut kolonlar: {list(df_raw.columns)}"
+            return res
 
         df_clean = pd.DataFrame()
-        df_clean['Tarih'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
-        
-        raw_vals = df_raw[tufe_col].astype(str).str.strip().str.replace(',', '.', regex=False)
-        df_clean['TUFE_VAL'] = pd.to_numeric(raw_vals, errors='coerce')
-        
-        df_clean = df_clean.dropna(subset=['Tarih', 'TUFE_VAL']).sort_values('Tarih')
-        if df_clean.empty: return res
+        df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
 
-        target_start = pd.to_datetime(start_date)
-        
-        past_data = df_clean[df_clean['Tarih'] <= target_start]
-        row_s = past_data.iloc[-1] if not past_data.empty else df_clean.iloc[0]
-        row_e = df_clean.iloc[-1]
+        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
+        if df_clean.empty:
+            res["Msg"] = "Tarih veya TÜFE değerleri sayısal formata çevrilemedi."
+            return res
 
-        v_start = float(row_s['TUFE_VAL'])
-        v_end = float(row_e['TUFE_VAL'])
+        df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
+
+        p_start = pd.Period(start_date, freq='M')
+        p_end = pd.Period(end_date, freq='M')
+
+        matches_s = df_clean[df_clean['Period'] <= p_start]
+        start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
+
+        matches_e = df_clean[df_clean['Period'] <= p_end]
+        latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
+
+        v_start = safe_float(start_row['TUFE_COL'])
+        v_end = safe_float(latest_row['TUFE_COL'])
 
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
-            res["TUFE"] = tufe_diff
-            res["Status"] = True
-            res["Msg"] = f"Sheet Enflasyon Dönemi: {row_s['Tarih'].strftime('%Y-%m')} ➡️ {row_e['Tarih'].strftime('%Y-%m')}"
+            res.update({
+                "TUFE": tufe_diff,
+                "Status": True,
+                "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
+            })
+        else:
+            res["Msg"] = f"Başlangıç ({v_start}) veya Bitiş ({v_end}) değeri sıfır!"
     except Exception as e:
-        res["Msg"] = f"Hata: {str(e)}"
+        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
