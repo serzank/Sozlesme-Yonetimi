@@ -108,6 +108,33 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
+# --- EMTİA KART BİLEŞENİ ---
+def emtia_karti(col, baslik, key):
+    val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
+    ilk = safe_float(val["ilk"])
+    son = safe_float(val["son"])
+    deg = safe_float(val["degisim"])
+    
+    key_eski = f"e_{key}_{d_key}"
+    key_yeni = f"y_{key}_{d_key}"
+    
+    with col:
+        st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
+        st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
+        e_input = st.number_input("eski", value=ilk, format="%.2f", key=key_eski, label_visibility="collapsed")
+        
+        badge_txt = "CANLI" if son > 0 else "DÜZENLE"
+        st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>{badge_txt}</span></label>", unsafe_allow_html=True)
+        y_input = st.number_input("yeni", value=son, format="%.2f", key=key_yeni, label_visibility="collapsed")
+        
+        if e_input > 0 and abs(e_input - ilk) > 0.01:
+            deg = ((y_input - e_input) / e_input * 100)
+            
+        renk = "pozitif" if deg >= 0 else "negatif"
+        st.markdown(f"<div style='text-align:right;'><span class='{renk}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
+        
+    return deg
+
 # --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
 @st.cache_data(ttl=3600)
 def get_fred_index_change(api_key, series_id, target_start_date):
@@ -813,32 +840,7 @@ with st.container(border=True):
     # ============================================================================
     st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
     
-    def emtia_karti(col, baslik, key):
-        val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
-        ilk = safe_float(val["ilk"])
-        son = safe_float(val["son"])
-        deg = safe_float(val["degisim"])
-        
-        key_eski = f"e_{key}_{d_key}"
-        key_yeni = f"y_{key}_{d_key}"
-        
-        with col:
-            st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
-            st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
-            e_input = st.number_input("eski", value=ilk, format="%.2f", key=key_eski, label_visibility="collapsed")
-            
-            badge_txt = "CANLI" if son > 0 else "DÜZENLE"
-            st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>{badge_txt}</span></label>", unsafe_allow_html=True)
-            y_input = st.number_input("yeni", value=son, format="%.2f", key=key_yeni, label_visibility="collapsed")
-            
-            if e_input > 0 and abs(e_input - ilk) > 0.01:
-                deg = ((y_input - e_input) / e_input * 100)
-                
-            renk = "pozitif" if deg >= 0 else "negatif"
-            st.markdown(f"<div style='text-align:right;'><span class='{renk}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
-            
-        return deg
-
+    
     em1, em2, em3, em4 = st.columns(4)
     d_bakir  = emtia_karti(em1, "🔌 Bakır ($/Lbs)", "BAKIR")
     d_alum   = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
