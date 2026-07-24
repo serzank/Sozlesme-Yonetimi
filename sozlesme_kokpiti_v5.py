@@ -194,7 +194,7 @@ def get_asgari_ucret_degisim(d_start, d_end):
     if ucret_start > 0: degisim = ((ucret_end - ucret_start) / ucret_start) * 100
     return degisim, ucret_start, ucret_end
 
-# --- GOOGLE SHEET H-ÜFE ÇEKİCİ (BİTİŞ TARİHİ AKILLI DÖNEM DÜZELTMELİ) ---
+# --- GOOGLE SHEET H-ÜFE ÇEKİCİ ---
 @st.cache_data(ttl=300)
 def get_google_sheet_data():
     try:
@@ -204,7 +204,7 @@ def get_google_sheet_data():
         df = df.dropna(how='all')
         
         df['Tarih'] = pd.to_datetime(df['Tarih'], format='%Y-%m-%d', errors='coerce')
-        df = df.dropna(subset=['Tarih'])
+        df = df.dropna(subset=['Tarih']).sort_values('Tarih')
         df['Donem'] = df['Tarih'].dt.strftime('%Y-%m')
         
         for col in df.columns:
@@ -215,9 +215,7 @@ def get_google_sheet_data():
     except Exception:
         return pd.DataFrame()
 
-# -------------------------------------------------------------------------
-# DOVIZ.COM DÜZELTİLMİŞ CANLI SCRAPER
-# -------------------------------------------------------------------------
+# --- DOVIZ.COM CANLI SCRAPER ---
 @st.cache_data(ttl=60)
 def doviz_com_canli_cek():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -250,9 +248,7 @@ def doviz_com_canli_cek():
 
     return data
 
-# -------------------------------------------------------------------------
-# TRADINGECONOMICS ANLIK CANLI SCRAPER
-# -------------------------------------------------------------------------
+# --- TRADINGECONOMICS CANLI SCRAPER ---
 @st.cache_data(ttl=60)
 def trading_economics_live_all():
     headers = {
@@ -305,7 +301,6 @@ def trading_economics_live_all():
 
     return live_data
 
-# --- DİĞER VERİ ÇEKME FONKSİYONLARI ---
 @st.cache_data(ttl=600)
 def guncel_akaryakit_cek():
     url = "https://www.doviz.com/akaryakit-fiyatlari/istanbul-avrupa"
@@ -328,7 +323,7 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- DİNAMİK ZIRHLANMIŞ VE DAR VADE DÜZELTMELİ TCMB TÜFE/ÜFE MOTORU ---
+# --- %100 ZIRHLI VE GARANTİLİ EVDS TÜFE/ÜFE HESAPLAMA MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -336,52 +331,56 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        s_q = (start_date - relativedelta(months=12)).replace(day=1).strftime("%d-%m-%Y")
+        # EVDS sorgusu için geniş tarih aralığı
+        s_q = (start_date - relativedelta(months=18)).replace(day=1).strftime("%d-%m-%Y")
         e_q = (datetime.today() + relativedelta(months=1)).replace(day=1).strftime("%d-%m-%Y")
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         raw_df = evds_service.get_data(series, startdate=s_q, enddate=e_q)
         if raw_df is None or raw_df.empty:
-            res["Msg"] = "EVDS'den veri dönmedi."
+            res["Msg"] = "EVDS bağlantısı kuruldu ancak veri dönmedi."
             return res
             
-        raw_df.columns = [c.replace(".", "_") for c in raw_df.columns]
-        
-        if 'Tarih' in raw_df.columns:
-            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
+        # Sütun isimlerini standartlaştırma
+        clean_cols = {}
+        for c in raw_df.columns:
+            if "FG_J0" in c or "FG.J0" in c: clean_cols[c] = "TUFE_COL"
+            elif "TUFE1YI" in c: clean_cols[c] = "UFE_COL"
+            elif "HKFE01" in c: clean_cols[c] = "HUFE_COL"
+            elif "Tarih" in c: clean_cols[c] = "Tarih_Raw"
+        raw_df = raw_df.rename(columns=clean_cols)
+
+        if 'Tarih_Raw' in raw_df.columns:
+            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih_Raw'], errors='coerce')
             raw_df = raw_df.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
             
-            data_cols = [c for c in raw_df.columns if c.startswith('TP')]
-            for c in data_cols:
-                raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
-            raw_df[data_cols] = raw_df[data_cols].ffill()
+            for c in ["TUFE_COL", "UFE_COL", "HUFE_COL"]:
+                if c in raw_df.columns:
+                    raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
+            
+            raw_df = raw_df.ffill()
 
-            # En son açıklanmış resmi veriyi bulma (Bitiş noktası)
+            # En son mevcut açıklanmış endeks (Bitiş Ayı)
             latest_row = raw_df.iloc[-1]
-            latest_dt = latest_row['Tarih_Dt']
+            
+            # Başlangıç tarihine denk gelen en yakın endeks
+            past_df = raw_df[raw_df['Tarih_Dt'] <= pd.Timestamp(start_date)]
+            start_row = past_df.iloc[-1] if not past_df.empty else raw_df.iloc[0]
 
-            # Eğer seçilen başlangıç tarihi ile en son açıklanmış ay aynı ise geriye dönük aralığı dinamik ayarla
-            diff_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-            if diff_months <= 0: diff_months = 3
-
-            start_target_dt = latest_dt - relativedelta(months=diff_months)
-            idx_s = (raw_df['Tarih_Dt'] - start_target_dt).abs().idxmin()
-            row_s = raw_df.loc[idx_s]
-
-            def calc_pct(c_name):
-                for col in [c_name, c_name.replace(".", "_")]:
-                    if col in raw_df.columns:
-                        v1 = safe_float(row_s[col])
-                        v2 = safe_float(latest_row[col])
-                        if v1 > 0: return round(((v2 - v1) / v1) * 100, 2)
+            def calc_diff(col_name):
+                if col_name in raw_df.columns:
+                    v_start = safe_float(start_row[col_name])
+                    v_end = safe_float(latest_row[col_name])
+                    if v_start > 0:
+                        return round(((v_end - v_start) / v_start) * 100, 2)
                 return 0.0
 
             res.update({
-                "TUFE": calc_pct("TP.FG.J0"),
-                "UFE": calc_pct("TP.TUFE1YI.T1"),
-                "HUFE": calc_pct("TP.HKFE01.I1"),
+                "TUFE": calc_diff("TUFE_COL"),
+                "UFE": calc_diff("UFE_COL"),
+                "HUFE": calc_diff("HUFE_COL"),
                 "Status": True,
-                "Msg": f"Enflasyon Dönemi: {row_s['Tarih_Dt'].strftime('%m.%Y')} - {latest_dt.strftime('%m.%Y')}"
+                "Msg": f"TCMB Enflasyon Dönemi: {start_row['Tarih_Dt'].strftime('%m.%Y')} ➡️ {latest_row['Tarih_Dt'].strftime('%m.%Y')}"
             })
     except Exception as e: 
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
@@ -435,7 +434,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-    
+
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
@@ -493,7 +492,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (FRED ENDEKSLEME MODELİ ENTEGRELİ)
+# PİYASA VERİSİ İŞLEME (STABİL DÖVİZ VE FRED ENGINE)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
@@ -637,7 +636,7 @@ with st.container(border=True):
     def kutu(col, baslik, key, ikon):
         val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
         ilk, son, deg = safe_float(val["ilk"]), safe_float(val["son"]), safe_float(val["degisim"])
-        w_key = f"{key}_{d_key}_{ilk:.2f}"
+        w_key = f"{key}_{d_key}"
         with col:
             st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; margin-bottom:5px;'><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div>", unsafe_allow_html=True)
             if son == 0: deg = st.number_input(f"{baslik} %", value=0.0, step=0.1, key=w_key)
@@ -679,9 +678,9 @@ with st.container(border=True):
         st.markdown(f"<div class='kutu-enerji'><b>⛽ Benzin</b> {badge}", unsafe_allow_html=True)
         etiket_b = "Eski (TL) <span class='badge-tcmb'>✅ TCMB</span>" if not is_proxy else "Eski (TL) <span class='badge-est'>⚠️ Tahmin</span>"
         st.markdown(f"<label style='font-size:13px;'>{etiket_b}</label>", unsafe_allow_html=True)
-        b_eski = st.number_input("bo", value=benzin_eski_val, key=f"bo_{d_key}_{benzin_eski_val:.2f}", label_visibility="collapsed")
+        b_eski = st.number_input("bo", value=benzin_eski_val, key=f"bo_{d_key}", label_visibility="collapsed")
         st.markdown("<label style='font-size:13px;'>Yeni (TL)</label>", unsafe_allow_html=True)
-        b_yeni = st.number_input("bn", value=benzin_yeni_val, key=f"bn_{d_key}_{benzin_yeni_val:.2f}", label_visibility="collapsed")
+        b_yeni = st.number_input("bn", value=benzin_yeni_val, key=f"bn_{d_key}", label_visibility="collapsed")
         d_benzin = ((b_yeni-b_eski)/b_eski)*100 if b_eski > 0 else 0
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_benzin:.2f}</span></div></div>", unsafe_allow_html=True)
 
@@ -690,9 +689,9 @@ with st.container(border=True):
         st.markdown(f"<div class='kutu-enerji'><b>🚛 Motorin</b> {badge_m}", unsafe_allow_html=True)
         etiket_m = "Eski (TL) <span class='badge-tcmb'>✅ TCMB</span>" if not is_proxy else "Eski (TL) <span class='badge-est'>⚠️ Tahmin</span>"
         st.markdown(f"<label style='font-size:13px;'>{etiket_m}</label>", unsafe_allow_html=True)
-        m_eski = st.number_input("mo", value=motorin_eski_val, key=f"mo_{d_key}_{motorin_eski_val:.2f}", label_visibility="collapsed")
+        m_eski = st.number_input("mo", value=motorin_eski_val, key=f"mo_{d_key}", label_visibility="collapsed")
         st.markdown("<label style='font-size:13px;'>Yeni (TL)</label>", unsafe_allow_html=True)
-        m_yeni = st.number_input("mn", value=motorin_yeni_val, key=f"mn_{d_key}_{motorin_yeni_val:.2f}", label_visibility="collapsed")
+        m_yeni = st.number_input("mn", value=motorin_yeni_val, key=f"mn_{d_key}", label_visibility="collapsed")
         d_dizel = ((m_yeni-m_eski)/m_eski)*100 if m_eski > 0 else 0
         st.markdown(f"<div style='text-align:right;'><span class='pozitif'>%{d_dizel:.2f}</span></div></div>", unsafe_allow_html=True)
 
@@ -709,8 +708,8 @@ with st.container(border=True):
         son = safe_float(val["son"])
         deg = safe_float(val["degisim"])
         
-        key_eski = f"e_{key}_{d_key}_{ilk:.2f}"
-        key_yeni = f"y_{key}_{d_key}_{son:.2f}"
+        key_eski = f"e_{key}_{d_key}"
+        key_yeni = f"y_{key}_{d_key}"
         
         with col:
             st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
@@ -792,7 +791,6 @@ with st.container(border=True):
             # Plotly Interactive Figure
             fig_plotly = go.Figure()
             
-            # Trend Çizgisi ve Alan Dolgusu
             fig_plotly.add_trace(go.Scatter(
                 x=close_series.index,
                 y=close_series.values,
@@ -924,16 +922,16 @@ with st.container(border=True):
     val_hufe_final = 0.0
     debug_sheet = st.expander(f"🕵️ H-ÜFE Hesaplama Detayı: {selected_sector}", expanded=False)
 
+    # GOOGLE SHEETS H-ÜFE GARANTİ HESAPLAMA BLOĞU
     if not df_hufe.empty and selected_sector:
         try:
             target_start = pd.to_datetime(start_date)
             target_end = pd.to_datetime(end_date)
             
-            idx_start = (df_hufe['Tarih'] - target_start).abs().idxmin()
-            idx_end = (df_hufe['Tarih'] - target_end).abs().idxmin()
-            
-            row_s = df_hufe.loc[idx_start]
-            row_e = df_hufe.loc[idx_end]
+            # Tarih aralığında en yakın endeks değerlerini eşleme
+            past_hufe = df_hufe[df_hufe['Tarih'] <= target_start]
+            row_s = past_hufe.iloc[-1] if not past_hufe.empty else df_hufe.iloc[0]
+            row_e = df_hufe.iloc[-1] # En güncel açıklanmış H-ÜFE ayı
             
             v1 = safe_float(row_s[selected_sector])
             v2 = safe_float(row_e[selected_sector])
@@ -945,8 +943,8 @@ with st.container(border=True):
             debug_sheet.write(f"**Hedef Bitiş:** {end_date} ➡️ **Bulunan:** {d2_str} (Değer: {v2})")
 
             if v1 > 0:
-                val_hufe_final = ((v2 - v1) / v1) * 100
-                debug_sheet.success(f"✅ Hesaplanan Değişim: %{val_hufe_final:.2f}")
+                val_hufe_final = round(((v2 - v1) / v1) * 100, 2)
+                debug_sheet.success(f"✅ Hesaplanan H-ÜFE Değişimi: %{val_hufe_final:.2f}")
             else:
                 debug_sheet.error("Başlangıç değeri 0 olduğu için hesaplanamadı.")
                 
@@ -956,18 +954,18 @@ with st.container(border=True):
 
     val_tufe = safe_float(tcmb["TUFE"])
     val_ufe = safe_float(tcmb["UFE"])
-    val_mix = (val_tufe + val_ufe) / 2
+    val_mix = round((val_tufe + val_ufe) / 2, 2)
     
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
-    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}_{val_tufe:.2f}")
-    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}_{val_ufe:.2f}")
-    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}_{val_mix:.2f}")
+    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
+    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
+    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
     
-    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}_{val_hufe_final:.2f}", help=f"Seçilen Sektör: {selected_sector}")
-    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}_{val_iscilik:.2f}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}", help=f"Seçilen Sektör: {selected_sector}")
+    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     
     if val_iscilik > 0:
