@@ -108,6 +108,11 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
+# --- BURAYA EKLEYEBİLİRSİN ---
+def get_tcmb_data(api_key, start_date, end_date):
+    sheet_url = "https://docs.google.com/spreadsheets/d/15tHPO39U5ltgMDQVa4jEb5b2sHCWV1KuHq5epNrWNh0/edit?gid=0#gid=0"
+    return get_sheets_tufe_data(sheet_url, start_date, end_date)
+
 @st.cache_data(ttl=600)
 def get_evds_gold_history(api_key, d_start):
     price = 0.0
