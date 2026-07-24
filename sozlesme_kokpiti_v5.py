@@ -158,19 +158,14 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- DİKEY FORMAT GOOGLE SHEET TÜFE MOTORU ---
-# --- DEBUG DESTEKLİ DİKEY FORMAT TÜFE MOTORU ---
+# --- KESİN ÇÖZÜM: DİKEY FORMAT TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    if not sheet_url: 
-        res["Msg"] = "Sheet URL boş!"
-        return res
+    if not sheet_url: return res
     try:
         df_raw = pd.read_csv(sheet_url)
-        if df_raw.empty:
-            res["Msg"] = "Sheet verisi boş döndü."
-            return res
+        if df_raw.empty: return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
@@ -180,14 +175,12 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
-        df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        
+        # Değerleri temizleme ve float'a çevirme (Türkçe format garantili)
+        s_val = df_raw[tufe_col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_clean['TUFE_COL'] = pd.to_numeric(s_val, errors='coerce')
 
         df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
-        
-        if df_clean.empty:
-            res["Msg"] = f"Tarih veya TÜFE kolonları sayısal/tarih formatına çevrilemedi! Sütunlar: {list(df_raw.columns)}"
-            return res
-
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
@@ -199,20 +192,18 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         matches_e = df_clean[df_clean['Period'] <= p_end]
         latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
-        v_start = safe_float(start_row['TUFE_COL'])
-        v_end = safe_float(latest_row['TUFE_COL'])
+        v_start = float(start_row['TUFE_COL'])
+        v_end = float(latest_row['TUFE_COL'])
 
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
-                "Msg": f"Başarılı | Dönem: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
+                "Msg": f"Sheet TÜFE Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
             })
-        else:
-            res["Msg"] = f"Değerler sıfır veya hatalı: Başlangıç={v_start}, Bitiş={v_end}"
     except Exception as e:
-        res["Msg"] = f"Sheet Okuma Kritik Hata: {str(e)}"
+        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
