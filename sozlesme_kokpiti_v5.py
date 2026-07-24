@@ -107,15 +107,15 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- ESNEK FRED TARİHSEL EMTİA VERİSİ ÇEKİCİSİ (EN YAKIN GEÇMİŞ VERİ) ---
+# --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
 @st.cache_data(ttl=3600)
-def get_fred_commodity_history(api_key, series_id, target_date):
+def get_fred_index_change(api_key, series_id, target_start_date):
     if not api_key:
         return 0.0
     try:
-        # FRED aylık yayınlandığı için geniş bir pencereden geriye doğru tarıyoruz
-        s_date = (target_date - timedelta(days=120)).strftime("%Y-%m-%d")
-        e_date = (target_date + timedelta(days=10)).strftime("%Y-%m-%d")
+        # Son 180 günü çekerek geriye dönük en yakın resmi verileri buluyoruz
+        s_date = (target_start_date - timedelta(days=180)).strftime("%Y-%m-%d")
+        e_date = datetime.today().strftime("%Y-%m-%d")
         url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
@@ -129,12 +129,17 @@ def get_fred_commodity_history(api_key, series_id, target_date):
                     except: pass
             if valid:
                 df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
-                # Hedef tarihten önceki en son açıklanmış veriyi bul
-                past_df = df[df.index <= pd.Timestamp(target_date)]
-                if not past_df.empty:
-                    return float(past_df.iloc[-1]["Value"])
-                else:
-                    return float(df.iloc[0]["Value"])
+                
+                # 1. Başlangıç tarihine en yakın geçmiş endeks
+                past_df = df[df.index <= pd.Timestamp(target_start_date)]
+                val_start = float(past_df.iloc[-1]["Value"]) if not past_df.empty else float(df.iloc[0]["Value"])
+                
+                # 2. En güncel açıklanmış son endeks
+                val_latest = float(df.iloc[-1]["Value"])
+                
+                if val_start > 0:
+                    pct_change = ((val_latest - val_start) / val_start) * 100
+                    return pct_change
     except: pass
     return 0.0
 
@@ -215,7 +220,7 @@ def get_google_sheet_data():
         return pd.DataFrame()
 
 # -------------------------------------------------------------------------
-# DOVIZ.COM DÜZELTİLMİŞ CANLI SCRAPER (GRAM ALTIN & DÖVİZ & BRENT)
+# DOVIZ.COM DÜZELTİLMİŞ CANLI SCRAPER
 # -------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def doviz_com_canli_cek():
@@ -445,7 +450,8 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-       
+
+    
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
@@ -502,22 +508,18 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (FRED + YAHOO TAM KAPASİTE HARİTALANMIŞ)
+# PİYASA VERİSİ İŞLEME (FRED ENDEKSLEME MODELİ ENTEGRELİ)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
-    # TÜM EMTİALAR YAHOO SYMBOL MAP'E EKLENDİ
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX"),
-        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F"),
-        ("PROPAN", "P2=F"), ("HRC_STEEL", "HRC=F"), ("PAMUK", "CT=F"),
-        ("BUGDAY", "ZW=F"), ("KAKAO", "CC=F"), ("CINKO", "ZS=F"), ("NIKEL", "LN=F")
+        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")
     ]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
-    # 1. YAHOO FINANCE HISTORICAL & CANLI
+    # 1. DÖVİZ VE FINANSAL SEMBOLLER (YAHOO)
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
@@ -540,7 +542,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": 0.0}
 
-    # BRENT PETROL TARİHSEL (ESKİ) DEĞER ZIRHLAMA KATMANI
+    # BRENT PETROL TARİHSEL ZIRH
     if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0:
         try:
             brent_ticker = yf.Ticker("BZ=F")
@@ -562,7 +564,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                     data_dict["BRENT_PETROL"]["ilk"] = float(s_b.iloc[-1])
         except: pass
 
-    # BRENT PETROL & DÖVİZ CANLI DÜZELTME
+    # DÖVİZ & BRENT CANLI DEĞERLERİ
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
@@ -571,35 +573,12 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     elif te_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
 
-    # EVDS DÖVİZ ESKİ FİYAT YEDEKLERİ
-    if data_dict["USDTRY"]["ilk"] == 0 and evds_key:
-        try:
-            evds_service = evdsAPI(evds_key)
-            s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
-            e_evds = d_start.strftime("%d-%m-%Y")
-            evds_df = evds_service.get_data(["TP.DK.USD.A.YTL"], startdate=s_evds, enddate=e_evds)
-            if evds_df is not None and not evds_df.empty:
-                val_col = [c for c in evds_df.columns if "USD" in c][0]
-                data_dict["USDTRY"]["ilk"] = float(evds_df[val_col].dropna().iloc[-1])
-        except: pass
-
-    if data_dict["EURTRY"]["ilk"] == 0 and evds_key:
-        try:
-            evds_service = evdsAPI(evds_key)
-            s_evds = (d_start - timedelta(days=10)).strftime("%d-%m-%Y")
-            e_evds = d_start.strftime("%d-%m-%Y")
-            evds_df = evds_service.get_data(["TP.DK.EUR.A.YTL"], startdate=s_evds, enddate=e_evds)
-            if evds_df is not None and not evds_df.empty:
-                val_col = [c for c in evds_df.columns if "EUR" in c][0]
-                data_dict["EURTRY"]["ilk"] = float(evds_df[val_col].dropna().iloc[-1])
-        except: pass
-
-    # TRADINGECONOMICS TÜM EMTİALARI EKLENİYOR
+    # TRADINGECONOMICS TÜM CANLI EMTİALAR EKLENİYOR
     for te_key, te_val in te_data.items():
         if te_key not in data_dict:
             data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
 
-    # GENİŞLETİLMİŞ FULL FRED API TARİHSEL HARİTALAMA (0,00 KALANLAR İÇİN)
+    # SADECE VE SADECE FRED ENDEKS YÜZDESİ İLE GEÇMİŞ FİYAT TÜRETME
     if fred_key:
         fred_map = {
             "BAKIR": "PCOPPUSDM",
@@ -615,15 +594,17 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             "PAMUK": "PCOTTUSDM",
             "BUGDAY": "PWHEAMTUSDM",
             "KAKAO": "PCOCOUSDM",
-            "CRUDE_OIL": "POILBREUSDM"
+            "COAL": "PCOALAUUSDM"
         }
         for k_fred, series_id in fred_map.items():
-            if k_fred in data_dict and data_dict[k_fred]["ilk"] == 0.0:
-                f_val = get_fred_commodity_history(fred_key, series_id, d_start)
-                if f_val > 0:
-                    data_dict[k_fred]["ilk"] = f_val
+            if k_fred in data_dict and data_dict[k_fred]["son"] > 0:
+                pct = get_fred_index_change(fred_key, series_id, d_start)
+                data_dict[k_fred]["degisim"] = pct
+                # Canlı spot fiyat ve FRED yüzdesi üzerinden geriye dönük teorik geçmiş fiyat
+                if (1 + pct/100) != 0:
+                    data_dict[k_fred]["ilk"] = data_dict[k_fred]["son"] / (1 + pct/100)
 
-    # GRAM ALTIN GARANTİ DÜZELTME MOTORU
+    # GRAM ALTIN GARANTİ MOTORU
     gold_son = doviz_data.get("ALTIN", 0.0)
     if gold_son <= 0:
         ons_s = te_data.get("ONS_ALTIN", 0.0) if te_data.get("ONS_ALTIN", 0) > 0 else data_dict.get("ONS_ALTIN", {}).get("son", 0)
@@ -640,10 +621,10 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
-    # Bütün Kalemler İçin Değişim Yüzdesi Hesabı
-    for k, v in data_dict.items():
-        ilk_val = safe_float(v["ilk"])
-        son_val = safe_float(v["son"])
+    # DÖVİZ & BRENT İÇİN YÜZDE HESABI
+    for k in ["USDTRY", "EURTRY", "BRENT_PETROL", "ABD_TAHVIL"]:
+        v = data_dict[k]
+        ilk_val, son_val = safe_float(v["ilk"]), safe_float(v["son"])
         v["degisim"] = ((son_val - ilk_val) / ilk_val * 100) if (ilk_val > 0 and son_val > 0) else 0.0
 
     # PARİTE KORUMASI
@@ -736,12 +717,13 @@ with st.container(border=True):
     # ============================================================================
     # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (FRED Indexation)")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
         ilk = safe_float(val["ilk"])
         son = safe_float(val["son"])
+        deg = safe_float(val["degisim"])
         
         with col:
             st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
@@ -752,7 +734,10 @@ with st.container(border=True):
             st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>{badge_txt}</span></label>", unsafe_allow_html=True)
             y_input = st.number_input("yeni", value=son, format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
             
-            deg = ((y_input - e_input) / e_input * 100) if e_input > 0 else 0.0
+            # Eğer kullanıcı elle değiştirdiyse yeni değişimi hesapla, aksi halde FRED değişimini koru
+            if e_input > 0 and abs(e_input - ilk) > 0.01:
+                deg = ((y_input - e_input) / e_input * 100)
+                
             renk = "pozitif" if deg >= 0 else "negatif"
             st.markdown(f"<div style='text-align:right;'><span class='{renk}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
             
@@ -783,7 +768,7 @@ with st.container(border=True):
     d_plastik = emtia_karti(em16, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
 
 # ============================================================================
-# NEW: TÜM GRUPLAR İÇİN İNTERAKTİF TARİHSEL EMTİA TREND ANALİZİ
+# TÜM GRUPLAR İÇİN İNTERAKTİF TARİHSEL EMTİA TREND ANALİZİ
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -827,7 +812,6 @@ with st.container(border=True):
                 ax_trend.grid(True, alpha=0.3, linestyle='--')
                 plt.xticks(rotation=30)
                 
-                # Minimum ve Maksimum Değer Anotasyonları
                 min_val, max_val = close_series.min(), close_series.max()
                 min_date, max_date = close_series.idxmin(), close_series.idxmax()
                 
