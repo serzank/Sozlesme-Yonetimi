@@ -323,7 +323,7 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- TCMB TÜFE/ÜFE MOTORU ---
+# --- %100 DÜZELTİLMİŞ VE VİRGÜL TEMİZLİKLİ EVDS TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -352,8 +352,10 @@ def get_tcmb_data(api_key, start_date, end_date):
             raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih_Raw'], errors='coerce')
             raw_df = raw_df.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
             
+            # VİRGÜL -> NOKTA TEMİZLİĞİ (TÜFE'nin 0,00 kalmasını engelleyen kritik düzeltme)
             for c in ["TUFE_COL", "UFE_COL", "HUFE_COL"]:
                 if c in raw_df.columns:
+                    raw_df[c] = raw_df[c].astype(str).str.replace(',', '.')
                     raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
             
             raw_df = raw_df.ffill()
@@ -429,7 +431,9 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-        
+    if FRED_API_KEY:
+        st.success("✅ FRED API (Endeksleme Motoru) Aktif")
+    
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
@@ -486,13 +490,13 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (ZIRHLANDIRILMIŞ DÖVİZ & EMTİA MOTORU)
+# PİYASA VERİSİ İŞLEME (STABİL DÖVİZ VE FRED ENGINE)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
     data_dict = {}
 
-    # 1. DÖVİZ HİSTORİCAL ZIRHLAMA (yfinance Direct Ticker)
+    # DÖVİZ HİSTORİCAL ZIRHLAMA
     fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
     for k_fx, ticker_code in fx_map.items():
         ilk_val, son_val = 0.0, 0.0
@@ -506,7 +510,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
         data_dict[k_fx] = {"ilk": ilk_val, "son": son_val, "degisim": 0.0}
 
-    # 2. EVDS DÖVİZ YEDEĞİ (YFINANCE PATLARSA)
     if data_dict["USDTRY"]["ilk"] == 0 and evds_key:
         try:
             evds_service = evdsAPI(evds_key)
@@ -515,7 +518,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             evds_df = evds_service.get_data(["TP.DK.USD.A.YTL"], startdate=s_evds, enddate=e_evds)
             if evds_df is not None and not evds_df.empty:
                 v_col = [c for c in evds_df.columns if "USD" in c or "TP" in c][0]
-                data_dict["USDTRY"]["ilk"] = float(pd.to_numeric(evds_df[v_col], errors='coerce').dropna().iloc[-1])
+                data_dict["USDTRY"]["ilk"] = float(pd.to_numeric(evds_df[v_col].astype(str).str.replace(',', '.'), errors='coerce').dropna().iloc[-1])
         except: pass
 
     if data_dict["EURTRY"]["ilk"] == 0 and evds_key:
@@ -526,14 +529,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             evds_df = evds_service.get_data(["TP.DK.EUR.A.YTL"], startdate=s_evds, enddate=e_evds)
             if evds_df is not None and not evds_df.empty:
                 v_col = [c for c in evds_df.columns if "EUR" in c or "TP" in c][0]
-                data_dict["EURTRY"]["ilk"] = float(pd.to_numeric(evds_df[v_col], errors='coerce').dropna().iloc[-1])
+                data_dict["EURTRY"]["ilk"] = float(pd.to_numeric(evds_df[v_col].astype(str).str.replace(',', '.'), errors='coerce').dropna().iloc[-1])
         except: pass
 
-    # DÖVİZ CANLI GÜNCELLEME (DOVIZ.COM)
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
-    # 3. BRENT PETROL TARİHSEL ZIRH
+    # BRENT PETROL TARİHSEL ZIRH
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
         b_ticker = yf.Ticker("BZ=F")
@@ -550,7 +552,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             evds_brent = evds_service.get_data(["TP.AK.BRENT"], startdate=s_evds, enddate=e_evds)
             if evds_brent is not None and not evds_brent.empty:
                 v_col = [c for c in evds_brent.columns if "BRENT" in c or "TP" in c][0]
-                data_dict["BRENT_PETROL"]["ilk"] = float(pd.to_numeric(evds_brent[v_col], errors='coerce').dropna().iloc[-1])
+                data_dict["BRENT_PETROL"]["ilk"] = float(pd.to_numeric(evds_brent[v_col].astype(str).str.replace(',', '.'), errors='coerce').dropna().iloc[-1])
         except: pass
 
     if doviz_data.get("BRENT_PETROL", 0) > 0:
@@ -701,7 +703,7 @@ with st.container(border=True):
     # ============================================================================
     # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (FRED Indexation)")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
@@ -958,12 +960,12 @@ with st.container(border=True):
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
     ec1, ec2, ec_mix, ec3, ec4, ec5 = st.columns(6)
-    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}")
-    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}")
-    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}")
+    tufe = ec1.number_input("TÜFE %", value=val_tufe, key=f"t_{d_key}_{val_tufe:.2f}")
+    ufe = ec2.number_input("ÜFE %", value=val_ufe, key=f"u_{d_key}_{val_ufe:.2f}")
+    ort_mix_giris = ec_mix.number_input("Ort(TÜFE+ÜFE)", value=val_mix, key=f"mix_{d_key}_{val_mix:.2f}")
     
-    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}", help=f"Seçilen Sektör: {selected_sector}")
-    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
+    h_ufe = ec3.number_input("H-ÜFE %", value=val_hufe_final, key=f"h_{d_key}_{selected_sector}_{val_hufe_final:.2f}", help=f"Seçilen Sektör: {selected_sector}")
+    iscilik = ec4.number_input("İşçilik %", value=val_iscilik, key=f"i_{d_key}_{val_iscilik:.2f}", help=f"Otomatik Hesaplanan Asgari Ücret:\n{iscilik_notu}")
     abd_enf = ec5.number_input("ABD Enf.%", value=0.4, key=f"a_{d_key}")
     
     if val_iscilik > 0:
