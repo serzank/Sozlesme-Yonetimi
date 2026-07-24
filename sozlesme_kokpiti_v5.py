@@ -158,23 +158,28 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- KESİN ÇÖZÜM: DOĞRUDAN KOLON İNDEXLİ TÜFE MOTORU ---
+# --- KESİN ÇÖZÜM: BAŞLIKLI DOĞRU TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
     try:
-        # Başlık satırı arama, doğrudan ilk satırdan veriyi al
-        df_raw = pd.read_csv(sheet_url, header=None)
+        df_raw = pd.read_csv(sheet_url)
         if df_raw.empty:
             res["Msg"] = "Sheet verisi boş."
             return res
             
-        df_clean = pd.DataFrame()
-        # 0. Sütun Tarih, 1. Sütun Değer
-        df_clean['Tarih'] = pd.to_datetime(df_raw.iloc[:, 0], errors='coerce')
+        df_raw.columns = df_raw.columns.str.strip()
+        df_raw = df_raw.dropna(how='all')
         
-        raw_vals = df_raw.iloc[:, 1].astype(str).str.strip().str.replace(',', '.', regex=False)
+        # Sütun isimlerini netleştiriyoruz (A: Tarih, B: TÜFE Genel)
+        tarih_col = df_raw.columns[0]
+        tufe_col = df_raw.columns[1]
+
+        df_clean = pd.DataFrame()
+        df_clean['Tarih'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        
+        raw_vals = df_raw[tufe_col].astype(str).str.strip().str.replace(',', '.', regex=False)
         df_clean['TUFE_VAL'] = pd.to_numeric(raw_vals, errors='coerce')
         
         df_clean = df_clean.dropna(subset=['Tarih', 'TUFE_VAL']).sort_values('Tarih')
