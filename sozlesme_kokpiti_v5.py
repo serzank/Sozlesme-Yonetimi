@@ -632,22 +632,21 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
+
+    
     st.write("FRED KEY:", fred_key)
-st.write("Euro:", get_global_inflation_change(
+    st.write("Euro:", get_global_inflation_change(
     fred_key,
     "CP0000EZ19M086NEST",
     start_date,
-    end_date
-))
-
-st.write("ABD:", get_global_inflation_change(
+    end_date))
+    
+    st.write("ABD:", get_global_inflation_change(
     fred_key,
     "CPIAUCSL",
     start_date,
-    end_date
-))
-
-
+    end_date))
+    
     data_dict = {}
 
     fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
