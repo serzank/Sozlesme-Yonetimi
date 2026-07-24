@@ -657,6 +657,42 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     elif te_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
 
+    # --- JET A-1 YAKIT GARANTİ MOTORU ---
+    data_dict["JET_FUEL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
+    
+    # 1. Öncelik: yfinance Borsasından Canlı Çekim (HO=F Kerosene/Jet Proxy -> $/Bbl)
+    try:
+        j_ticker = yf.Ticker("HO=F")
+        j_hist = j_ticker.history(start=d_start - timedelta(days=5), end=d_end + timedelta(days=1))
+        if not j_hist.empty:
+            # 1 varil = 42 galon
+            data_dict["JET_FUEL"]["ilk"] = round(float(j_hist['Close'].iloc[0]) * 42, 2)
+            data_dict["JET_FUEL"]["son"] = round(float(j_hist['Close'].iloc[-1]) * 42, 2)
+    except Exception:
+        pass
+
+    # 2. Öncelik: FRED API (PJETUSDM - Global Jet Fuel Price USD/Bbl)
+    if fred_key and data_dict["JET_FUEL"]["son"] == 0:
+        try:
+            url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=PJETUSDM&api_key={fred_key}&file_type=json&sort_order=desc&limit=1"
+            res_j = requests.get(url_j, timeout=5)
+            if res_j.status_code == 200:
+                obs = res_j.json().get("observations", [])
+                if obs and obs[0].get("value") not in [None, ".", ""]:
+                    data_dict["JET_FUEL"]["son"] = round(float(obs[0]["value"]), 2)
+                    pct_j = get_fred_index_change(fred_key, "PJETUSDM", d_start)
+                    data_dict["JET_FUEL"]["degisim"] = pct_j
+                    if (1 + pct_j/100) != 0:
+                        data_dict["JET_FUEL"]["ilk"] = round(data_dict["JET_FUEL"]["son"] / (1 + pct_j/100), 2)
+        except Exception:
+            pass
+
+    # Yüzde Değişimi Hesaplama
+    j_ilk = data_dict["JET_FUEL"]["ilk"]
+    j_son = data_dict["JET_FUEL"]["son"]
+    if j_ilk > 0 and j_son > 0 and data_dict["JET_FUEL"]["degisim"] == 0:
+        data_dict["JET_FUEL"]["degisim"] = ((j_son - j_ilk) / j_ilk) * 100
+
     # TRADINGECONOMICS TÜM CANLI EMTİALAR EKLENİYOR
     for te_key, te_val in te_data.items():
         if te_key not in data_dict:
@@ -1132,7 +1168,7 @@ with st.container(border=True):
     w_plastik = w27.number_input("Plastik %", value=auto_weights.get("plastik", 0))
     w_jet_fuel = w28.number_input("Jet A-1 %", value=auto_weights.get("jet_fuel", 0))
 
-    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik
+    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik+w_jet_fuel
     kalan = 100.0 - toplam
     
     if kalan == 0:
