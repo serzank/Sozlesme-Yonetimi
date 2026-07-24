@@ -331,7 +331,7 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        # EVDS isteği için geniş tarih penceresi
+        # Geniş tarih penceresi ile veriyi çek
         s_q = (start_date - relativedelta(months=24)).replace(day=1).strftime("%d-%m-%Y")
         e_q = (datetime.today() + relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
 
@@ -353,31 +353,25 @@ def get_tcmb_data(api_key, start_date, end_date):
             raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih_Raw'], errors='coerce')
             raw_df = raw_df.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
             
-            # Sayı dönüştürme ve virgül temizliği
+            # Sayısal dönüştürme ve virgül/nokta temizliği
             for c in ["TUFE_COL", "UFE_COL", "HUFE_COL"]:
                 if c in raw_df.columns:
                     raw_df[c] = raw_df[c].astype(str).str.replace(',', '.')
                     raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
             
-            raw_df = raw_df.dropna(subset=["TUFE_COL"]).copy()
-            
-            # YIL-AY (PERIOD) MANTIĞIYLA EŞLEŞTİRME (GÜN SIKIŞMASINI ÇÖZEN KRİTİK ADIM)
+            # YIL-AY (Period) eşleştirmesi
             raw_df['Period'] = raw_df['Tarih_Dt'].dt.to_period('M')
             
             p_start = pd.Period(start_date, freq='M')
             p_end = pd.Period(end_date, freq='M')
             
-            # En son açıklanmış resmi veriyi bulma
-            latest_row = raw_df.iloc[-1]
-            latest_p = latest_row['Period']
+            # 1. BAŞLANGIÇ AYI EŞLEŞTİRME
+            row_s_df = raw_df[raw_df['Period'] <= p_start]
+            start_row = row_s_df.iloc[-1] if not row_s_df.empty else raw_df.iloc[0]
 
-            # Başlangıç dönemini arama
-            row_s_df = raw_df[raw_df['Period'] == p_start]
-            if not row_s_df.empty:
-                start_row = row_s_df.iloc[0]
-            else:
-                past_df = raw_df[raw_df['Period'] <= p_start]
-                start_row = past_df.iloc[-1] if not past_df.empty else raw_df.iloc[0]
+            # 2. BİTİŞ AYI EŞLEŞTİRME (Kullanıcının seçtiği end_date dikkate alınıyor!)
+            row_e_df = raw_df[raw_df['Period'] <= p_end]
+            latest_row = row_e_df.iloc[-1] if not row_e_df.empty else raw_df.iloc[-1]
 
             def calc_diff(col_name):
                 if col_name in raw_df.columns:
@@ -392,29 +386,11 @@ def get_tcmb_data(api_key, start_date, end_date):
                 "UFE": calc_diff("UFE_COL"),
                 "HUFE": calc_diff("HUFE_COL"),
                 "Status": True,
-                "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_p}"
+                "Msg": f"TCMB Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
             })
     except Exception as e: 
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
     return res
-
-@st.cache_data(ttl=600)
-def get_evds_gold_history(api_key, d_start):
-    price = 0.0
-    if not api_key: return price
-    try:
-        evds = evdsAPI(api_key)
-        s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
-        e_date_str = d_start.strftime("%d-%m-%Y")
-        series = ["TP.MK.KUL.YTL"]
-        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
-        if df is not None and not df.empty:
-             col = [c for c in df.columns if "TP" in c][0]
-             df[col] = pd.to_numeric(df[col], errors='coerce')
-             df.dropna(subset=[col], inplace=True)
-             if not df.empty: price = float(df.iloc[-1][col])
-    except: pass
-    return price
 
 @st.cache_data(ttl=600)
 def get_evds_fuel_history(api_key, d_start):
