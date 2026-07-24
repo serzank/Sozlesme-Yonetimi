@@ -174,21 +174,45 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
             res["Msg"] = "Sheet verisi boş."
             return res
             
-        df_raw.columns = df_raw.columns.str.strip()
-        df_raw = df_raw.dropna(how='all')
+        # Matris tablosunu (Wide Format) uzun formata (Long Format) çevirme
+        # A sütunu Yıl, diğer sütunlar aylar
+        yil_col = df_raw.columns[0]
         
-        tarih_col = next((c for c in df_raw.columns if "TARIH" in c.upper() or "DATE" in c.upper() or "AY" in c.upper()), df_raw.columns[0])
-        tufe_col = next((c for c in df_raw.columns if "TUFE" in c.upper() or "ENDEKS" in c.upper()), None)
-
-        if not tufe_col:
-            res["Msg"] = f"TÜFE kolonu bulunamadı! Mevcut sütunlar: {list(df_raw.columns)}"
+        # Sütun isimlerindeki boşlukları temizle
+        df_raw = df_raw.rename(columns={c: str(c).strip() for c in df_raw.columns})
+        
+        # Ay isimleri sözlüğü
+        ay_map = {
+            'Ocak': 1, 'Şubat': 2, 'Mart': 3, 'Nisan': 4, 'Mayıs': 5, 'Haziran': 6,
+            'Temmuz': 7, 'Ağustos': 8, 'Eylül': 9, 'Ekim': 10, 'Kasım': 11, 'Aralık': 12,
+            'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
+            'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12
+        }
+        
+        melted_rows = []
+        for idx, row in df_raw.iterrows():
+            yil_val = row[yil_col]
+            try:
+                yil = int(float(str(yil_val).strip()))
+                if yil < 2000 or yil > 2100: continue
+            except: continue
+            
+            for col_name in df_raw.columns[1:]:
+                cleaned_col = col_name.split()[0] # İngilizce/Türkçe karma başlıklar için
+                if cleaned_col in ay_map:
+                    ay = ay_map[cleaned_col]
+                    val_str = str(row[col_name]).strip().replace('.', '').replace(',', '.')
+                    try:
+                        val = float(val_str)
+                        if val > 0:
+                            melted_rows.append({"Tarih_Dt": pd.Timestamp(year=yil, month=ay, day=1), "TUFE_COL": val})
+                    except: pass
+                    
+        if not melted_rows:
+            res["Msg"] = "Tablodan geçerli veri dönüştürülemedi."
             return res
-
-        df_clean = pd.DataFrame()
-        df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
-        df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
-
-        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
+            
+        df_clean = pd.DataFrame(melted_rows).sort_values('Tarih_Dt')
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
