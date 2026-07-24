@@ -454,12 +454,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-    if ALPHA_VANTAGE_KEY:
-        st.success("✅ Alpha Vantage API Aktif")
-    else:
-        st.caption("ℹ️ Secrets'a 'ALPHA_VANTAGE_KEY' ekleyerek resmi emtia verilerini bağlayabilirsiniz.")
-    st.markdown("---")
-    
+       
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
