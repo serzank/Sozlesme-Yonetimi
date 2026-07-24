@@ -341,8 +341,7 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- ENDEKS BAZLI NET HESAPLAMA MOTORU ---
-# --- İNDİS TABANLI KUSURSUZ ENDEKS HESAPLAMA MOTORU ---
+# --- FFILL TUZAĞINDAN ARINDIRILMIŞ NET ENDESK MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -377,27 +376,25 @@ def get_tcmb_data(api_key, start_date, end_date):
         if len(value_cols) >= 3:
             df_clean['HUFE_COL'] = pd.to_numeric(raw_df[value_cols[2]].astype(str).str.replace(',', '.'), errors='coerce')
 
-        df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt').ffill()
+        # Geçersiz tarihleri ve TÜFE'si NaN olan (henüz açıklanmamış) güncel ayları temizliyoruz
+        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        # 1. Başlangıç Satırı: p_start tarihine en yakın önceki/eşit ay
+        # Başlangıç ve Bitiş için gerçek veri olan en yakın ayları seçiyoruz
         matches_s = df_clean[df_clean['Period'] <= p_start]
         start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
 
-        # 2. Bitiş Satırı: p_end tarihine en yakın önceki/eşit ay
         matches_e = df_clean[df_clean['Period'] <= p_end]
         latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
-        # EĞİLER HATAEN AYNI SATIR SEÇİLDİYSE (Çakışma varsa): Doğru aralığı yakalamak için endeks pozisyonuna başvur
+        # Eğer aynı ay seçildiyse bir önceki aya git ki oran 0 çıkmasın
         if start_row['Period'] == latest_row['Period'] and len(df_clean) > 1:
-            # Başlangıç indexini bul
             idx_list = df_clean[df_clean['Period'] <= p_start].index
             if len(idx_list) > 0:
                 s_idx = idx_list[-1]
-                # Periyoda göre kaç ay ileri gideceğimizi hesapla (Örn: 3 ay, 6 ay vb.)
                 months_diff = (p_end.year - p_start.year) * 12 + (p_end.month - p_start.month)
                 target_e_idx = min(s_idx + max(months_diff, 1), len(df_clean) - 1)
                 latest_row = df_clean.loc[target_e_idx]
