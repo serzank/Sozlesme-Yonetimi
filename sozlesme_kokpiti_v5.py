@@ -672,8 +672,8 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
     # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
-    euro_enf_val = get_global_inflation_change(FRED_API_KEY, "CP0000EZ19M086NEST", start_date, end_date) if FRED_API_KEY else 0.0
-    abd_cpi_val = get_global_inflation_change(FRED_API_KEY, "CPIAUCSL", start_date, end_date) if FRED_API_KEY else 0.0
+    euro_enf_val = get_global_inflation_change(fred_key, "CP0000EZ19M086NEST", start_date, end_date) if FRED_API_KEY else 0.0
+    abd_cpi_val = get_global_inflation_change(fred_key, "CPIAUCSL", start_date, end_date) if FRED_API_KEY else 0.0
 
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
@@ -822,10 +822,14 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
 
+    data_dict["EURO_HICP"] = euro_enf_val
+    data_dict["ABD_CPI"] = abd_cpi_val
+
     return data_dict
 
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live, FRED_API_KEY)
-
+euro_enf_val = piyasa.get("EURO_HICP", 0.0)
+abd_cpi_val = piyasa.get("ABD_CPI", 0.0)
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
 # ============================================================================
