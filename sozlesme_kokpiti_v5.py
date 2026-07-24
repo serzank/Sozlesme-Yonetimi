@@ -358,7 +358,6 @@ def get_tcmb_data(api_key, start_date, end_date):
             res["Msg"] = "EVDS'den veri dönmedi."
             return res
             
-        # Sütunları isme göre esnek bulma
         tarih_col, tufe_col, ufe_col, hufe_col = None, None, None, None
         for c in raw_df.columns:
             cu = c.upper()
@@ -367,18 +366,14 @@ def get_tcmb_data(api_key, start_date, end_date):
             elif "TUFE1YI" in cu or "YI" in cu: ufe_col = c
             elif "HKFE01" in cu: hufe_col = c
 
-        if not tarih_col:
-            return res
+        if not tarih_col: return res
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
         
-        if tufe_col in raw_df.columns:
-            df_clean['TUFE_COL'] = pd.to_numeric(raw_df[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
-        if ufe_col in raw_df.columns:
-            df_clean['UFE_COL'] = pd.to_numeric(raw_df[ufe_col].astype(str).str.replace(',', '.'), errors='coerce')
-        if hufe_col in raw_df.columns:
-            df_clean['HUFE_COL'] = pd.to_numeric(raw_df[hufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        for col_src, col_dst in [(tufe_col, 'TUFE_COL'), (ufe_col, 'UFE_COL'), (hufe_col, 'HUFE_COL')]:
+            if col_src and col_src in raw_df.columns:
+                df_clean[col_dst] = pd.to_numeric(raw_df[col_src].astype(str).str.replace(',', '.'), errors='coerce')
 
         df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt').ffill()
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
@@ -386,10 +381,15 @@ def get_tcmb_data(api_key, start_date, end_date):
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        row_s_df = df_clean[df_clean['Period'] <= p_start]
+        # 3 Ay, 6 Ay, 1 Yıl veya özel vadelerde en yakın geçerli ay satırlarını bulma
+        row_s_df = df_clean[df_clean['Period'] == p_start]
+        if row_s_df.empty:
+            row_s_df = df_clean[df_clean['Period'] <= p_start]
         start_row = row_s_df.iloc[-1] if not row_s_df.empty else df_clean.iloc[0]
 
-        row_e_df = df_clean[df_clean['Period'] <= p_end]
+        row_e_df = df_clean[df_clean['Period'] == p_end]
+        if row_e_df.empty:
+            row_e_df = df_clean[df_clean['Period'] <= p_end]
         latest_row = row_e_df.iloc[-1] if not row_e_df.empty else df_clean.iloc[-1]
 
         def calc_diff(col_name):
