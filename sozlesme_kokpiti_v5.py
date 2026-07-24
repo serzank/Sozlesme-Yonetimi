@@ -142,7 +142,13 @@ def get_global_inflation_change(api_key, series_id, target_start_date, target_en
                     return round(((val_latest - val_start) / val_start) * 100, 2)
     except: pass
     return 0.0
-        
+def get_fred_index_change(api_key, series_id, target_start_date):
+    return get_global_inflation_change(
+        api_key,
+        series_id,
+        target_start_date,
+        datetime.today().date()
+    )        
 def render_svg_logo():
     return """
     <svg width="100%" height="auto" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
