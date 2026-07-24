@@ -955,6 +955,9 @@ with st.container(border=True):
                 close_series = close_series.iloc[:, 0]
                 
             close_series = close_series.dropna()
+            # --- JET A-1 İÇİN GALON -> VARİL ÇEVRİMİ (x42) ---
+            if symbol_code == "HO=F":
+                close_series = close_series * 42
             
             fig_plotly = go.Figure()
             fig_plotly.add_trace(go.Scatter(
@@ -1275,8 +1278,24 @@ with st.container(border=True):
         if agr > 0:
             data["Kalem"].append(ad); data["Değişim %"].append(deg)
             data["Ağırlık %"].append(agr); data["Etki %"].append((deg*agr)/100)
+    # Sadece ağırlığı 0'dan büyük olan kalemleri filtreleme ve vurgulama
+    data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
+    for ad, deg, agr in etkiler:
+        if agr > 0:  # <--- Sadece seçilen (dolgu yapılan) ağırlıkları alıyoruz
+            data["Kalem"].append(f"📌 {ad}") # Seçilenlere raptiye ikonu ekler
+            data["Değişim %"].append(deg)
+            data["Ağırlık %"].append(agr)
+            data["Etki %"].append((deg * agr) / 100)
+
     df = pd.DataFrame(data)
-    st.dataframe(df.style.format({"Değişim %": "{:.2f}", "Ağırlık %": "{:.0f}", "Etki %": "{:.2f}"}), use_container_width=True)
+
+    # Tabloda Ağırlık % ve Etki % sütunlarını şık bir renkle highlight etme
+    st.dataframe(
+        df.style.format({"Değişim %": "%{:+.2f}", "Ağırlık %": "%{:.0f}", "Etki %": "%{:.2f}"})
+        .background_gradient(subset=["Ağırlık %"], cmap="YlGn") # Yüksek ağırlıkları yeşil tonuyla vurgular
+        .highlight_max(subset=["Etki %"], color="#D4EFDF"), # Zamma en çok sebep olan kalemi yakar
+        use_container_width=True
+    )
     
     if HAS_XLSX:
         buffer = io.BytesIO()
