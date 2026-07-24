@@ -158,7 +158,7 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- 1. TÜFE: KULLANICI GOOGLE SHEET TABLOSUNDAN ---
+# --- MATRİS TABLOSU UYUMLU KUSURSUZ TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -169,24 +169,18 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         else:
             csv_url = sheet_url
             
-        df_raw = pd.read_csv(csv_url)
+        # Doğrudan 4. satırdan (index 3) veriyi başlatıyoruz
+        df_raw = pd.read_csv(csv_url, header=3)
         if df_raw.empty:
             res["Msg"] = "Sheet verisi boş."
             return res
             
-        # Matris tablosunu (Wide Format) uzun formata (Long Format) çevirme
-        # A sütunu Yıl, diğer sütunlar aylar
+        # İlk sütun Yıl (2005, 2006...)
         yil_col = df_raw.columns[0]
         
-        # Sütun isimlerindeki boşlukları temizle
-        df_raw = df_raw.rename(columns={c: str(c).strip() for c in df_raw.columns})
-        
-        # Ay isimleri sözlüğü
         ay_map = {
             'Ocak': 1, 'Şubat': 2, 'Mart': 3, 'Nisan': 4, 'Mayıs': 5, 'Haziran': 6,
-            'Temmuz': 7, 'Ağustos': 8, 'Eylül': 9, 'Ekim': 10, 'Kasım': 11, 'Aralık': 12,
-            'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
-            'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12
+            'Temmuz': 7, 'Ağustos': 8, 'Eylül': 9, 'Ekim': 10, 'Kasım': 11, 'Aralık': 12
         }
         
         melted_rows = []
@@ -198,9 +192,15 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
             except: continue
             
             for col_name in df_raw.columns[1:]:
-                cleaned_col = col_name.split()[0] # İngilizce/Türkçe karma başlıklar için
-                if cleaned_col in ay_map:
-                    ay = ay_map[cleaned_col]
+                # Sütun adından ay adını yakala (örn: "Ocak" veya "January")
+                c_clean = str(col_name).strip()
+                ay = None
+                for tr_en, m_idx in ay_map.items():
+                    if tr_en.lower() in c_clean.lower():
+                        ay = m_idx
+                        break
+                
+                if ay:
                     val_str = str(row[col_name]).strip().replace('.', '').replace(',', '.')
                     try:
                         val = float(val_str)
@@ -237,7 +237,6 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
     except Exception as e:
         res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
-
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
 @st.cache_data(ttl=3600)
