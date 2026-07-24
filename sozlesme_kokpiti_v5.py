@@ -836,6 +836,8 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     return data_dict
 
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live, FRED_API_KEY)
+st.write(piyasa["EURO_HICP"])
+st.write(piyasa["ABD_CPI"])
 euro_enf_val = piyasa.get("EURO_HICP", 0.0)
 abd_cpi_val = piyasa.get("ABD_CPI", 0.0)
 # ============================================================================
