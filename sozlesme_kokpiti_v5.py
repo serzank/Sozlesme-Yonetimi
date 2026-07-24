@@ -540,9 +540,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     # TÜFE Google Sheet'ten, ÜFE EVDS'den çekiliyor
     tufe_res = get_sheets_tufe_data(tufe_sheet_url, start_date, end_date)
     
-    # KRİTİK KONTROL: Fonksiyonun döndürdüğü ham sözlüğü ekrana basalım
-    st.write("--- TUFE_RES KONTROLÜ ---", tufe_res)
-    
+     
     ufe_val = get_evds_ufe_data(MY_API_KEY, start_date, end_date)
     
     tcmb = {
@@ -550,7 +548,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
         "UFE": ufe_val,
         "HUFE": 0.0,
         "Status": tufe_res["Status"],
-        "Msg": tufe_res["Msg"] + f" | EVDS ÜFE: %{ufe_val}"
+        "Msg": ""
     }
     
     yakit_guncel = guncel_akaryakit_cek()
