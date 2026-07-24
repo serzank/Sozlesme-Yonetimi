@@ -108,59 +108,104 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- BURAYA EKLEYEBİLİRSİN ---
-def get_tcmb_data(api_key, start_date, end_date):
-    sheet_url = "https://docs.google.com/spreadsheets/d/15tHPO39U5ltgMDQVa4jEb5b2sHCWV1KuHq5epNrWNh0/edit?gid=0#gid=0"
-    return get_sheets_tufe_data(sheet_url, start_date, end_date)
-
-@st.cache_data(ttl=600)
-def get_evds_gold_history(api_key, d_start):
-    price = 0.0
-    if not api_key: return price
+# --- 1. TÜFE: KULLANICI GOOGLE SHEET TABLOSUNDAN ---
+@st.cache_data(ttl=300)
+def get_sheets_tufe_data(sheet_url, start_date, end_date):
+    res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+    if not sheet_url: return res
     try:
-        evds = evdsAPI(api_key)
-        s_date_str = (d_start - timedelta(days=7)).strftime("%d-%m-%Y")
-        e_date_str = d_start.strftime("%d-%m-%Y")
-        series = ["TP.MK.KUL.YTL"]
-        df = evds.get_data(series, startdate=s_date_str, enddate=e_date_str)
-        if df is not None and not df.empty:
-             col = [c for c in df.columns if "TP" in c][0]
-             df[col] = pd.to_numeric(df[col], errors='coerce')
-             df.dropna(subset=[col], inplace=True)
-             if not df.empty: price = float(df.iloc[-1][col])
-    except: pass
-    return price
+        if "edit" in sheet_url:
+            csv_url = sheet_url.split("/edit")[0] + "/export?format=csv"
+        else:
+            csv_url = sheet_url
+            
+        df_raw = pd.read_csv(csv_url)
+        if df_raw.empty:
+            res["Msg"] = "Sheet verisi boş."
+            return res
+            
+        df_raw.columns = df_raw.columns.str.strip()
+        df_raw = df_raw.dropna(how='all')
+        
+        tarih_col = next((c for c in df_raw.columns if "TARIH" in c.upper() or "DATE" in c.upper() or "AY" in c.upper()), df_raw.columns[0])
+        tufe_col = next((c for c in df_raw.columns if "TUFE" in c.upper() or "ENDEKS" in c.upper()), None)
 
-# --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
+        if not tufe_col:
+            res["Msg"] = f"TÜFE kolonu bulunamadı! Mevcut sütunlar: {list(df_raw.columns)}"
+            return res
+
+        df_clean = pd.DataFrame()
+        df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+
+        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
+        df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
+
+        p_start = pd.Period(start_date, freq='M')
+        p_end = pd.Period(end_date, freq='M')
+
+        matches_s = df_clean[df_clean['Period'] <= p_start]
+        start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
+
+        matches_e = df_clean[df_clean['Period'] <= p_end]
+        latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
+
+        v_start = safe_float(start_row['TUFE_COL'])
+        v_end = safe_float(latest_row['TUFE_COL'])
+
+        if v_start > 0 and v_end > 0:
+            tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
+            res.update({
+                "TUFE": tufe_diff,
+                "Status": True,
+                "Msg": f"Sheet TÜFE Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
+            })
+    except Exception as e:
+        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
+    return res
+
+
+# --- 2. ÜFE: EVDS API ÜZERİNDEN ---
 @st.cache_data(ttl=3600)
-def get_fred_index_change(api_key, series_id, target_start_date):
-    if not api_key:
-        return 0.0
+def get_evds_ufe_data(api_key, start_date, end_date):
+    ufe_val = 0.0
+    if not api_key: return ufe_val
     try:
-        s_date = (target_start_date - timedelta(days=240)).strftime("%Y-%m-%d")
-        e_date = datetime.today().strftime("%Y-%m-%d")
-        url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            obs = res.json().get("observations", [])
-            valid = []
-            for o in obs:
-                val = o.get("value")
-                if val not in [None, ".", ""]:
-                    try:
-                        valid.append((pd.to_datetime(o["date"]), float(val)))
-                    except: pass
-            if valid:
-                df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
-                past_df = df[df.index <= pd.Timestamp(target_start_date)]
-                val_start = float(past_df.iloc[-1]["Value"]) if not past_df.empty else float(df.iloc[0]["Value"])
-                val_latest = float(df.iloc[-1]["Value"])
-                
-                if val_start > 0:
-                    pct_change = ((val_latest - val_start) / val_start) * 100
-                    return pct_change
+        evds_service = evdsAPI(api_key)
+        s_date = start_date - relativedelta(months=2)
+        e_date = end_date + relativedelta(months=1)
+        
+        start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
+        next_month = e_date + relativedelta(months=1)
+        last_day_date = next_month.replace(day=1) - timedelta(days=1)
+        end_q = last_day_date.strftime("%d-%m-%Y")
+
+        raw_df = evds_service.get_data(["TP.TUFE1YI.T1"], startdate=start_q, enddate=end_q)
+        if raw_df is not None and not raw_df.empty:
+            tarih_col = next((c for c in raw_df.columns if "TARIH" in c.upper() or "DATE" in c.upper()), None)
+            val_col = [c for c in raw_df.columns if c != tarih_col][0]
+            
+            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df[tarih_col], errors='coerce')
+            raw_df[val_col] = pd.to_numeric(raw_df[val_col].astype(str).str.replace(',', '.'), errors='coerce')
+            raw_df = raw_df.dropna(subset=['Tarih_Dt', val_col]).sort_values('Tarih_Dt')
+            raw_df['Period'] = raw_df['Tarih_Dt'].dt.to_period('M')
+
+            p_start = pd.Period(start_date, freq='M')
+            p_end = pd.Period(end_date, freq='M')
+
+            matches_s = raw_df[raw_df['Period'] <= p_start]
+            start_row = matches_s.iloc[-1] if not matches_s.empty else raw_df.iloc[0]
+
+            matches_e = raw_df[raw_df['Period'] <= p_end]
+            latest_row = matches_e.iloc[-1] if not matches_e.empty else raw_df.iloc[-1]
+
+            v_start = safe_float(start_row[val_col])
+            v_end = safe_float(latest_row[val_col])
+
+            if v_start > 0 and v_end > 0:
+                ufe_val = round(((v_end / v_start) - 1) * 100, 2)
     except: pass
-    return 0.0
+    return ufe_val
 
 # --- SÖZLEŞME AĞIRLIK MANTIĞI ---
 def get_auto_weights(contract_type):
@@ -488,11 +533,22 @@ if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
 # --- VERİ KÖPRÜSÜ ---
+# --- VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tufe_sheet_url = "https://docs.google.com/spreadsheets/d/15tHPO39U5ltgMDQVa4jEb5b2sHCWV1KuHq5epNrWNh0/edit?gid=0#gid=0"
-    tcmb = get_sheets_tufe_data(tufe_sheet_url, start_date, end_date)
-    yakit_guncel = guncel_akaryakit_cek()
-    tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
+    
+    # TÜFE Google Sheet'ten, ÜFE EVDS'den çekiliyor
+    tufe_res = get_sheets_tufe_data(tufe_sheet_url, start_date, end_date)
+    ufe_val = get_evds_ufe_data(MY_API_KEY, start_date, end_date)
+    
+    tcmb = {
+        "TUFE": tufe_res["TUFE"],
+        "UFE": ufe_val,
+        "HUFE": 0.0, # H-ÜFE zaten kendi bloğunda Google Sheet'ten okunuyor
+        "Status": tufe_res["Status"],
+        "Msg": tufe_res["Msg"] + f" | EVDS ÜFE: %{ufe_val}"
+    }
+    
     yakit_guncel = guncel_akaryakit_cek()
     doviz_com_data = doviz_com_canli_cek() 
     te_data_live = trading_economics_live_all() 
