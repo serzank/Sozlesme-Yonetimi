@@ -219,54 +219,72 @@ def alpha_vantage_emtia_al(api_key, function_name, target_start_date):
     return ilk_fiyat, son_fiyat
 
 # -------------------------------------------------------------------------
-# TRADINGECONOMICS EMTİA SCRAPER (TAM KAPSAMLI & BAKIR/ALÜMİNYUM DÜZELTİLMİŞ)
+# TRADINGECONOMICS EMTİA SCRAPER (SAYFA SPESİFİK DİREKT BOT)
 # -------------------------------------------------------------------------
 @st.cache_data(ttl=1800)
 def trading_economics_emtia_cek():
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5'
     }
-    url = "https://tradingeconomics.com/commodities"
+    
+    items_to_fetch = {
+        "BAKIR": "https://tradingeconomics.com/commodity/copper",
+        "ALUMINYUM": "https://tradingeconomics.com/commodity/aluminum",
+        "DOGALGAZ": "https://tradingeconomics.com/commodity/natural-gas",
+        "CELIK": "https://tradingeconomics.com/commodity/steel",
+        "DEMIR": "https://tradingeconomics.com/commodity/iron-ore",
+        "NIKEL": "https://tradingeconomics.com/commodity/nickel",
+        "CINKO": "https://tradingeconomics.com/commodity/zinc",
+        "PAMUK": "https://tradingeconomics.com/commodity/cotton",
+        "BUGDAY": "https://tradingeconomics.com/commodity/wheat",
+        "KAKAO": "https://tradingeconomics.com/commodity/cocoa",
+        "PLASTIK": "https://tradingeconomics.com/commodity/polyethylene"
+    }
+    
     emtia_fiyatlari = {}
     
-    # Tam Kapsamlı Haritalama (Bakır, Alüminyum ve Doğal Gaz Dahil Edildi)
-    mapping = {
-        "copper": "BAKIR",
-        "aluminum": "ALUMINYUM",
-        "natural gas": "DOGALGAZ",
-        "steel": "CELIK",
-        "iron ore": "DEMIR",
-        "nickel": "NIKEL",
-        "zinc": "CINKO",
-        "cotton": "PAMUK",
-        "wheat": "BUGDAY",
-        "cocoa": "KAKAO",
-        "polyethylene": "PLASTIK"
-    }
-    
+    # 1. YOL: TE Commodity Tablosunu Taramak
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get("https://tradingeconomics.com/commodities", headers=headers, timeout=8)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, "html.parser")
-            tables = soup.find_all('table')
-            for table in tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) >= 2:
-                        item_name = cols[0].get_text().strip().lower()
-                        for key_search, system_key in mapping.items():
-                            if key_search in item_name and system_key not in emtia_fiyatlari:
-                                raw_val = cols[1].get_text().strip().replace(',', '')
-                                try:
-                                    val = float(raw_val)
-                                    if val > 0:
-                                        emtia_fiyatlari[system_key] = val
-                                except: pass
-    except Exception:
-        pass
-        
+            rows = soup.find_all('tr')
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) >= 2:
+                    text = cols[0].get_text().strip().lower()
+                    val_raw = cols[1].get_text().strip().replace(',', '')
+                    try:
+                        val = float(val_raw)
+                        if "copper" in text and "BAKIR" not in emtia_fiyatlari: emtia_fiyatlari["BAKIR"] = val
+                        elif "aluminum" in text and "ALUMINYUM" not in emtia_fiyatlari: emtia_fiyatlari["ALUMINYUM"] = val
+                        elif "natural gas" in text and "DOGALGAZ" not in emtia_fiyatlari: emtia_fiyatlari["DOGALGAZ"] = val
+                        elif "steel" in text and "CELIK" not in emtia_fiyatlari: emtia_fiyatlari["CELIK"] = val
+                        elif "iron ore" in text and "DEMIR" not in emtia_fiyatlari: emtia_fiyatlari["DEMIR"] = val
+                        elif "nickel" in text and "NIKEL" not in emtia_fiyatlari: emtia_fiyatlari["NIKEL"] = val
+                        elif "zinc" in text and "CINKO" not in emtia_fiyatlari: emtia_fiyatlari["CINKO"] = val
+                        elif "cotton" in text and "PAMUK" not in emtia_fiyatlari: emtia_fiyatlari["PAMUK"] = val
+                        elif "wheat" in text and "BUGDAY" not in emtia_fiyatlari: emtia_fiyatlari["BUGDAY"] = val
+                        elif "cocoa" in text and "KAKAO" not in emtia_fiyatlari: emtia_fiyatlari["KAKAO"] = val
+                    except: pass
+    except: pass
+    
+    # 2. YOL: Eksik Kalanları Doğrudan Kendi Sayfasından Çekme
+    for key, url in items_to_fetch.items():
+        if key not in emtia_fiyatlari or emtia_fiyatlari[key] == 0:
+            try:
+                r = requests.get(url, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    sp = BeautifulSoup(r.content, "html.parser")
+                    # ID = 'p' tagı TE üzerinde canlı fiyatı tutar
+                    p_box = sp.find('td', id='p') or sp.find('span', id='p')
+                    if p_box:
+                        v = float(p_box.get_text().strip().replace(',', ''))
+                        if v > 0: emtia_fiyatlari[key] = v
+            except: pass
+            
     return emtia_fiyatlari
 
 # --- DİĞER VERİ ÇEKME FONKSİYONLARI ---
@@ -454,7 +472,8 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-       
+   
+    
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
@@ -506,13 +525,13 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
     canli_emtia = canli_emtia_cek()
-    te_emtia = trading_economics_emtia_cek() # TradingEconomics verileri
+    te_emtia = trading_economics_emtia_cek() 
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (ÇOK KATMANLI / HYBRID MOTOR)
+# PİYASA VERİSİ İŞLEME (GERÇEKÇİ & HİLESİZ DÜZELTİLMİŞ ENGINE)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_canli, av_key, te_data):
@@ -526,9 +545,10 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
-    # 1. ADIM: STANDART / YAHOO / EVDS ÇEKİMİ
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
+        
+        # 1. YAHOO FINANCE HISTORICAL TARAMA
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -548,6 +568,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                             son = float(df.iloc[-1]['Close'])
         except: pass
 
+        # 2. EVDS DÖVİZ YEDEK
         if ilk == 0 and evds_key and (key in ["USDTRY", "EURTRY"]):
             try:
                 evds_service = evdsAPI(evds_key)
@@ -561,43 +582,23 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                     ilk = float(evds_df[val_col].dropna().iloc[-1])
             except: pass
 
-        # Web Scraping & TE Fallback
-        if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
-        elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
-        
-        # TradingEconomics Öncelikli Kontrol (Bakır, Alüminyum, Doğal Gaz)
-        if key in te_data and te_data[key] > 0: 
+        # 3. TRADING ECONOMICS GERÇEK CANLI VERİ
+        if key in te_data and te_data[key] > 0:
             son = te_data[key]
-        elif key == "BAKIR" and emtia_canli.get("BAKIR", 0) > 0 and son == 0: 
-            son = emtia_canli["BAKIR"]
-        elif key == "ALUMINYUM" and emtia_canli.get("ALUMINYUM", 0) > 0 and son == 0: 
-            son = emtia_canli["ALUMINYUM"]
-        elif key == "DOGALGAZ" and emtia_canli.get("DOGALGAZ", 0) > 0 and son == 0: 
-            son = emtia_canli["DOGALGAZ"]
+        elif key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
+        elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
+        elif key == "BAKIR" and emtia_canli.get("BAKIR", 0) > 0 and son == 0: son = emtia_canli["BAKIR"]
+        elif key == "ALUMINYUM" and emtia_canli.get("ALUMINYUM", 0) > 0 and son == 0: son = emtia_canli["ALUMINYUM"]
+        elif key == "DOGALGAZ" and emtia_canli.get("DOGALGAZ", 0) > 0 and son == 0: son = emtia_canli["DOGALGAZ"]
 
-        # Akıllı Taban Fiyat Mekanizması (Eğer canlı veri veya servis erişilemez olursa)
-        fallback_taban = {
-            "BAKIR": 4.35, "ALUMINYUM": 2480.0, "DOGALGAZ": 2.45,
-            "CELIK": 820.0, "DEMIR": 105.0, "NIKEL": 16500.0, "CINKO": 2800.0,
-            "PAMUK": 78.0, "BUGDAY": 580.0, "KAKAO": 7800.0, "PLASTIK": 1150.0
-        }
-        if son == 0 and key in fallback_taban:
-            son = fallback_taban[key]
-
-        if son > 0 and ilk == 0:
-            ilk = son * 0.96  # Tahmini geçmiş referansı
-
-        degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
+        # SAHTE HİLELİ YÜZDE HESAPLARI KALDIRILDI!
+        # Geçmiş veri bulunamazsa '0.0' kalır, kullanıcı el ile arayüzden düzenler.
+        degisim = ((son - ilk) / ilk * 100) if (ilk > 0 and son > 0) else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # 2. ADIM: ALPHA VANTAGE ENTEGRASYONU
+    # ALPHA VANTAGE
     if av_key:
-        av_map = [
-            ("BRENT_PETROL", "BRENT"),
-            ("BAKIR", "COPPER"),
-            ("ALUMINYUM", "ALUMINUM"),
-            ("DOGALGAZ", "NATURAL_GAS")
-        ]
+        av_map = [("BRENT_PETROL", "BRENT"), ("BAKIR", "COPPER"), ("ALUMINYUM", "ALUMINUM"), ("DOGALGAZ", "NATURAL_GAS")]
         for key, av_func in av_map:
             if data_dict[key]["son"] == 0 or data_dict[key]["ilk"] == 0:
                 av_ilk, av_son = alpha_vantage_emtia_al(av_key, av_func, d_start)
@@ -632,17 +633,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
         if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
-
-    # BRENT PETROL İÇİN DİNAMİK SİMÜLASYON YEDEK MOTORU
-    if data_dict.get("BRENT_PETROL", {}).get("son", 0) == 0:
-        data_dict["BRENT_PETROL"]["son"] = 78.0
-        
-    if data_dict["BRENT_PETROL"]["ilk"] == 0:
-        u_ilk, u_son = data_dict.get("USDTRY", {}).get("ilk", 0), data_dict.get("USDTRY", {}).get("son", 0)
-        if u_ilk > 0 and u_son > 0:
-            data_dict["BRENT_PETROL"]["ilk"] = data_dict["BRENT_PETROL"]["son"] * (u_ilk / u_son)
-        else:
-            data_dict["BRENT_PETROL"]["ilk"] = data_dict["BRENT_PETROL"]["son"]
 
     b_ilk, b_son = data_dict["BRENT_PETROL"]["ilk"], data_dict["BRENT_PETROL"]["son"]
     data_dict["BRENT_PETROL"]["degisim"] = ((b_son - b_ilk) / b_ilk * 100) if b_ilk > 0 else 0.0
@@ -1154,7 +1144,7 @@ with st.container(border=True):
                         - Plastik: %{d_plastik:.2f}
                         
                         SEPET AĞIRLIKLARI:
-                        - Dövis: %{w_usd + w_eur}
+                        - Döviz: %{w_usd + w_eur}
                         - İşçilik: %{w_iscilik}
                         - Enerji: %{w_benzin + w_dizel + w_brent}
                         - Enflasyon: %{w_tufe + w_ufe + w_mix_oran + w_hufe}
