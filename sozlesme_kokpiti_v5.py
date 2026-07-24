@@ -634,7 +634,7 @@ with st.container(border=True):
     d_gram = kutu(k3, "Gram Altın", "GRAM_ALTIN_TL", "🥇")
     d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
-    st.markdown("### 🛢️ Enerji Emtiaları (Doviz.com & TradingEconomics Live)")
+    st.markdown("### 🛢️ Enerji Emtiaları")
     e1, e2, e3, e4 = st.columns(4)
     d_brent = kutu(e1, "Brent Petrol ($/Bbl)", "BRENT_PETROL", "🛢️")
 
@@ -679,7 +679,7 @@ with st.container(border=True):
     # ============================================================================
     # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (Canlı Borsalar)")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
