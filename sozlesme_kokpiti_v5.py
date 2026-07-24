@@ -485,6 +485,8 @@ d_key = f"{start_date}_{end_date}"
 # --- VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tufe_sheet_url = "https://docs.google.com/spreadsheets/d/15tHPO39U5ltgMDQVa4jEb5b2sHCWV1KuHq5epNrWNh0/edit?gid=0#gid=0"
+    tcmb = get_sheets_tufe_data(tufe_sheet_url, start_date, end_date)
+    yakit_guncel = guncel_akaryakit_cek()
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     doviz_com_data = doviz_com_canli_cek() 
