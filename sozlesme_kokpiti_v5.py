@@ -634,6 +634,21 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
     data_dict = {}
 
+st.write("FRED KEY:", fred_key)
+st.write("Euro:", get_global_inflation_change(
+    fred_key,
+    "CP0000EZ19M086NEST",
+    start_date,
+    end_date
+))
+
+st.write("ABD:", get_global_inflation_change(
+    fred_key,
+    "CPIAUCSL",
+    start_date,
+    end_date
+))
+
     fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
     for k_fx, ticker_code in fx_map.items():
         ilk_val, son_val = 0.0, 0.0
@@ -836,20 +851,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     return data_dict
 
-    st.write("FRED KEY:", fred_key)
-st.write("Euro:", get_global_inflation_change(
-    fred_key,
-    "CP0000EZ19M086NEST",
-    start_date,
-    end_date
-))
-
-st.write("ABD:", get_global_inflation_change(
-    fred_key,
-    "CPIAUCSL",
-    start_date,
-    end_date
-))
 
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live, FRED_API_KEY)
 st.write(piyasa["EURO_HICP"])
