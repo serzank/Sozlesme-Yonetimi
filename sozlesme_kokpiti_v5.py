@@ -581,7 +581,7 @@ d_key = f"{start_date}_{end_date}"
 # --- VERİ KÖPRÜSÜ ---
 # --- VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
-    tufe_sheet_url = "https://docs.google.com/spreadsheets/d/15tHPO39U5ltgMDQVa4jEb5b2sHCWV1KuHq5epNrWNh0/edit?gid=0#gid=0"
+    tufe_sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS1f-Ix-2hu_Gcuc0_dxZ-BcZbvoHPPewNmQAkOrC6H1nKOR_TYaAtyhWO2KObVArIvus0l1AvrsLY9/pub?gid=0&single=true&output=csv"
     
     # TÜFE Google Sheet'ten, ÜFE EVDS'den çekiliyor
     tufe_res = get_sheets_tufe_data(tufe_sheet_url, start_date, end_date)
