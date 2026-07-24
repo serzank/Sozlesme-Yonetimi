@@ -13,6 +13,7 @@ import google.generativeai as genai
 import calendar
 import time
 import re
+import plotly.graph_objects as go
 
 # --- KÜTÜPHANE KONTROLÜ ---
 try:
@@ -193,7 +194,7 @@ def get_asgari_ucret_degisim(d_start, d_end):
     if ucret_start > 0: degisim = ((ucret_end - ucret_start) / ucret_start) * 100
     return degisim, ucret_start, ucret_end
 
-# --- GOOGLE SHEET H-ÜFE ÇEKİCİ ---
+# --- GOOGLE SHEET H-ÜFE ÇEKİCİ (BİTİŞ TARİHİ AKILLI DÖNEM DÜZELTMELİ) ---
 @st.cache_data(ttl=300)
 def get_google_sheet_data():
     try:
@@ -327,7 +328,7 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-# --- ZIRHLANDIRILMIŞ & TAM TAMINA ÇALIŞAN TCMB TÜFE/ÜFE ÇEKİCİ ---
+# --- DİNAMİK ZIRHLANMIŞ VE DAR VADE DÜZELTMELİ TCMB TÜFE/ÜFE MOTORU ---
 @st.cache_data(ttl=600)
 def get_tcmb_data(api_key, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -335,8 +336,8 @@ def get_tcmb_data(api_key, start_date, end_date):
     try:
         evds_service = evdsAPI(api_key)
         
-        s_q = (start_date - relativedelta(months=2)).replace(day=1).strftime("%d-%m-%Y")
-        e_q = (end_date + relativedelta(months=1)).replace(day=1).strftime("%d-%m-%Y")
+        s_q = (start_date - relativedelta(months=12)).replace(day=1).strftime("%d-%m-%Y")
+        e_q = (datetime.today() + relativedelta(months=1)).replace(day=1).strftime("%d-%m-%Y")
 
         series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
         raw_df = evds_service.get_data(series, startdate=s_q, enddate=e_q)
@@ -355,21 +356,23 @@ def get_tcmb_data(api_key, start_date, end_date):
                 raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
             raw_df[data_cols] = raw_df[data_cols].ffill()
 
-            # Başlangıç ve bitiş dönem verileri
-            start_dt = pd.to_datetime(start_date)
-            end_dt = pd.to_datetime(end_date)
+            # En son açıklanmış resmi veriyi bulma (Bitiş noktası)
+            latest_row = raw_df.iloc[-1]
+            latest_dt = latest_row['Tarih_Dt']
 
-            idx_s = (raw_df['Tarih_Dt'] - start_dt).abs().idxmin()
-            idx_e = (raw_df['Tarih_Dt'] - end_dt).abs().idxmin()
+            # Eğer seçilen başlangıç tarihi ile en son açıklanmış ay aynı ise geriye dönük aralığı dinamik ayarla
+            diff_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+            if diff_months <= 0: diff_months = 3
 
+            start_target_dt = latest_dt - relativedelta(months=diff_months)
+            idx_s = (raw_df['Tarih_Dt'] - start_target_dt).abs().idxmin()
             row_s = raw_df.loc[idx_s]
-            row_e = raw_df.loc[idx_e]
 
             def calc_pct(c_name):
                 for col in [c_name, c_name.replace(".", "_")]:
                     if col in raw_df.columns:
                         v1 = safe_float(row_s[col])
-                        v2 = safe_float(row_e[col])
+                        v2 = safe_float(latest_row[col])
                         if v1 > 0: return round(((v2 - v1) / v1) * 100, 2)
                 return 0.0
 
@@ -378,7 +381,7 @@ def get_tcmb_data(api_key, start_date, end_date):
                 "UFE": calc_pct("TP.TUFE1YI.T1"),
                 "HUFE": calc_pct("TP.HKFE01.I1"),
                 "Status": True,
-                "Msg": f"Veri Başarıyla Çekildi ({start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')})"
+                "Msg": f"Enflasyon Dönemi: {row_s['Tarih_Dt'].strftime('%m.%Y')} - {latest_dt.strftime('%m.%Y')}"
             })
     except Exception as e: 
         res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
@@ -634,7 +637,6 @@ with st.container(border=True):
     def kutu(col, baslik, key, ikon):
         val = piyasa.get(key, {"ilk":0, "son":0, "degisim":0})
         ilk, son, deg = safe_float(val["ilk"]), safe_float(val["son"]), safe_float(val["degisim"])
-        # DİNAMİK KEY İLE SESSION STATE ÖNBELLEK KİLİTLENMESİ SIFIRLANDI
         w_key = f"{key}_{d_key}_{ilk:.2f}"
         with col:
             st.markdown(f"<div class='kutu'><div style='display:flex; align-items:center; margin-bottom:5px;'><span style='font-size:20px; margin-right:8px;'>{ikon}</span><b>{baslik}</b></div>", unsafe_allow_html=True)
@@ -697,9 +699,9 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
     # ============================================================================
-    # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ (DİNAMİK KUTU GÜNCELLEME)
+    # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (Federal Bank)")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
@@ -707,7 +709,6 @@ with st.container(border=True):
         son = safe_float(val["son"])
         deg = safe_float(val["degisim"])
         
-        # DİNAMİK KEY İLE SESSION STATE ÖNBELLEK KİLİTLENMESİ SIFIRLANDI
         key_eski = f"e_{key}_{d_key}_{ilk:.2f}"
         key_yeni = f"y_{key}_{d_key}_{son:.2f}"
         
@@ -753,11 +754,11 @@ with st.container(border=True):
     d_plastik = emtia_karti(em16, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
 
 # ============================================================================
-# TÜM GRUPLAR İÇİN İNTERAKTİF TARİHSEL EMTİA TREND ANALİZİ
+# %100 İNTERAKTİF PLOTLY BORSA GRAFİK MODÜLÜ
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
-    st.subheader("📈 Emtia & Kur Tarihsel Trend Analizi (Detaylı Grafik)")
+    st.subheader("📈 Emtia & Kur İnteraktif Trend Analizi (Plotly Borsa Terminali)")
     
     chart_symbols = {
         "Dolar (USD/TL)": "TRY=X",
@@ -773,7 +774,7 @@ with st.container(border=True):
         "Kakao ($/MT)": "CC=F"
     }
     
-    c_sel1, c_sel2 = st.columns([2, 2])
+    c_sel1, _ = st.columns([2, 2])
     with c_sel1:
         selected_chart_item = st.selectbox("🎯 Grafik İçin Emtia / Kur Seçiniz", list(chart_symbols.keys()))
     
@@ -788,28 +789,46 @@ with st.container(border=True):
                 
             close_series = close_series.dropna()
             
-            if HAS_MATPLOTLIB and len(close_series) > 1:
-                fig_trend, ax_trend = plt.subplots(figsize=(10, 3.5))
-                ax_trend.plot(close_series.index, close_series.values, color='#1E3D59', linewidth=2.5, label='Fiyat')
-                ax_trend.fill_between(close_series.index, close_series.values, color='#1E3D59', alpha=0.1)
-                ax_trend.set_title(f"{selected_chart_item} - Tarihsel Fiyat Değişimi ({start_date.strftime('%d.%m.%Y')} / {end_date.strftime('%d.%m.%Y')})", fontsize=11, fontweight='bold')
-                ax_trend.set_ylabel("Fiyat / Değer")
-                ax_trend.grid(True, alpha=0.3, linestyle='--')
-                plt.xticks(rotation=30)
-                
-                min_val, max_val = close_series.min(), close_series.max()
-                min_date, max_date = close_series.idxmin(), close_series.idxmax()
-                
-                ax_trend.annotate(f"Min: {tr_fmt(min_val)}", (min_date, min_val), xytext=(0,-15), textcoords='offset points', ha='center', fontsize=8, color='#C0392B', fontweight='bold')
-                ax_trend.annotate(f"Max: {tr_fmt(max_val)}", (max_date, max_val), xytext=(0,10), textcoords='offset points', ha='center', fontsize=8, color='#27AE60', fontweight='bold')
-                
-                st.pyplot(fig_trend)
-            else:
-                st.line_chart(close_series)
+            # Plotly Interactive Figure
+            fig_plotly = go.Figure()
+            
+            # Trend Çizgisi ve Alan Dolgusu
+            fig_plotly.add_trace(go.Scatter(
+                x=close_series.index,
+                y=close_series.values,
+                mode='lines',
+                name='Fiyat',
+                line=dict(color='#1E3D59', width=2.5),
+                fill='tozeroy',
+                fillcolor='rgba(30, 61, 89, 0.1)',
+                hovertemplate="<b>Tarih:</b> %{x|%d %b %Y}<br><b>Fiyat:</b> %{y:,.2f}<extra></extra>"
+            ))
+
+            fig_plotly.update_layout(
+                title=f"<b>{selected_chart_item}</b> — Tarihsel Değişim Grafiği",
+                xaxis_title="Tarih",
+                yaxis_title="Fiyat / Değer",
+                template="plotly_white",
+                hovermode="x unified",
+                height=420,
+                margin=dict(l=40, r=40, t=50, b=40),
+                xaxis=dict(
+                    showgrid=True,
+                    gridcolor='rgba(0,0,0,0.05)',
+                    rangeslider=dict(visible=True),
+                    type="date"
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor='rgba(0,0,0,0.05)'
+                )
+            )
+
+            st.plotly_chart(fig_plotly, use_container_width=True)
         else:
-            st.info("Seçilen tarih aralığı için grafik verisi yükleniyor...")
+            st.info("Seçilen tarih aralığı için grafik verisi indiriliyor...")
     except Exception as e:
-        st.caption("Grafik yüklenirken bir teknik kısıt oluştu, sayısal veriler yukarıda aktiftir.")
+        st.caption("Grafik yüklenirken bir teknik kısıt oluştu, sayısal veriler yukarıda mevcuttur.")
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ
