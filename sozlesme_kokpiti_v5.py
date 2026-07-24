@@ -158,29 +158,23 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- KESİN ÇÖZÜM: H-ÜFE MANTIĞIYLA BİREBİR TÜFE MOTORU ---
+# --- KESİN ÇÖZÜM: DOĞRUDAN KOLON İNDEXLİ TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
     try:
-        df_raw = pd.read_csv(sheet_url)
+        # Başlık satırı arama, doğrudan ilk satırdan veriyi al
+        df_raw = pd.read_csv(sheet_url, header=None)
         if df_raw.empty:
             res["Msg"] = "Sheet verisi boş."
             return res
             
-        df_raw.columns = df_raw.columns.str.strip()
-        df_raw = df_raw.dropna(how='all')
-        
-        # Kolon isimlerinden bağımsız ilk iki kolonu doğrudan alıyoruz (H-ÜFE taktiği)
-        tarih_col = df_raw.columns[0]
-        tufe_col = df_raw.columns[1]
-
         df_clean = pd.DataFrame()
-        df_clean['Tarih'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        # 0. Sütun Tarih, 1. Sütun Değer
+        df_clean['Tarih'] = pd.to_datetime(df_raw.iloc[:, 0], errors='coerce')
         
-        # Değerleri temizle ve sayıya çevir
-        raw_vals = df_raw[tufe_col].astype(str).str.strip().str.replace(',', '.', regex=False)
+        raw_vals = df_raw.iloc[:, 1].astype(str).str.strip().str.replace(',', '.', regex=False)
         df_clean['TUFE_VAL'] = pd.to_numeric(raw_vals, errors='coerce')
         
         df_clean = df_clean.dropna(subset=['Tarih', 'TUFE_VAL']).sort_values('Tarih')
@@ -191,10 +185,9 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
 
         target_start = pd.to_datetime(start_date)
         
-        # Başlangıç tarihine en yakın geçmiş veriyi bul
         past_data = df_clean[df_clean['Tarih'] <= target_start]
         row_s = past_data.iloc[-1] if not past_data.empty else df_clean.iloc[0]
-        row_e = df_clean.iloc[-1] # Tablonun en güncel son satırı
+        row_e = df_clean.iloc[-1]
 
         v_start = safe_float(row_s['TUFE_VAL'])
         v_end = safe_float(row_e['TUFE_VAL'])
