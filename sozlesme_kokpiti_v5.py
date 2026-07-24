@@ -113,9 +113,23 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
 def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
     if not api_key:
         return 0.0
+st.write("FRED KEY:", fred_key)
+st.write("Euro:", get_global_inflation_change(
+    fred_key,
+    "CP0000EZ19M086NEST",
+    start_date,
+    end_date
+))
+
+st.write("ABD:", get_global_inflation_change(
+    fred_key,
+    "CPIAUCSL",
+    start_date,
+    end_date
+))
     try:
-        s_date = (target_start_date - timedelta(days=60)).strftime("%Y-%m-%d")
-        e_date = datetime.today().strftime("%Y-%m-%d")
+        s_date = target_start_date.strftime("%Y-%m-%d")
+        e_date = target_end_date.strftime("%Y-%m-%d")
         url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
