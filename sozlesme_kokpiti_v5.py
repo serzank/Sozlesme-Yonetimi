@@ -735,8 +735,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             if k_fred in data_dict and data_dict[k_fred]["son"] > 0:
                 pct = get_fred_index_change(fred_key, series_id, d_start)
 
-                if k_fred == "JET_FUEL" and data_dict["JET_FUEL"]["ilk"] > 0 and data_dict["JET_FUEL"]["ilk"] != data_dict["JET_FUEL"]["son"]:
-                continue
+                if k_fred == "JET_FUEL" and data_dict["JET_FUEL"]["ilk"] > 0 and data_dict["JET_FUEL"]["ilk"] != data_dict["JET_FUEL"]["son"]: continue
                 
                 # Eğer FRED'den veri alınamadıysa yfinance Borsa Vadeli Kontrat Yedeklemesi
                 if pct == 0.0:
