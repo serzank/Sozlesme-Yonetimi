@@ -158,21 +158,18 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- KESİN ÇÖZÜM: BAŞLIKLI DOĞRU TÜFE MOTORU ---
+# --- KESİN VE NET TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
-    res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
+    res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
     try:
         df_raw = pd.read_csv(sheet_url)
-        if df_raw.empty:
-            res["Msg"] = "Sheet verisi boş."
-            return res
+        if df_raw.empty: return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        # Sütun isimlerini netleştiriyoruz (A: Tarih, B: TÜFE Genel)
         tarih_col = df_raw.columns[0]
         tufe_col = df_raw.columns[1]
 
@@ -183,10 +180,7 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         df_clean['TUFE_VAL'] = pd.to_numeric(raw_vals, errors='coerce')
         
         df_clean = df_clean.dropna(subset=['Tarih', 'TUFE_VAL']).sort_values('Tarih')
-
-        if df_clean.empty:
-            res["Msg"] = "Tarih veya değerler dönüştürülemedi."
-            return res
+        if df_clean.empty: return res
 
         target_start = pd.to_datetime(start_date)
         
@@ -194,23 +188,16 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         row_s = past_data.iloc[-1] if not past_data.empty else df_clean.iloc[0]
         row_e = df_clean.iloc[-1]
 
-        v_start = safe_float(row_s['TUFE_VAL'])
-        v_end = safe_float(row_e['TUFE_VAL'])
-
-        d1_str = row_s['Tarih'].strftime('%d.%m.%Y')
-        d2_str = row_e['Tarih'].strftime('%d.%m.%Y')
+        v_start = float(row_s['TUFE_VAL'])
+        v_end = float(row_e['TUFE_VAL'])
 
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
-            res.update({
-                "TUFE": tufe_diff,
-                "Status": True,
-                "Msg": f"Sheet TÜFE Dönemi: {d1_str} ({v_start}) ➡️ {d2_str} ({v_end})"
-            })
-        else:
-            res["Msg"] = f"Bulunan değerler sıfır: Başlangıç={v_start}, Bitiş={v_end}"
+            res["TUFE"] = tufe_diff
+            res["Status"] = True
+            res["Msg"] = f"Sheet Enflasyon Dönemi: {row_s['Tarih'].strftime('%Y-%m')} ➡️ {row_e['Tarih'].strftime('%Y-%m')}"
     except Exception as e:
-        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
+        res["Msg"] = f"Hata: {str(e)}"
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
