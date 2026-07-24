@@ -657,21 +657,28 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     elif te_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
 
-    # --- JET A-1 YAKIT GARANTİ MOTORU ---
+ # --- JET A-1 YAKIT GARANTİ MOTORU ---
     data_dict["JET_FUEL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     
-    # 1. Öncelik: yfinance Borsasından Canlı Çekim (HO=F Kerosene/Jet Proxy -> $/Bbl)
+    # 1. Öncelik: yfinance Borsasından Canlı & Tarihsel Çekim (HO=F Kerosene/Jet Proxy -> $/Bbl)
     try:
         j_ticker = yf.Ticker("HO=F")
-        j_hist = j_ticker.history(start=d_start - timedelta(days=5), end=d_end + timedelta(days=1))
-        if not j_hist.empty:
+        j_hist_s = j_ticker.history(start=d_start - timedelta(days=7), end=d_start + timedelta(days=7))
+        j_hist_e = j_ticker.history(start=d_end - timedelta(days=7), end=d_end + timedelta(days=1))
+        
+        if not j_hist_s.empty and not j_hist_e.empty:
             # 1 varil = 42 galon
-            data_dict["JET_FUEL"]["ilk"] = round(float(j_hist['Close'].iloc[0]) * 42, 2)
-            data_dict["JET_FUEL"]["son"] = round(float(j_hist['Close'].iloc[-1]) * 42, 2)
+            data_dict["JET_FUEL"]["ilk"] = round(float(j_hist_s['Close'].iloc[-1]) * 42, 2)
+            data_dict["JET_FUEL"]["son"] = round(float(j_hist_e['Close'].iloc[-1]) * 42, 2)
+            
+            i_val = data_dict["JET_FUEL"]["ilk"]
+            s_val = data_dict["JET_FUEL"]["son"]
+            if i_val > 0:
+                data_dict["JET_FUEL"]["degisim"] = round(((s_val - i_val) / i_val) * 100, 2)
     except Exception:
         pass
 
-    # 2. Öncelik: FRED API (PJETUSDM - Global Jet Fuel Price USD/Bbl)
+    # 2. Öncelik: FRED API (PJETUSDM - Global Jet Fuel Price USD/Bbl) - Yalnızca yfinance başarısızsa
     if fred_key and data_dict["JET_FUEL"]["son"] == 0:
         try:
             url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=PJETUSDM&api_key={fred_key}&file_type=json&sort_order=desc&limit=1"
@@ -679,19 +686,24 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             if res_j.status_code == 200:
                 obs = res_j.json().get("observations", [])
                 if obs and obs[0].get("value") not in [None, ".", ""]:
-                    data_dict["JET_FUEL"]["son"] = round(float(obs[0]["value"]), 2)
+                    latest_val = float(obs[0]["value"])
                     pct_j = get_fred_index_change(fred_key, "PJETUSDM", d_start)
+                    
+                    data_dict["JET_FUEL"]["son"] = round(latest_val, 2)
                     data_dict["JET_FUEL"]["degisim"] = pct_j
                     if (1 + pct_j/100) != 0:
-                        data_dict["JET_FUEL"]["ilk"] = round(data_dict["JET_FUEL"]["son"] / (1 + pct_j/100), 2)
+                        data_dict["JET_FUEL"]["ilk"] = round(latest_val / (1 + pct_j/100), 2)
         except Exception:
             pass
 
-    # Yüzde Değişimi Hesaplama
-    j_ilk = data_dict["JET_FUEL"]["ilk"]
-    j_son = data_dict["JET_FUEL"]["son"]
-    if j_ilk > 0 and j_son > 0 and data_dict["JET_FUEL"]["degisim"] == 0:
-        data_dict["JET_FUEL"]["degisim"] = ((j_son - j_ilk) / j_ilk) * 100
+    # 3. Yedek Proxy: Brent Petrol Oranlaması (Eğer ikisi de bulunamazsa)
+    if data_dict["JET_FUEL"]["son"] == 0 and data_dict["BRENT_PETROL"]["son"] > 0:
+        # Jet Fuel küresel olarak Brent'ten yaklaşık %15-20 daha primli işlem görür
+        b_ilk = data_dict["BRENT_PETROL"]["ilk"]
+        b_son = data_dict["BRENT_PETROL"]["son"]
+        data_dict["JET_FUEL"]["ilk"] = round(b_ilk * 1.18, 2)
+        data_dict["JET_FUEL"]["son"] = round(b_son * 1.18, 2)
+        data_dict["JET_FUEL"]["degisim"] = data_dict["BRENT_PETROL"]["degisim"]
 
     # TRADINGECONOMICS TÜM CANLI EMTİALAR EKLENİYOR
     for te_key, te_val in te_data.items():
@@ -718,9 +730,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             "KAKAO": "PCOCOUSDM",
             "COAL": "PCOALAUUSDM"
         }
+        
         for k_fred, series_id in fred_map.items():
             if k_fred in data_dict and data_dict[k_fred]["son"] > 0:
                 pct = get_fred_index_change(fred_key, series_id, d_start)
+
+                if k_fred == "JET_FUEL" and data_dict["JET_FUEL"]["ilk"] > 0 and data_dict["JET_FUEL"]["ilk"] != data_dict["JET_FUEL"]["son"]:
+                continue
                 
                 # Eğer FRED'den veri alınamadıysa yfinance Borsa Vadeli Kontrat Yedeklemesi
                 if pct == 0.0:
