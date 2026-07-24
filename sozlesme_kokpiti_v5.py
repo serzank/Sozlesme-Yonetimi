@@ -437,30 +437,11 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         matches_e = df_clean[df_clean['Period'] <= p_end]
         latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
 
-        # --- İSTEDİĞİN KANIT / DEBUG NOKTASI ---
-        st.write("==== DEBUG ====")
-        st.write("start_row")
-        st.write(start_row)
-        st.write("latest_row")
-        st.write(latest_row)
-        st.write("v_start", start_row["TUFE_COL"], type(start_row["TUFE_COL"]))
-        st.write("v_end", latest_row["TUFE_COL"], type(latest_row["TUFE_COL"]))
         
-        v_start = float(start_row["TUFE_COL"])
-        v_end = float(latest_row["TUFE_COL"])
-        
-        st.write("float start", v_start)
-        st.write("float end", v_end)
-        
-        tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
-        st.write("HESAP", tufe_diff)
-        # ----------------------------------------
-
         if v_start > 0 and v_end > 0:
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
-                "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
             })
         else:
             res["Msg"] = f"Değerler sıfır: v_start={v_start}, v_end={v_end}"
