@@ -107,6 +107,41 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
     except Exception as e:
         st.error(f"Kapsam analizi yapılırken hata oluştu: {str(e)}")
         return None
+
+# --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
+@st.cache_data(ttl=3600)
+def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
+    if not api_key:
+        return 0.0
+    try:
+        s_date = (target_start_date - timedelta(days=60)).strftime("%Y-%m-%d")
+        e_date = datetime.today().strftime("%Y-%m-%d")
+        url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            obs = res.json().get("observations", [])
+            valid = []
+            for o in obs:
+                val = o.get("value")
+                if val not in [None, ".", ""]:
+                    try:
+                        valid.append((pd.to_datetime(o["date"]), float(val)))
+                    except: pass
+            if valid:
+                df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
+                
+                # Başlangıç tarihindeki endeks değeri
+                past_df = df[df.index <= pd.Timestamp(target_start_date)]
+                val_start = float(past_df.iloc[-1]["Value"]) if not past_df.empty else float(df.iloc[0]["Value"])
+                
+                # Bitiş (güncel) tarihindeki endeks değeri
+                latest_df = df[df.index <= pd.Timestamp(target_end_date)]
+                val_latest = float(latest_df.iloc[-1]["Value"]) if not latest_df.empty else float(df.iloc[-1]["Value"])
+                
+                if val_start > 0:
+                    return round(((val_latest - val_start) / val_start) * 100, 2)
+    except: pass
+    return 0.0
         
 def render_svg_logo():
     return """
@@ -168,40 +203,6 @@ def emtia_karti(col, baslik, key):
         
     return deg
 
-# --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
-@st.cache_data(ttl=3600)
-def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
-    if not api_key:
-        return 0.0
-    try:
-        s_date = (target_start_date - timedelta(days=60)).strftime("%Y-%m-%d")
-        e_date = datetime.today().strftime("%Y-%m-%d")
-        url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            obs = res.json().get("observations", [])
-            valid = []
-            for o in obs:
-                val = o.get("value")
-                if val not in [None, ".", ""]:
-                    try:
-                        valid.append((pd.to_datetime(o["date"]), float(val)))
-                    except: pass
-            if valid:
-                df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
-                
-                # Başlangıç tarihindeki endeks değeri
-                past_df = df[df.index <= pd.Timestamp(target_start_date)]
-                val_start = float(past_df.iloc[-1]["Value"]) if not past_df.empty else float(df.iloc[0]["Value"])
-                
-                # Bitiş (güncel) tarihindeki endeks değeri
-                latest_df = df[df.index <= pd.Timestamp(target_end_date)]
-                val_latest = float(latest_df.iloc[-1]["Value"]) if not latest_df.empty else float(df.iloc[-1]["Value"])
-                
-                if val_start > 0:
-                    return round(((val_latest - val_start) / val_start) * 100, 2)
-    except: pass
-    return 0.0
 
 # --- ALTIN GEÇMİŞİ EVDS MOTORU ---
 @st.cache_data(ttl=600)
