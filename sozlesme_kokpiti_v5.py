@@ -432,8 +432,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-    if FRED_API_KEY:
-        st.success("✅ FRED API (Endeksleme Motoru) Aktif")
+    
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
@@ -700,7 +699,7 @@ with st.container(border=True):
     # ============================================================================
     # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ (DİNAMİK KUTU GÜNCELLEME)
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (FRED Indexation)")
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (Federal Bank)")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
