@@ -107,14 +107,15 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- FRED API TARİHSEL EMTİA VERİSİ ÇEKİCİSİ ---
+# --- ESNEK FRED TARİHSEL EMTİA VERİSİ ÇEKİCİSİ (EN YAKIN GEÇMİŞ VERİ) ---
 @st.cache_data(ttl=3600)
 def get_fred_commodity_history(api_key, series_id, target_date):
     if not api_key:
         return 0.0
     try:
-        s_date = (target_date - timedelta(days=30)).strftime("%Y-%m-%d")
-        e_date = (target_date + timedelta(days=5)).strftime("%Y-%m-%d")
+        # FRED aylık yayınlandığı için geniş bir pencereden geriye doğru tarıyoruz
+        s_date = (target_date - timedelta(days=120)).strftime("%Y-%m-%d")
+        e_date = (target_date + timedelta(days=10)).strftime("%Y-%m-%d")
         url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
@@ -128,8 +129,12 @@ def get_fred_commodity_history(api_key, series_id, target_date):
                     except: pass
             if valid:
                 df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
-                idx = (df.index - pd.Timestamp(target_date)).abs().argmin()
-                return float(df.iloc[idx]["Value"])
+                # Hedef tarihten önceki en son açıklanmış veriyi bul
+                past_df = df[df.index <= pd.Timestamp(target_date)]
+                if not past_df.empty:
+                    return float(past_df.iloc[-1]["Value"])
+                else:
+                    return float(df.iloc[0]["Value"])
     except: pass
     return 0.0
 
@@ -217,14 +222,12 @@ def doviz_com_canli_cek():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     data = {"USD": 0.0, "EUR": 0.0, "BRENT_PETROL": 0.0, "ALTIN": 0.0}
     
-    # 1. Döviz Kurları (Dolar / Euro / Gram Altın)
     try:
         res = requests.get("https://www.doviz.com", headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, "html.parser")
             usd_box = soup.find("span", {"data-socket-key": "USD", "data-socket-attr": "s"})
             eur_box = soup.find("span", {"data-socket-key": "EUR", "data-socket-attr": "s"})
-            # GRAM ALTIN İÇİN DOĞRU SELECTOR -> gram-altin
             altin_box = soup.find("span", {"data-socket-key": "gram-altin", "data-socket-attr": "s"})
             
             if usd_box: data["USD"] = float(usd_box.get_text().replace(".", "").replace(",", "."))
@@ -232,7 +235,6 @@ def doviz_com_canli_cek():
             if altin_box: data["ALTIN"] = float(altin_box.get_text().replace(".", "").replace(",", "."))
     except: pass
 
-    # 2. Brent Petrol
     try:
         res_brent = requests.get("https://www.doviz.com/emtia/brent-petrol", headers=headers, timeout=5)
         if res_brent.status_code == 200:
@@ -443,9 +445,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-    if FRED_API_KEY:
-        st.success("✅ FRED API Entegre Edildi")
-    
+       
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
@@ -502,13 +502,17 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (FRED ENTEGRASYONLU & ZIRHLI MOTOR)
+# PİYASA VERİSİ İŞLEME (FRED + YAHOO TAM KAPASİTE HARİTALANMIŞ)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
+    # TÜM EMTİALAR YAHOO SYMBOL MAP'E EKLENDİ
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")
+        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX"),
+        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F"),
+        ("PROPAN", "P2=F"), ("HRC_STEEL", "HRC=F"), ("PAMUK", "CT=F"),
+        ("BUGDAY", "ZW=F"), ("KAKAO", "CC=F"), ("CINKO", "ZS=F"), ("NIKEL", "LN=F")
     ]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
@@ -536,7 +540,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": 0.0}
 
-    # --- BRENT PETROL TARİHSEL (ESKİ) DEĞER ZIRHLAMA KATMANI ---
+    # BRENT PETROL TARİHSEL (ESKİ) DEĞER ZIRHLAMA KATMANI
     if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0:
         try:
             brent_ticker = yf.Ticker("BZ=F")
@@ -558,7 +562,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                     data_dict["BRENT_PETROL"]["ilk"] = float(s_b.iloc[-1])
         except: pass
 
-    # 2. BRENT PETROL & DÖVİZ CANLI DÜZELTME
+    # BRENT PETROL & DÖVİZ CANLI DÜZELTME
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
@@ -567,7 +571,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     elif te_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
 
-    # 3. EVDS DÖVİZ ESKİ FİYAT YEDEKLERİ
+    # EVDS DÖVİZ ESKİ FİYAT YEDEKLERİ
     if data_dict["USDTRY"]["ilk"] == 0 and evds_key:
         try:
             evds_service = evdsAPI(evds_key)
@@ -595,14 +599,22 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
         if te_key not in data_dict:
             data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
 
-    # FRED API İLE ESKİ EMTİA FİYATI DOLDURMA (FRED HARİTALAMA)
+    # GENİŞLETİLMİŞ FULL FRED API TARİHSEL HARİTALAMA (0,00 KALANLAR İÇİN)
     if fred_key:
         fred_map = {
             "BAKIR": "PCOPPUSDM",
             "ALUMINYUM": "PALUMUSDM",
             "DOGALGAZ": "PNGASUSDM",
-            "SCRAP_STEEL": "WPU1012",
             "PROPAN": "PROPANEM",
+            "SCRAP_STEEL": "WPU1012",
+            "SCRAP_ALUM": "WPU102301",
+            "HRC_STEEL": "WPUSI019011",
+            "DEMIR": "PIRONUSDM",
+            "NIKEL": "PNICKUSDM",
+            "CINKO": "PZINCUSDM",
+            "PAMUK": "PCOTTUSDM",
+            "BUGDAY": "PWHEAMTUSDM",
+            "KAKAO": "PCOCOUSDM",
             "CRUDE_OIL": "POILBREUSDM"
         }
         for k_fred, series_id in fred_map.items():
@@ -769,6 +781,66 @@ with st.container(border=True):
     d_bugday  = emtia_karti(em14, "🌾 Buğday ($/Bu)", "BUGDAY")
     d_kakao   = emtia_karti(em15, "🍫 Kakao ($/MT)", "KAKAO")
     d_plastik = emtia_karti(em16, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
+
+# ============================================================================
+# NEW: TÜM GRUPLAR İÇİN İNTERAKTİF TARİHSEL EMTİA TREND ANALİZİ
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    st.subheader("📈 Emtia & Kur Tarihsel Trend Analizi (Detaylı Grafik)")
+    
+    chart_symbols = {
+        "Dolar (USD/TL)": "TRY=X",
+        "Euro (EUR/TL)": "EURTRY=X",
+        "Gram Altın (TL)": "GC=F",
+        "Brent Petrol ($/Bbl)": "BZ=F",
+        "Bakır ($/Lbs)": "HG=F",
+        "Alüminyum ($/Ton)": "ALI=F",
+        "Doğal Gaz ($/MMBtu)": "NG=F",
+        "Çelik / HRC ($/Ton)": "HRC=F",
+        "Pamuk ($/Lbs)": "CT=F",
+        "Buğday ($/Bu)": "ZW=F",
+        "Kakao ($/MT)": "CC=F"
+    }
+    
+    c_sel1, c_sel2 = st.columns([2, 2])
+    with c_sel1:
+        selected_chart_item = st.selectbox("🎯 Grafik İçin Emtia / Kur Seçiniz", list(chart_symbols.keys()))
+    
+    symbol_code = chart_symbols[selected_chart_item]
+    
+    try:
+        df_hist = yf.download(symbol_code, start=start_date, end=end_date, progress=False)
+        if not df_hist.empty and "Close" in df_hist.columns:
+            close_series = df_hist["Close"]
+            if isinstance(close_series, pd.DataFrame):
+                close_series = close_series.iloc[:, 0]
+                
+            close_series = close_series.dropna()
+            
+            if HAS_MATPLOTLIB and len(close_series) > 1:
+                fig_trend, ax_trend = plt.subplots(figsize=(10, 3.5))
+                ax_trend.plot(close_series.index, close_series.values, color='#1E3D59', linewidth=2.5, label='Fiyat')
+                ax_trend.fill_between(close_series.index, close_series.values, color='#1E3D59', alpha=0.1)
+                ax_trend.set_title(f"{selected_chart_item} - Tarihsel Fiyat Değişimi ({start_date.strftime('%d.%m.%Y')} / {end_date.strftime('%d.%m.%Y')})", fontsize=11, fontweight='bold')
+                ax_trend.set_ylabel("Fiyat / Değer")
+                ax_trend.grid(True, alpha=0.3, linestyle='--')
+                plt.xticks(rotation=30)
+                
+                # Minimum ve Maksimum Değer Anotasyonları
+                min_val, max_val = close_series.min(), close_series.max()
+                min_date, max_date = close_series.idxmin(), close_series.idxmax()
+                
+                ax_trend.annotate(f"Min: {tr_fmt(min_val)}", (min_date, min_val), xytext=(0,-15), textcoords='offset points', ha='center', fontsize=8, color='#C0392B', fontweight='bold')
+                ax_trend.annotate(f"Max: {tr_fmt(max_val)}", (max_date, max_val), xytext=(0,10), textcoords='offset points', ha='center', fontsize=8, color='#27AE60', fontweight='bold')
+                
+                st.pyplot(fig_trend)
+            else:
+                st.line_chart(close_series)
+        else:
+            st.info("Seçilen tarih aralığı için grafik verisi yükleniyor...")
+    except Exception as e:
+        st.caption("Grafik yüklenirken bir teknik kısıt oluştu, sayısal veriler yukarıda aktiftir.")
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ
