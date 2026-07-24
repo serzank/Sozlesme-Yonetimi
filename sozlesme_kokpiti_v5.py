@@ -101,7 +101,7 @@ def safe_float(val):
         return float(val)
     except: return 0.0
 
-# --- SÖZLEŞME AĞIRLIK MANTIĞI (TÜM EMTİALAR DAHİL) ---
+# --- SÖZLEŞME AĞIRLIK MANTIĞI (GENİŞLETİLMİŞ) ---
 def get_auto_weights(contract_type):
     w = {
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0, "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
@@ -271,7 +271,7 @@ def get_tcmb_data(api_key, start_date, end_date):
         h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
         
         calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
-        res.update({ "TUFE": round(calc(t_end, t_start), 2), "UFE": round(calc(u_end, u_start), 2), "HUFE": round(calc(h_end, h_start), 2), "Status": True, "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0] if not row_start.empty else '?'} - {row_end['Tarih'].values[0] if not row_end.empty else '?'}" })
+        res.update({ "TUFE": round(calc(t_end, t_start), 2), "UFE": round(calc(u_end, u_start), 2), "HUFE": round(calc(h_end, h_start), 2), "Status": True, "Msg": "EVDS Bağlantısı Başarılı" })
     except: pass
     return res
 
@@ -360,35 +360,33 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (FMP API + DİNAMİK HYBRID MOTOR)
+# PİYASA VERİSİ İŞLEME (RESMİ YFINANCE + FMP HYBRID MOTOR)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, fmp_key):
+    # yfinance ile doğrudan kütüphane üzerinden güvenli borsa verileri
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("ABD_TAHVIL", "^TNX")
+        ("ONS_ALTIN", "GC=F"), ("ABD_TAHVIL", "^TNX"),
+        ("BRENT_PETROL", "BZ=F"), ("WTI_PETROL", "CL=F"), ("DOGALGAZ", "NG=F"),
+        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("GUMUS", "SI=F"),
+        ("PLATIN", "PL=F"), ("PALADYUM", "PA=F"), ("KERESTE", "LBS=F"),
+        ("BUGDAY", "ZW=F"), ("MISIR", "ZC=F"), ("KAHVE", "KC=F"), ("PAMUK", "CT=F")
     ]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
 
-    # 1. DÖVİZ VE PARİTELER
+    # 1. RESMİ YFINANCE KÜTÜPHANESİ ÜZERİNDEN VERİ ÇEKİMİ
     for key, symbol in symbol_map:
         ilk, son = 0.0, 0.0
         try:
-            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
-            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=4)
-            if res.status_code == 200:
-                data = res.json()
-                result = data.get('chart', {}).get('result', [])
-                if result:
-                    ts = result[0].get('timestamp', [])
-                    qs = result[0].get('indicators', {}).get('quote', [{}])[0].get('close', [])
-                    vd = [(pd.to_datetime(t, unit='s'), c) for t, c in zip(ts, qs) if c is not None]
-                    if vd:
-                        df = pd.DataFrame(vd, columns=['Date', 'Close']).set_index('Date')
-                        if not df.empty:
-                            idx = (df.index - target_start).abs().argmin()
-                            ilk, son = float(df.iloc[idx]['Close']), float(df.iloc[-1]['Close'])
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period="2y")
+            if not df.empty and 'Close' in df.columns:
+                df.index = pd.to_datetime(df.index).tz_localize(None)
+                idx = (df.index - target_start).abs().argmin()
+                ilk = float(df.iloc[idx]['Close'])
+                son = float(df.iloc[-1]['Close'])
         except: pass
 
         if ilk == 0 and evds_key and (key in ["USDTRY", "EURTRY"]):
@@ -406,15 +404,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
 
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": ((son - ilk) / ilk * 100) if ilk > 0 else 0.0}
 
-    # 2. FINANCIAL MODELING PREP (FMP) GENİŞLETİLMİŞ EMTİA DÜZENİ
-    emtialar = [
-        "BRENT_PETROL", "WTI_PETROL", "DOGALGAZ", 
-        "BAKIR", "ALUMINYUM", "GUMUS", "PLATIN", "PALADYUM",
-        "KERESTE", "BUGDAY", "MISIR", "KAHVE", "PAMUK"
-    ]
-    for e in emtialar:
-        data_dict[e] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
-
+    # 2. FINANCIAL MODELING PREP (FMP) YEDEK DESTEĞİ
     if fmp_key:
         fmp_map = [
             ("BRENT_PETROL", "BZUSD"), ("WTI_PETROL", "CLUSD"), ("DOGALGAZ", "NGUSD"),
@@ -424,12 +414,13 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
             ("KAHVE", "KCUSD"), ("PAMUK", "CTUSD")
         ]
         for key, fmp_sym in fmp_map:
-            f_ilk, f_son = fmp_emtia_al(fmp_key, fmp_sym, d_start)
-            if f_son > 0:
-                data_dict[key]["son"] = f_son
-                if f_ilk > 0:
-                    data_dict[key]["ilk"] = f_ilk
-                    data_dict[key]["degisim"] = ((f_son - f_ilk) / f_ilk * 100)
+            if data_dict.get(key, {}).get("son", 0) == 0:
+                f_ilk, f_son = fmp_emtia_al(fmp_key, fmp_sym, d_start)
+                if f_son > 0:
+                    data_dict[key]["son"] = f_son
+                    if f_ilk > 0:
+                        data_dict[key]["ilk"] = f_ilk
+                        data_dict[key]["degisim"] = ((f_son - f_ilk) / f_ilk * 100)
 
     # --- PARİTE VE GRAM ALTIN KORUMALARI ---
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
@@ -492,7 +483,7 @@ with st.container(border=True):
             st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
             st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
             e_input = st.number_input("eski", value=ilk, format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
-            badge_txt = "FMP LİVE" if (FMP_KEY and val["son"] > 0) else "DÜZENLE"
+            badge_txt = "CANLI" if val["son"] > 0 else "DÜZENLE"
             st.markdown(f"<label style='font-size:13px;'>Güncel Fiyat <span class='badge-live'>{badge_txt}</span></label>", unsafe_allow_html=True)
             y_input = st.number_input("yeni", value=son, format="%.2f", key=f"y_{key}_{d_key}", label_visibility="collapsed")
             deg = ((y_input - e_input) / e_input * 100) if e_input > 0 else 0.0
