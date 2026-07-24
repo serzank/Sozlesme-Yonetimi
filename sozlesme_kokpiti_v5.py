@@ -158,7 +158,7 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- MATRİS TABLOSU UYUMLU KUSURSUZ TÜFE MOTORU ---
+# --- DİKEY FORMAT GOOGLE SHEET TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -169,50 +169,23 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         else:
             csv_url = sheet_url
             
-        # Doğrudan 4. satırdan (index 3) veriyi başlatıyoruz
-        df_raw = pd.read_csv(csv_url, header=3)
+        df_raw = pd.read_csv(csv_url)
         if df_raw.empty:
             res["Msg"] = "Sheet verisi boş."
             return res
             
-        # İlk sütun Yıl (2005, 2006...)
-        yil_col = df_raw.columns[0]
+        df_raw.columns = df_raw.columns.str.strip()
+        df_raw = df_raw.dropna(how='all')
         
-        ay_map = {
-            'Ocak': 1, 'Şubat': 2, 'Mart': 3, 'Nisan': 4, 'Mayıs': 5, 'Haziran': 6,
-            'Temmuz': 7, 'Ağustos': 8, 'Eylül': 9, 'Ekim': 10, 'Kasım': 11, 'Aralık': 12
-        }
-        
-        melted_rows = []
-        for idx, row in df_raw.iterrows():
-            yil_val = row[yil_col]
-            try:
-                yil = int(float(str(yil_val).strip()))
-                if yil < 2000 or yil > 2100: continue
-            except: continue
-            
-            for col_name in df_raw.columns[1:]:
-                # Sütun adından ay adını yakala (örn: "Ocak" veya "January")
-                c_clean = str(col_name).strip()
-                ay = None
-                for tr_en, m_idx in ay_map.items():
-                    if tr_en.lower() in c_clean.lower():
-                        ay = m_idx
-                        break
-                
-                if ay:
-                    val_str = str(row[col_name]).strip().replace('.', '').replace(',', '.')
-                    try:
-                        val = float(val_str)
-                        if val > 0:
-                            melted_rows.append({"Tarih_Dt": pd.Timestamp(year=yil, month=ay, day=1), "TUFE_COL": val})
-                    except: pass
-                    
-        if not melted_rows:
-            res["Msg"] = "Tablodan geçerli veri dönüştürülemedi."
-            return res
-            
-        df_clean = pd.DataFrame(melted_rows).sort_values('Tarih_Dt')
+        # Kolon isimlerini garantiye alma (A sütunu Tarih, B sütunu Değer)
+        tarih_col = df_raw.columns[0]
+        tufe_col = df_raw.columns[1]
+
+        df_clean = pd.DataFrame()
+        df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+
+        df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
