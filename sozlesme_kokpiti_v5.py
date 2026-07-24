@@ -553,7 +553,6 @@ with st.sidebar:
 # ============================================================================
 # SEPET AĞIRLIKLARI STATE YÖNETİMİ
 # ============================================================================
-# Sözleşme türü değiştiğinde veya sayfa ilk yüklendiğinde ağırlıkları session_state'e aktar
 if 'last_sozlesme_tipi' not in st.session_state or st.session_state.last_sozlesme_tipi != sozlesme_tipi:
     st.session_state.last_sozlesme_tipi = sozlesme_tipi
     auto_w = get_auto_weights(sozlesme_tipi)
@@ -954,27 +953,28 @@ with st.container(border=True):
             if isinstance(close_series, pd.DataFrame):
                 close_series = close_series.iloc[:, 0]
                 
-            close_series = close_series.dropna()
-            # --- JET A-1 İÇİN GALON -> VARİL ÇEVRİMİ (x42) ---
-            if symbol_code == "HO=F":
-                close_series = close_series * 42
+            close_series = close_series.dropna().copy()
+            
+            # --- JET A-1 (HO=F) GALON ($4.36) -> VARİL ($172+) KESİN ÇEVRİMİ ---
+            if "HO=F" in symbol_code or selected_chart_item.startswith("Jet"):
+                close_series = close_series * 42.0
             
             fig_plotly = go.Figure()
             fig_plotly.add_trace(go.Scatter(
                 x=close_series.index,
                 y=close_series.values,
                 mode='lines',
-                name='Fiyat',
-                line=dict(color='#1E3D59', width=2.5),
+                name='Fiyat ($/Bbl)' if "HO=F" in symbol_code else 'Fiyat',
+                line=dict(color='#27AE60' if "HO=F" in symbol_code else '#1E3D59', width=2.5),
                 fill='tozeroy',
-                fillcolor='rgba(30, 61, 89, 0.1)',
-                hovertemplate="<b>Tarih:</b> %{x|%d %b %Y}<br><b>Fiyat:</b> %{y:,.2f}<extra></extra>"
+                fillcolor='rgba(39, 174, 96, 0.1)' if "HO=F" in symbol_code else 'rgba(30, 61, 89, 0.1)',
+                hovertemplate="<b>Tarih:</b> %{x|%d %b %Y}<br><b>Fiyat:</b> $%{y:,.2f}<extra></extra>"
             ))
 
             fig_plotly.update_layout(
                 title=f"<b>{selected_chart_item}</b> — Tarihsel Değişim Grafiği",
                 xaxis_title="Tarih",
-                yaxis_title="Fiyat / Değer",
+                yaxis_title="Fiyat ($/Varil)" if "HO=F" in symbol_code else "Fiyat / Değer",
                 template="plotly_white",
                 hovermode="x unified",
                 height=420,
@@ -1147,10 +1147,8 @@ with st.container(border=True):
             with st.spinner("Jarvis şartnameyi analiz ediyor ve maliyet kırılımı çıkarıyor..."):
                 ai_weights = ai_kapsam_analizi(kapsam_input, GEMINI_API_KEY)
                 if ai_weights:
-                    # Mevcut tüm ağırlıkları sıfırla
                     for k in WEIGHT_KEYS:
                         st.session_state[f"w_{k}"] = 0.0
-                    # Yapay zekadan gelenleri yükle
                     for key, val in ai_weights.items():
                         clean_k = key.lower().replace("ğ", "g")
                         if clean_k in WEIGHT_KEYS:
@@ -1240,6 +1238,21 @@ with st.container(border=True):
         ("Kakao", safe_float(d_kakao), safe_float(w_kakao)),
         ("Plastik", safe_float(d_plastik), safe_float(w_plastik))
     ]
+
+    # --- SEPETİ IŞILDATAN AKTİF AĞIRLIK BANDEROLÜ ---
+    aktif_kalemler = [f"<b>{ad.upper()}:</b> %{agr:.0f}" for ad, deg, agr in etkiler if agr > 0]
+    if aktif_kalemler:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(90deg, #1E3D59 0%, #27AE60 100%); 
+                        color: white; padding: 12px 18px; border-radius: 8px; 
+                        box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3); margin: 10px 0px 15px 0px; font-size: 14px;'>
+                ✨ <b>AKTİF SEPET KIRILIMI:</b> &nbsp;|&nbsp; {' &nbsp;&bull;&nbsp; '.join(aktif_kalemler)}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
     yeni = sozlesme_tutari + fark
@@ -1273,27 +1286,25 @@ with st.container(border=True):
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
+    # DETAY TABLOSU & VURGULAMA
+    data = {"Kalem": [], "Değişim": [], "Ağırlık": [], "Etki": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
-            data["Kalem"].append(ad); data["Değişim %"].append(deg)
-            data["Ağırlık %"].append(agr); data["Etki %"].append((deg*agr)/100)
-    # Sadece ağırlığı 0'dan büyük olan kalemleri filtreleme ve vurgulama
-    data = {"Kalem": [], "Değişim %": [], "Ağırlık %": [], "Etki %": []}
-    for ad, deg, agr in etkiler:
-        if agr > 0:  # <--- Sadece seçilen (dolgu yapılan) ağırlıkları alıyoruz
-            data["Kalem"].append(f"📌 {ad}") # Seçilenlere raptiye ikonu ekler
-            data["Değişim %"].append(deg)
-            data["Ağırlık %"].append(agr)
-            data["Etki %"].append((deg * agr) / 100)
+            data["Kalem"].append(f"📌 {ad}")
+            data["Değişim"].append(deg)
+            data["Ağırlık"].append(agr)
+            data["Etki"].append((deg * agr) / 100)
 
     df = pd.DataFrame(data)
 
-    # Tabloda Ağırlık % ve Etki % sütunlarını şık bir renkle highlight etme
     st.dataframe(
-        df.style.format({"Değişim %": "%{:+.2f}", "Ağırlık %": "%{:.0f}", "Etki %": "%{:.2f}"})
-        .background_gradient(subset=["Ağırlık %"], cmap="YlGn") # Yüksek ağırlıkları yeşil tonuyla vurgular
-        .highlight_max(subset=["Etki %"], color="#D4EFDF"), # Zamma en çok sebep olan kalemi yakar
+        df.style.format({
+            "Değişim": "%{:+.2f}",
+            "Ağırlık": "%{:.0f}",
+            "Etki": "%{:+.2f}"
+        })
+        .background_gradient(subset=["Ağırlık"], cmap="YlGn")
+        .highlight_max(subset=["Etki"], color="#D4EFDF"),
         use_container_width=True
     )
     
