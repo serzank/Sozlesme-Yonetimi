@@ -46,6 +46,11 @@ try:
 except:
     ALPHA_VANTAGE_KEY = None
 
+try:
+    FRED_API_KEY = st.secrets["FRED_KEY"]
+except:
+    FRED_API_KEY = None
+
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="PNX | Procurement Nexus", layout="wide", page_icon="💠")
 
@@ -101,6 +106,32 @@ def safe_float(val):
         if pd.isna(val): return 0.0
         return float(val)
     except: return 0.0
+
+# --- FRED API TARİHSEL EMTİA VERİSİ ÇEKİCİSİ ---
+@st.cache_data(ttl=3600)
+def get_fred_commodity_history(api_key, series_id, target_date):
+    if not api_key:
+        return 0.0
+    try:
+        s_date = (target_date - timedelta(days=30)).strftime("%Y-%m-%d")
+        e_date = (target_date + timedelta(days=5)).strftime("%Y-%m-%d")
+        url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            obs = res.json().get("observations", [])
+            valid = []
+            for o in obs:
+                val = o.get("value")
+                if val not in [None, ".", ""]:
+                    try:
+                        valid.append((pd.to_datetime(o["date"]), float(val)))
+                    except: pass
+            if valid:
+                df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
+                idx = (df.index - pd.Timestamp(target_date)).abs().argmin()
+                return float(df.iloc[idx]["Value"])
+    except: pass
+    return 0.0
 
 # --- SÖZLEŞME AĞIRLIK MANTIĞI ---
 def get_auto_weights(contract_type):
@@ -412,7 +443,8 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
- 
+    if FRED_API_KEY:
+        st.success("✅ FRED API Entegre Edildi")
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
@@ -470,10 +502,10 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (BRENT PETROL & GRAM ALTIN TAM DÜZELTİLMİŞ)
+# PİYASA VERİSİ İŞLEME (FRED ENTEGRASYONLU & ZIRHLI MOTOR)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data):
+def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
         ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")
@@ -506,7 +538,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     # --- BRENT PETROL TARİHSEL (ESKİ) DEĞER ZIRHLAMA KATMANI ---
     if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0:
-        # 1. YOL: Doğrudan Native yfinance Kütüphanesi
         try:
             brent_ticker = yf.Ticker("BZ=F")
             hist = brent_ticker.history(start=d_start - timedelta(days=5), end=d_start + timedelta(days=5))
@@ -514,7 +545,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                 data_dict["BRENT_PETROL"]["ilk"] = float(hist['Close'].iloc[0])
         except: pass
 
-    # 2. YOL: EVDS (TCMB) Brent Petrol Resmi Veri Serisi (TP.AK.BRENT)
     if data_dict.get("BRENT_PETROL", {}).get("ilk", 0) == 0 and evds_key:
         try:
             evds_service = evdsAPI(evds_key)
@@ -532,7 +562,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
-    # Brent Petrol Canlı Değer Garantisi
     if doviz_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = doviz_data["BRENT_PETROL"]
     elif te_data.get("BRENT_PETROL", 0) > 0:
@@ -565,6 +594,22 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     for te_key, te_val in te_data.items():
         if te_key not in data_dict:
             data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
+
+    # FRED API İLE ESKİ EMTİA FİYATI DOLDURMA (FRED HARİTALAMA)
+    if fred_key:
+        fred_map = {
+            "BAKIR": "PCOPPUSDM",
+            "ALUMINYUM": "PALUMUSDM",
+            "DOGALGAZ": "PNGASUSDM",
+            "SCRAP_STEEL": "WPU1012",
+            "PROPAN": "PROPANEM",
+            "CRUDE_OIL": "POILBREUSDM"
+        }
+        for k_fred, series_id in fred_map.items():
+            if k_fred in data_dict and data_dict[k_fred]["ilk"] == 0.0:
+                f_val = get_fred_commodity_history(fred_key, series_id, d_start)
+                if f_val > 0:
+                    data_dict[k_fred]["ilk"] = f_val
 
     # GRAM ALTIN GARANTİ DÜZELTME MOTORU
     gold_son = doviz_data.get("ALTIN", 0.0)
@@ -603,7 +648,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live, FRED_API_KEY)
 
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
