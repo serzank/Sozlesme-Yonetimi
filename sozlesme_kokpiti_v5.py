@@ -158,45 +158,45 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- DEBUG MODU: TÜFE VERİ KÖPRÜSÜ ---
-@st.cache_data(ttl=300)
+# --- KESİN ÇÖZÜM: NİHAİ TÜFE MOTORU ---
+@st.cache_data(ttl=0)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    if not sheet_url: 
-        res["Msg"] = "Sheet URL boş!"
-        return res
+    if not sheet_url: return res
     try:
         df_raw = pd.read_csv(sheet_url)
         if df_raw.empty:
-            res["Msg"] = "Sheet verisi boş döndü."
+            res["Msg"] = "Sheet verisi boş."
             return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        # Sütunları ve ilk 20 veriyi ekrana yazdıralım (Sorunu görmek için)
-        st.write("--- DEBUG BİLGİLERİ ---")
-        st.write("Bulunan Kolonlar:", df_raw.columns.tolist())
-        
         tarih_col = df_raw.columns[0]
         tufe_col = df_raw.columns[1]
-        
-        st.write("Seçilen Değer Kolonu:", tufe_col)
-        st.write("Ham Veri İlk 20 Satır:", df_raw[tufe_col].head(20))
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
         
-        # Değer dönüşümü
-        raw_vals = df_raw[tufe_col].astype(str).str.strip().str.replace(',', '.', regex=False)
-        df_clean['TUFE_COL'] = pd.to_numeric(raw_vals, errors='coerce')
+        # Görünmeyen karakterleri, boşlukları ve format bozukluklarını temizleyen gelişmiş temizlik
+        cleaned_vals = (
+            df_raw[tufe_col]
+            .astype(str)
+            .str.strip()
+            .str.replace("\u00A0", "", regex=False)
+            .str.replace("%", "", regex=False)
+            .str.replace(',', '.', regex=False)
+        )
+        df_clean['TUFE_COL'] = pd.to_numeric(cleaned_vals, errors='coerce')
         
-        st.write("Sayıya Çevrilmiş Veri İlk 20:", df_clean['TUFE_COL'].head(20))
-
         df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
+        
+        # Kritik Kontrol: Dönüşen veriyi ve son satırları görelim
+        st.write("--- DF_CLEAN TAIL KONTROLÜ ---")
+        st.write(df_clean.tail())
+
         if df_clean.empty:
             res["Msg"] = "Tarih veya TÜFE değerleri sayısal formata çevrilemedi (Hepsi NaN oldu)."
-            st.write(res)
             return res
 
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
@@ -213,24 +213,19 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         v_start = safe_float(start_row['TUFE_COL'])
         v_end = safe_float(latest_row['TUFE_COL'])
 
-        st.write("Başlangıç Satırı:", start_row)
-        st.write("Bitiş Satırı:", latest_row)
-        st.write("Bulunan Değerler -> Başlangıç:", v_start, "Bitiş:", v_end)
+        st.write(f"Bulunan Değerler -> v_start: {v_start} | v_end: {v_end}")
 
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
-                "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
+                "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
             })
         else:
-            res["Msg"] = f"Değerler sıfır veya negatif: Başlangıç={v_start}, Bitiş={v_end}"
-            
-        st.write("Sonuç Sözlüğü (tufe_res):", res)
+            res["Msg"] = f"Değerler sıfır çıktı: v_start={v_start}, v_end={v_end}"
     except Exception as e:
-        res["Msg"] = f"Sheet Okuma Kritik Hata: {str(e)}"
-        st.write("Kritik Hata:", str(e))
+        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
