@@ -440,6 +440,7 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         v_start = float(start_row["TUFE_COL"])
         v_end = float(latest_row["TUFE_COL"])
 
+        tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
         
         if v_start > 0 and v_end > 0:
             res.update({
