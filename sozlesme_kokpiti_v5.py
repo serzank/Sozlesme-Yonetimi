@@ -75,6 +75,38 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- YARDIMCI FONKSİYONLAR ---
+
+def ai_kapsam_analizi(kapsam_metni, api_key):
+    if not api_key or not kapsam_metni.strip():
+        return None
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        prompt = f"""
+        Sen TAV Havalimanları Holding kıdemli Satın Alma ve Maliyet Mühendisisin.
+        Aşağıda verilen İş Kapsamı / İhale Şartnamesi metnini analiz et ve bu işin maliyet yapısını oluşturan hammadde/girdi ağırlıklarını %100 toplam verecek şekilde dağıt.
+
+        KULLANILABİLİR KALEMLER (Sadece bu anahtarları kullan):
+        "mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"
+
+        İŞ KAPSAMI METNİ:
+        "{kapsam_metni}"
+
+        ÇIKTI FORMATI:
+        Sadece ve sadece geçerli bir JSON objesi dön. Başka hiçbir açıklama yazma.
+        Örnek: {{"bakir": 30, "celik": 20, "eur": 20, "iscilik": 20, "dizel": 10}}
+        Toplam tam olarak 100 olmalıdır.
+        """
+        res = model.generate_content(prompt)
+        # JSON yanıtını temizleme ve parse etme
+        clean_json = re.sub(r'```json|```', '', res.text).strip()
+        import json
+        return json.loads(clean_json)
+    except Exception as e:
+        st.error(f"Kapsam analizi yapılırken hata oluştu: {str(e)}")
+        return None
+        
 def render_svg_logo():
     return """
     <svg width="100%" height="auto" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
@@ -1158,6 +1190,21 @@ with st.container(border=True):
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
 
+    with st.expander("✨ Yapay Zeka ile İş Kapsamından / Şartnameden Otomatik Sepet Oluştur", expanded=False):
+        kapsam_input = st.text_area("İhale Şartnamesi, Metraj / BoQ Açıklaması veya İş Kapsamını Yapıştırın:", 
+                                   placeholder="Örn: Lounge ince işler kapsamında ahşap kaplamalar, özel imalat mobilya, lokal işçilik, ithal aydınlatma ve lojistik giderleri dahildir...",
+                                   height=100)
+        
+        if st.button("🚀 Kapsamı Analiz Et ve Ağırlıkları Doldur"):
+            with st.spinner("Jarvis şartnameyi analiz ediyor ve maliyet kırılımı çıkarıyor..."):
+                ai_weights = ai_kapsam_analizi(kapsam_input, GEMINI_API_KEY)
+                if ai_weights:
+                    # Otomatik ağırlıkları st.session_state içine yüklüyoruz
+                    for key, val in ai_weights.items():
+                        st.session_state[f"w_{key}"] = float(val)
+                    st.success("✅ Şartname analiz edildi ve sepet ağırlıkları başarıyla güncellendi!")
+                    st.rerun()
+
     w1, w2, w3, w4 = st.columns(4)
     w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
     w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
@@ -1243,6 +1290,29 @@ with st.container(border=True):
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
     yeni = sozlesme_tutari + fark
+
+    # --- RISK & HEDGING UYARI MOTORU ---
+    riskli_kalemler = []
+    for ad, deg, agr in etkiler:
+        if agr > 0:  # Sadece sepette payı olan kalemleri kontrol et
+            if deg >= 15.0:
+                riskli_kalemler.append((ad, deg, agr, "YÜKSELİŞ_RISKI"))
+            elif deg <= -10.0:
+                riskli_kalemler.append((ad, deg, agr, "FIRSAT_DUSUS"))
+
+    if riskli_kalemler:
+        st.markdown("##### 🚨 Erken Uyarı & Risk / Hedging Sinyalleri")
+        for ad, deg, agr, risk_turu in riskli_kalemler:
+            if risk_turu == "YÜKSELİŞ_RISKI":
+                st.warning(
+                    f"⚠️ **{ad} Sıçrama Riski (%{deg:+.2f}):** Sepetinizde **%{agr:.0f}** ağırlığa sahip bu kalemde sert yükseliş var. "
+                    f"Sözleşmede sabit fiyat kilitlenmesi (Lock-in/Hedging) veya miktar bazlı ön alım değerlendirilmelidir, Sir!"
+                )
+            elif risk_turu == "FIRSAT_DUSUS":
+                st.info(
+                    f"💡 **{ad} Maliyet Fırsatı (%{deg:+.2f}):** Sepetinizde **%{agr:.0f}** ağırlığa sahip bu kalemde piyasa gevşemesi var. "
+                    f"Tedarikçiden ek indirim/revizyon talep etmek için pazarlık masasında koz olarak kullanılabilir."
+                )
     
     st.markdown("---")
     r1, r2, r3 = st.columns(3)
