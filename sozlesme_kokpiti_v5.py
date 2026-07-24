@@ -159,25 +159,22 @@ def get_evds_gold_history(api_key, d_start):
     return price
 
 # --- DİKEY FORMAT GOOGLE SHEET TÜFE MOTORU ---
+# --- DEBUG DESTEKLİ DİKEY FORMAT TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    if not sheet_url: return res
+    if not sheet_url: 
+        res["Msg"] = "Sheet URL boş!"
+        return res
     try:
-        if "edit" in sheet_url:
-            csv_url = sheet_url.split("/edit")[0] + "/export?format=csv"
-        else:
-            csv_url = sheet_url
-            
-        df_raw = pd.read_csv(csv_url)
+        df_raw = pd.read_csv(sheet_url)
         if df_raw.empty:
-            res["Msg"] = "Sheet verisi boş."
+            res["Msg"] = "Sheet verisi boş döndü."
             return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        # Kolon isimlerini garantiye alma (A sütunu Tarih, B sütunu Değer)
         tarih_col = df_raw.columns[0]
         tufe_col = df_raw.columns[1]
 
@@ -186,6 +183,11 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
 
         df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
+        
+        if df_clean.empty:
+            res["Msg"] = f"Tarih veya TÜFE kolonları sayısal/tarih formatına çevrilemedi! Sütunlar: {list(df_raw.columns)}"
+            return res
+
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
 
         p_start = pd.Period(start_date, freq='M')
@@ -205,10 +207,12 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
-                "Msg": f"Sheet TÜFE Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
+                "Msg": f"Başarılı | Dönem: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
             })
+        else:
+            res["Msg"] = f"Değerler sıfır veya hatalı: Başlangıç={v_start}, Bitiş={v_end}"
     except Exception as e:
-        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
+        res["Msg"] = f"Sheet Okuma Kritik Hata: {str(e)}"
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
