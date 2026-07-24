@@ -158,40 +158,45 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- GOOGLE SHEET TABANLI KUSURSUZ VE TEK TÜFE MOTORU ---
+# --- DEBUG MODU: TÜFE VERİ KÖPRÜSÜ ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    if not sheet_url: return res
+    if not sheet_url: 
+        res["Msg"] = "Sheet URL boş!"
+        return res
     try:
         df_raw = pd.read_csv(sheet_url)
         if df_raw.empty:
-            res["Msg"] = "Sheet verisi boş."
+            res["Msg"] = "Sheet verisi boş döndü."
             return res
             
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        # Türkçe karakterleri normalize et (Ü->U, İ->I vb.)
-        def normalize_str(s):
-            return str(s).upper().replace('Ü', 'U').replace('İ', 'I').replace('Ş', 'S').replace('Ğ', 'G').replace('Ö', 'O').replace('Ç', 'C')
-
-        normalized_cols = {c: normalize_str(c) for c in df_raw.columns}
+        # Sütunları ve ilk 20 veriyi ekrana yazdıralım (Sorunu görmek için)
+        st.write("--- DEBUG BİLGİLERİ ---")
+        st.write("Bulunan Kolonlar:", df_raw.columns.tolist())
         
-        tarih_col = next((c for c, norm in normalized_cols.items() if "TARIH" in norm or "DATE" in norm or "AY" in norm), df_raw.columns[0])
-        tufe_col = next((c for c, norm in normalized_cols.items() if "TUFE" in norm or "ENDEKS" in norm), df_raw.columns[1] if len(df_raw.columns) > 1 else None)
-
-        if not tufe_col:
-            res["Msg"] = f"TÜFE kolonu bulunamadı! Mevcut kolonlar: {list(df_raw.columns)}"
-            return res
+        tarih_col = df_raw.columns[0]
+        tufe_col = df_raw.columns[1]
+        
+        st.write("Seçilen Değer Kolonu:", tufe_col)
+        st.write("Ham Veri İlk 20 Satır:", df_raw[tufe_col].head(20))
 
         df_clean = pd.DataFrame()
         df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
-        df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        
+        # Değer dönüşümü
+        raw_vals = df_raw[tufe_col].astype(str).str.strip().str.replace(',', '.', regex=False)
+        df_clean['TUFE_COL'] = pd.to_numeric(raw_vals, errors='coerce')
+        
+        st.write("Sayıya Çevrilmiş Veri İlk 20:", df_clean['TUFE_COL'].head(20))
 
         df_clean = df_clean.dropna(subset=['Tarih_Dt', 'TUFE_COL']).sort_values('Tarih_Dt')
         if df_clean.empty:
-            res["Msg"] = "Tarih veya TÜFE değerleri sayısal formata çevrilemedi."
+            res["Msg"] = "Tarih veya TÜFE değerleri sayısal formata çevrilemedi (Hepsi NaN oldu)."
+            st.write(res)
             return res
 
         df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
@@ -208,6 +213,10 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         v_start = safe_float(start_row['TUFE_COL'])
         v_end = safe_float(latest_row['TUFE_COL'])
 
+        st.write("Başlangıç Satırı:", start_row)
+        st.write("Bitiş Satırı:", latest_row)
+        st.write("Bulunan Değerler -> Başlangıç:", v_start, "Bitiş:", v_end)
+
         if v_start > 0 and v_end > 0:
             tufe_diff = round(((v_end / v_start) - 1) * 100, 2)
             res.update({
@@ -216,9 +225,12 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
                 "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
             })
         else:
-            res["Msg"] = f"Başlangıç ({v_start}) veya Bitiş ({v_end}) değeri sıfır!"
+            res["Msg"] = f"Değerler sıfır veya negatif: Başlangıç={v_start}, Bitiş={v_end}"
+            
+        st.write("Sonuç Sözlüğü (tufe_res):", res)
     except Exception as e:
-        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
+        res["Msg"] = f"Sheet Okuma Kritik Hata: {str(e)}"
+        st.write("Kritik Hata:", str(e))
     return res
 
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
