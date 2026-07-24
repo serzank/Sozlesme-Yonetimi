@@ -924,17 +924,34 @@ with st.container(border=True):
     st.subheader("📈 Emtia & Kur İnteraktif Trend Analizi (Plotly Borsa Terminali)")
     
     chart_symbols = {
+        # Döviz & Değerli Madenler
         "Dolar (USD/TL)": "TRY=X",
         "Euro (EUR/TL)": "EURTRY=X",
+        "Parite (EUR/USD)": "EURUSD=X",
         "Gram Altın (TL)": "GC=F",
+        
+        # Enerji Emtiaları
         "Brent Petrol ($/Bbl)": "BZ=F",
+        "Jet A-1 Yakıt ($/Bbl)": "HO=F",
+        "Doğal Gaz ($/MMBtu)": "NG=F",
+        "Propan ($/Gal)": "PN=F",
+        "Kömür ($/Ton)": "MTF=F",
+        
+        # Metaller & Sanayi
         "Bakır ($/Lbs)": "HG=F",
         "Alüminyum ($/Ton)": "ALI=F",
-        "Doğal Gaz ($/MMBtu)": "NG=F",
+        "Hurda Alüminyum ($/Ton)": "ALI=F",
         "Çelik / HRC ($/Ton)": "HRC=F",
+        "Hurda Çelik ($/Ton)": "HRC=F",
+        "Demir Cevheri ($/Ton)": "TI=F",
+        "Nikel ($/Ton)": "NKL=F",
+        "Çinko ($/Ton)": "ZNC=F",
+        
+        # Tarım & Diğer
         "Pamuk ($/Lbs)": "CT=F",
         "Buğday ($/Bu)": "ZW=F",
-        "Kakao ($/MT)": "CC=F"
+        "Kakao ($/MT)": "CC=F",
+        "Plastik / Polimer ($/MT)": "PLASTIK.L"
     }
     
     c_sel1, _ = st.columns([2, 2])
