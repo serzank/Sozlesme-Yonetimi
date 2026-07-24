@@ -341,82 +341,66 @@ def guncel_akaryakit_cek():
     except: pass
     return fiyatlar
 
-@st.cache_data(ttl=3600)
-def get_tcmb_data(api_key, start_date, end_date):
+# --- GOOGLE SHEET TABANLI KUSURSUZ TÜFE VE H-ÜFE MOTORU ---
+@st.cache_data(ttl=300)
+def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
-    if not api_key: return res
+    if not sheet_url: return res
     try:
-        evds_service = evdsAPI(api_key)
-        
-        # EVDS aylık serilerde hata vermemesi için ayın 1'ini ve sonunu baz alıyoruz
-        s_date = start_date - relativedelta(months=2)
-        e_date = end_date + relativedelta(months=1)
-        
-        start_q = s_date.replace(day=1).strftime("%d-%m-%Y")
-        
-        next_month = e_date + relativedelta(months=1)
-        last_day_date = next_month.replace(day=1) - timedelta(days=1)
-        end_q = last_day_date.strftime("%d-%m-%Y")
-
-        series = ["TP.FG.J0", "TP.TUFE1YI.T1", "TP.HKFE01.I1"]
-        
-        raw_df = evds_service.get_data(series, startdate=start_q, enddate=end_q)
-        if raw_df is None or raw_df.empty:
-            res["Msg"] = "EVDS'den veri dönmedi. Tarih aralığını kontrol edin."
+        if "edit" in sheet_url:
+            csv_url = sheet_url.split("/edit")[0] + "/export?format=csv"
+        else:
+            csv_url = sheet_url
+            
+        df_raw = pd.read_csv(csv_url)
+        if df_raw.empty:
+            res["Msg"] = "Sheet verisi boş."
             return res
             
-        raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], format='%Y-%m', errors='coerce')
-        if raw_df['Tarih_Dt'].isna().all():
-            raw_df['Tarih_Dt'] = pd.to_datetime(raw_df['Tarih'], errors='coerce')
-            
-        raw_df = raw_df.dropna(subset=['Tarih_Dt']).copy()
+        df_raw.columns = df_raw.columns.str.strip()
+        df_raw = df_raw.dropna(how='all')
         
-        # --- ZIRH: EKSİK (GELECEK) VERİ KORUMASI ---
-        # EVDS açıklanmamış aylara 'Boş' atar, bu da %-100 hatasına neden olur.
-        data_cols = [c for c in raw_df.columns if c.startswith('TP')]
-        for c in data_cols:
-            # Boşlukları veya hatalı metinleri sayısal NaN değere zorla
-            raw_df[c] = pd.to_numeric(raw_df[c], errors='coerce')
-            
-        if data_cols:
-            # Açıklanmayan henüz boş olan ayı, en son açıklanan ayın verisiyle doldur (Forward Fill)
-            raw_df[data_cols] = raw_df[data_cols].ffill()
-            raw_df = raw_df.dropna(subset=data_cols, how='all')
-            
+        # Tarih kolonunu bulma
+        tarih_col = next((c for c in df_raw.columns if "TARIH" in c.upper() or "DATE" in c.upper() or "AY" in c.upper()), df_raw.columns[0])
+        tufe_col = next((c for c in df_raw.columns if "TUFE" in c.upper() or "ENDEKS" in c.upper()), None)
+        ufe_col = next((c for c in df_raw.columns if "UFE" in c.upper() or "YI-ÜFE" in c.upper() or "YI_UFE" in c.upper()), None)
+
+        df_clean = pd.DataFrame()
+        df_clean['Tarih_Dt'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
+        
+        if tufe_col:
+            df_clean['TUFE_COL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        if ufe_col:
+            df_clean['UFE_COL'] = pd.to_numeric(df_raw[ufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+
+        df_clean = df_clean.dropna(subset=['Tarih_Dt']).sort_values('Tarih_Dt')
+        df_clean['Period'] = df_clean['Tarih_Dt'].dt.to_period('M')
+
         p_start = pd.Period(start_date, freq='M')
         p_end = pd.Period(end_date, freq='M')
 
-        row_start = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_start]
-        if row_start.empty:
-            row_start = raw_df[raw_df['Tarih_Dt'] >= pd.to_datetime(start_date.replace(day=1))].head(1)
-        
-        row_end = raw_df[raw_df['Tarih_Dt'].dt.to_period('M') == p_end]
-        if row_end.empty:
-            row_end = raw_df.tail(1)
+        matches_s = df_clean[df_clean['Period'] <= p_start]
+        start_row = matches_s.iloc[-1] if not matches_s.empty else df_clean.iloc[0]
 
-        def get_val(row, codes):
-            if row.empty: return 0.0
-            for c in codes:
-                c_clean = c.replace(".", "_") 
-                if c in row.columns and pd.notna(row[c].values[0]): return float(row[c].values[0])
-                if c_clean in row.columns and pd.notna(row[c_clean].values[0]): return float(row[c_clean].values[0])
+        matches_e = df_clean[df_clean['Period'] <= p_end]
+        latest_row = matches_e.iloc[-1] if not matches_e.empty else df_clean.iloc[-1]
+
+        def calc_diff(col_name):
+            if col_name in df_clean.columns:
+                v_start = safe_float(start_row[col_name])
+                v_end = safe_float(latest_row[col_name])
+                if v_start > 0 and v_end > 0:
+                    return round(((v_end / v_start) - 1) * 100, 2)
             return 0.0
-            
-        t_start, t_end = get_val(row_start, ["TP.FG.J0"]), get_val(row_end, ["TP.FG.J0"])
-        u_start, u_end = get_val(row_start, ["TP.TUFE1YI.T1"]), get_val(row_end, ["TP.TUFE1YI.T1"])
-        h_start, h_end = get_val(row_start, ["TP.HKFE01.I1"]), get_val(row_end, ["TP.HKFE01.I1"])
-        
-        calc = lambda n, o: ((n - o) / o * 100) if o > 0 else 0.0
-            
+
         res.update({
-            "TUFE": round(calc(t_end, t_start), 2),
-            "UFE": round(calc(u_end, u_start), 2),
-            "HUFE": round(calc(h_end, h_start), 2),
+            "TUFE": calc_diff("TUFE_COL"),
+            "UFE": calc_diff("UFE_COL"),
             "Status": True,
-            "Msg": f"Veri Aralığı: {row_start['Tarih'].values[0] if not row_start.empty else '?'} - {row_end['Tarih'].values[0] if not row_end.empty else '?'}"
+            "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ➡️ {latest_row['Period']}"
         })
-    except Exception as e: 
-        res["Msg"] = f"EVDS Bağlantı Hatası: {str(e)}"
+    except Exception as e:
+        res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
 
 
@@ -500,6 +484,7 @@ d_key = f"{start_date}_{end_date}"
 
 # --- VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
+    tufe_sheet_url = "https://docs.google.com/spreadsheets/d/15tHPO39U5ltgMDQVa4jEb5b2sHCWV1KuHq5epNrWNh0/edit?gid=0#gid=0"
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
     doviz_com_data = doviz_com_canli_cek() 
