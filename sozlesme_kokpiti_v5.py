@@ -123,26 +123,33 @@ def get_global_inflation_change(api_key, series_id, target_start_date, target_en
             obs = res.json().get("observations", [])
             valid = []
             for o in obs:
-                val = o.get("value")
-                if val not in [None, ".", ""]:
-                    try:
-                        valid.append((pd.to_datetime(o["date"]), float(val)))
-                    except: pass
-            if valid:
-                df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
-                
-                # Başlangıç tarihindeki endeks değeri
-                past_df = df[df.index <= pd.Timestamp(target_start_date)]
-                val_start = float(past_df.iloc[-1]["Value"]) if not past_df.empty else float(df.iloc[0]["Value"])
-                
-                # Bitiş (güncel) tarihindeki endeks değeri
-                latest_df = df[df.index <= pd.Timestamp(target_end_date)]
-                val_latest = float(latest_df.iloc[-1]["Value"]) if not latest_df.empty else float(df.iloc[-1]["Value"])
-                
-                if val_start > 0:
-                    return round(((val_latest - val_start) / val_start) * 100, 2)
-    except: pass
-    return 0.0
+                if o["value"] != ".":
+                    valid.append(
+                        (
+                            pd.to_datetime(o["date"]),
+                            float(o["value"])
+                        )
+                    )
+
+            df = pd.DataFrame(valid, columns=["Date","Value"]).set_index("Date")
+
+            past = df[df.index <= pd.Timestamp(target_start_date)]
+            latest = df[df.index <= pd.Timestamp(target_end_date)]
+
+            if past.empty or latest.empty:
+                return 0.0,0.0,0.0
+
+            ilk = float(past.iloc[-1]["Value"])
+            son = float(latest.iloc[-1]["Value"])
+
+            deg = ((son-ilk)/ilk)*100 if ilk>0 else 0
+
+            return round(ilk,2),round(son,2),round(deg,2)
+
+    except:
+        pass
+
+    return 0.0,0.0,0.0
 def get_fred_index_change(api_key, series_id, target_start_date):
     return get_global_inflation_change(
         api_key,
@@ -688,8 +695,17 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
     # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
-    euro_enf_val = get_global_inflation_change(fred_key, "CP0000EZ19M086NEST", d_start, d_end) if fred_key else 0.0
-    abd_cpi_val = get_global_inflation_change(fred_key, "CPIAUCSL", d_start, d_end) if fred_key else 0.0
+    euro_ilk, euro_son, euro_deg = get_global_inflation_data(
+    fred_key,
+    "CP0000EZ19M086NEST",
+    d_start,
+    d_end)
+    
+    abd_ilk, abd_son, abd_deg = get_global_inflation_data(
+    fred_key,
+    "CPIAUCSL",
+    d_start,
+    d_end)
 
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
@@ -839,24 +855,23 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
 
     data_dict["EURO_HICP"] = {
-    "ilk": 0.0,
-    "son": euro_enf_val,
-    "degisim": euro_enf_val
-}
+    "ilk": euro_ilk,
+    "son": euro_son,
+    "degisim": euro_deg}
+    
     data_dict["ABD_CPI"] = {
-    "ilk": 0.0,
-    "son": abd_cpi_val,
-    "degisim": abd_cpi_val
-}
-
+    "ilk": abd_ilk,
+    "son": abd_son,
+    "degisim": abd_deg}
+    
     return data_dict
 
 
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live, FRED_API_KEY)
 st.write(piyasa["EURO_HICP"])
 st.write(piyasa["ABD_CPI"])
-euro_enf_val = piyasa.get("EURO_HICP", 0.0)
-abd_cpi_val = piyasa.get("ABD_CPI", 0.0)
+euro_enf_val = piyasa["EURO_HICP"]["degisim"]
+abd_cpi_val = piyasa["ABD_CPI"]["degisim"]
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
 # ============================================================================
