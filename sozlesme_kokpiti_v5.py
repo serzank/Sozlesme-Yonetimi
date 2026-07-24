@@ -14,6 +14,7 @@ import calendar
 import time
 import re
 import plotly.graph_objects as go
+import json
 
 # --- KÜTÜPHANE KONTROLÜ ---
 try:
@@ -76,6 +77,8 @@ st.markdown("""
 
 # --- YARDIMCI FONKSİYONLAR ---
 
+WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
+
 def ai_kapsam_analizi(kapsam_metni, api_key):
     if not api_key or not kapsam_metni.strip():
         return None
@@ -99,9 +102,7 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
         Toplam tam olarak 100 olmalıdır.
         """
         res = model.generate_content(prompt)
-        # JSON yanıtını temizleme ve parse etme
         clean_json = re.sub(r'```json|```', '', res.text).strip()
-        import json
         return json.loads(clean_json)
     except Exception as e:
         st.error(f"Kapsam analizi yapılırken hata oluştu: {str(e)}")
@@ -217,7 +218,6 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-
 # --- 2. ÜFE: EVDS API ÜZERİNDEN ---
 @st.cache_data(ttl=3600)
 def get_evds_ufe_data(api_key, start_date, end_date):
@@ -266,15 +266,15 @@ def get_auto_weights(contract_type):
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
         "benzin": 0, "dizel": 0, "brent": 0, "abd": 0,
-        "jet_fuel": 0, # <--- JET FUEL EKLENDİ
+        "jet_fuel": 0,
         "bakir": 0, "alum": 0, "gaz": 0, "celik": 0, "demir": 0, "nikel": 0, "cinko": 0,
-        "pamuk": 0, "buğday": 0, "kakao": 0, "plastik": 0, "propan": 0, "scrap_steel": 0,
+        "pamuk": 0, "bugday": 0, "kakao": 0, "plastik": 0, "propan": 0, "scrap_steel": 0,
         "scrap_alum": 0, "lityum": 0, "gumus": 0, "coal": 0, "eugas": 0, "naphtha": 0
     }
     if contract_type == "Personel Taşımacılık":
         w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
     elif contract_type == "Yiyecek-İçecek Hizmetleri":
-        w["tufe"] = 30; w["iscilik"] = 30; w["hufe"] = 10; w["usd"] = 10; w["buğday"] = 10; w["kakao"] = 10
+        w["tufe"] = 30; w["iscilik"] = 30; w["hufe"] = 10; w["usd"] = 10; w["bugday"] = 10; w["kakao"] = 10
     elif contract_type == "Yazılım / Lisans":
         w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
     elif contract_type == "Bilişim Sarf (Donanım)":
@@ -446,16 +446,12 @@ def guncel_akaryakit_cek():
     return fiyatlar
 
 # --- GOOGLE SHEET TABANLI KUSURSUZ TÜFE VE H-ÜFE MOTORU ---
-# --- KESİN KANIT MODÜLÜ: TÜFE MOTORU ---
 @st.cache_data(ttl=0)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
     if not sheet_url: return res
     try:
-        if "edit" in sheet_url:
-            csv_url = sheet_url.split("/edit")[0] + "/export?format=csv"
-        else:
-            csv_url = sheet_url
+        csv_url = sheet_url.split("/edit")[0] + "/export?format=csv" if "edit" in sheet_url else sheet_url
             
         df_raw = pd.read_csv(csv_url)
         if df_raw.empty:
@@ -506,14 +502,13 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
             res.update({
                 "TUFE": tufe_diff,
                 "Status": True,
+                "Msg": f"Sheet Enflasyon Dönemi: {start_row['Period']} ({v_start}) ➡️ {latest_row['Period']} ({v_end})"
             })
         else:
             res["Msg"] = f"Değerler sıfır: v_start={v_start}, v_end={v_end}"
     except Exception as e:
         res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
-
-
 
 @st.cache_data(ttl=600)
 def get_evds_fuel_history(api_key, d_start):
@@ -546,7 +541,6 @@ with st.sidebar:
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
     
-    
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
@@ -555,8 +549,16 @@ with st.sidebar:
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: sozlesme_tutari = 0.0
-    
-    auto_weights = get_auto_weights(sozlesme_tipi)
+
+# ============================================================================
+# SEPET AĞIRLIKLARI STATE YÖNETİMİ
+# ============================================================================
+# Sözleşme türü değiştiğinde veya sayfa ilk yüklendiğinde ağırlıkları session_state'e aktar
+if 'last_sozlesme_tipi' not in st.session_state or st.session_state.last_sozlesme_tipi != sozlesme_tipi:
+    st.session_state.last_sozlesme_tipi = sozlesme_tipi
+    auto_w = get_auto_weights(sozlesme_tipi)
+    for k in WEIGHT_KEYS:
+        st.session_state[f"w_{k}"] = float(auto_w.get(k, 0))
 
 # ============================================================================
 # ANA EKRAN - ÜST KISIM
@@ -593,14 +595,10 @@ if start_date >= end_date: st.error("Hata: Başlangıç < Bitiş olmalı!")
 d_key = f"{start_date}_{end_date}"
 
 # --- VERİ KÖPRÜSÜ ---
-# --- VERİ KÖPRÜSÜ ---
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tufe_sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS1f-Ix-2hu_Gcuc0_dxZ-BcZbvoHPPewNmQAkOrC6H1nKOR_TYaAtyhWO2KObVArIvus0l1AvrsLY9/pub?output=csv"
     
-    # TÜFE Google Sheet'ten, ÜFE EVDS'den çekiliyor
     tufe_res = get_sheets_tufe_data(tufe_sheet_url, start_date, end_date)
-    
-     
     ufe_val = get_evds_ufe_data(MY_API_KEY, start_date, end_date)
     
     tcmb = {
@@ -608,7 +606,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
         "UFE": ufe_val,
         "HUFE": 0.0,
         "Status": tufe_res["Status"],
-        "Msg": ""
+        "Msg": tufe_res["Msg"]
     }
     
     yakit_guncel = guncel_akaryakit_cek()
@@ -619,13 +617,12 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (KAPATILMIŞ FRED HARİTASI & YFINANCE YEDEKLERİ)
+# PİYASA VERİSİ İŞLEME
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
     data_dict = {}
 
-    # DÖVİZ HİSTORİCAL ZIRHLAMA
     fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
     for k_fx, ticker_code in fx_map.items():
         ilk_val, son_val = 0.0, 0.0
@@ -664,7 +661,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
-    # BRENT PETROL TARİHSEL ZIRH
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
         b_ticker = yf.Ticker("BZ=F")
@@ -689,28 +685,21 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     elif te_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
 
- # --- JET A-1 YAKIT GARANTİ MOTORU ---
     data_dict["JET_FUEL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
-    
-    # 1. Öncelik: yfinance Borsasından Canlı & Tarihsel Çekim (HO=F Kerosene/Jet Proxy -> $/Bbl)
     try:
         j_ticker = yf.Ticker("HO=F")
         j_hist_s = j_ticker.history(start=d_start - timedelta(days=7), end=d_start + timedelta(days=7))
         j_hist_e = j_ticker.history(start=d_end - timedelta(days=7), end=d_end + timedelta(days=1))
         
         if not j_hist_s.empty and not j_hist_e.empty:
-            # 1 varil = 42 galon
             data_dict["JET_FUEL"]["ilk"] = round(float(j_hist_s['Close'].iloc[-1]) * 42, 2)
             data_dict["JET_FUEL"]["son"] = round(float(j_hist_e['Close'].iloc[-1]) * 42, 2)
-            
             i_val = data_dict["JET_FUEL"]["ilk"]
             s_val = data_dict["JET_FUEL"]["son"]
             if i_val > 0:
                 data_dict["JET_FUEL"]["degisim"] = round(((s_val - i_val) / i_val) * 100, 2)
-    except Exception:
-        pass
+    except Exception: pass
 
-    # 2. Öncelik: FRED API (PJETUSDM - Global Jet Fuel Price USD/Bbl) - Yalnızca yfinance başarısızsa
     if fred_key and data_dict["JET_FUEL"]["son"] == 0:
         try:
             url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=PJETUSDM&api_key={fred_key}&file_type=json&sort_order=desc&limit=1"
@@ -720,36 +709,29 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                 if obs and obs[0].get("value") not in [None, ".", ""]:
                     latest_val = float(obs[0]["value"])
                     pct_j = get_fred_index_change(fred_key, "PJETUSDM", d_start)
-                    
                     data_dict["JET_FUEL"]["son"] = round(latest_val, 2)
                     data_dict["JET_FUEL"]["degisim"] = pct_j
                     if (1 + pct_j/100) != 0:
                         data_dict["JET_FUEL"]["ilk"] = round(latest_val / (1 + pct_j/100), 2)
-        except Exception:
-            pass
+        except Exception: pass
 
-    # 3. Yedek Proxy: Brent Petrol Oranlaması (Eğer ikisi de bulunamazsa)
     if data_dict["JET_FUEL"]["son"] == 0 and data_dict["BRENT_PETROL"]["son"] > 0:
-        # Jet Fuel küresel olarak Brent'ten yaklaşık %15-20 daha primli işlem görür
         b_ilk = data_dict["BRENT_PETROL"]["ilk"]
         b_son = data_dict["BRENT_PETROL"]["son"]
         data_dict["JET_FUEL"]["ilk"] = round(b_ilk * 1.18, 2)
         data_dict["JET_FUEL"]["son"] = round(b_son * 1.18, 2)
         data_dict["JET_FUEL"]["degisim"] = data_dict["BRENT_PETROL"]["degisim"]
 
-    # TRADINGECONOMICS TÜM CANLI EMTİALAR EKLENİYOR
     for te_key, te_val in te_data.items():
         if te_key not in data_dict:
             data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
 
-    # %100 TAM HARİTALANDIRILMIŞ FRED EMTİA KODLARI (DOĞAL GAZ VE POLİMER/PLASTİK EKLENDİ)
     if fred_key:
         fred_map = {
-            "JET_FUEL": "PJETUSDM", # <--- Global Price of Jet Fuel
             "BAKIR": "PCOPPUSDM",
             "ALUMINYUM": "PALUMUSDM",
-            "DOGALGAZ": "PNGASUSDM",       # US Henry Hub Natural Gas
-            "PLASTIK": "WPU066",           # Producer Price Index: Plastic Materials and Resins
+            "DOGALGAZ": "PNGASUSDM",
+            "PLASTIK": "WPU066",
             "PROPAN": "PROPANEM",
             "SCRAP_STEEL": "WPU1012",
             "SCRAP_ALUM": "WPU102301",
@@ -762,14 +744,11 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
             "KAKAO": "PCOCOUSDM",
             "COAL": "PCOALAUUSDM"
         }
-        
         for k_fred, series_id in fred_map.items():
             if k_fred in data_dict and data_dict[k_fred]["son"] > 0:
                 pct = get_fred_index_change(fred_key, series_id, d_start)
-
                 if k_fred == "JET_FUEL" and data_dict["JET_FUEL"]["ilk"] > 0 and data_dict["JET_FUEL"]["ilk"] != data_dict["JET_FUEL"]["son"]: continue
                 
-                # Eğer FRED'den veri alınamadıysa yfinance Borsa Vadeli Kontrat Yedeklemesi
                 if pct == 0.0:
                     yf_backup_map = {"DOGALGAZ": "NG=F", "PLASTIK": "PLASTIK.L", "BAKIR": "HG=F"}
                     if k_fred in yf_backup_map:
@@ -786,28 +765,23 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                 if (1 + pct/100) != 0:
                     data_dict[k_fred]["ilk"] = round(data_dict[k_fred]["son"] / (1 + pct/100), 2)
 
-    # GRAM ALTIN GARANTİ MOTORU
     gold_son = doviz_data.get("ALTIN", 0.0)
     if gold_son <= 0:
         ons_s = te_data.get("ONS_ALTIN", 0.0)
         usd_s = data_dict.get("USDTRY", {}).get("son", 0)
-        if ons_s > 0 and usd_s > 0: 
-            gold_son = (ons_s / 31.1035) * usd_s
+        if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
 
     gold_ilk = evds_gold_start
     if gold_ilk <= 0:
         ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
         usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
-        if ons_i > 0 and usd_i > 0: 
-            gold_ilk = (ons_i / 31.1035) * usd_i
+        if ons_i > 0 and usd_i > 0: gold_ilk = (ons_i / 31.1035) * usd_i
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
-    # --- ABD 10 YILLIK TAHVİL FAİZİ (FRED: DGS10) ---
     if fred_key and data_dict.get("ABD_TAHVIL", {}).get("son", 0) == 0:
         try:
             pct_tnx = get_fred_index_change(fred_key, "DGS10", d_start)
-            # FRED serisinin son değerini almak için API çağrısı
             url_tnx = f"https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&api_key={fred_key}&file_type=json&sort_order=desc&limit=1"
             res_tnx = requests.get(url_tnx, timeout=5)
             if res_tnx.status_code == 200:
@@ -815,22 +789,14 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                 if obs and obs[0].get("value") not in [None, ".", ""]:
                     latest_val = float(obs[0]["value"])
                     start_val = round(latest_val / (1 + pct_tnx / 100), 2) if (1 + pct_tnx / 100) != 0 else 0.0
-                    
-                    data_dict["ABD_TAHVIL"] = {
-                        "ilk": start_val,
-                        "son": latest_val,
-                        "degisim": pct_tnx
-                    }
-        except Exception:
-            pass
+                    data_dict["ABD_TAHVIL"] = {"ilk": start_val, "son": latest_val, "degisim": pct_tnx}
+        except: pass
 
-    # DÖVİZ & BRENT YÜZDE HESABI
     for k in ["USDTRY", "EURTRY", "BRENT_PETROL"]:
         v = data_dict[k]
         ilk_val, son_val = safe_float(v["ilk"]), safe_float(v["son"])
         v["degisim"] = ((son_val - ilk_val) / ilk_val * 100) if (ilk_val > 0 and son_val > 0) else 0.0
 
-    # PARİTE KORUMASI
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
         data_dict["EURUSD"]["ilk"] = data_dict["EURTRY"]["ilk"] / data_dict["USDTRY"]["ilk"]
             
@@ -876,9 +842,9 @@ with st.container(border=True):
     d_parite = kutu(k4, "EUR/USD", "EURUSD", "⚖️")
 
     st.markdown("### 🛢️ Enerji Emtiaları")
-    e1, e2, e3, e4, e5 = st.columns(5) # Kolon sayısını 5 yapıyoruz
+    e1, e2, e3, e4, e5 = st.columns(5)
     d_brent = kutu(e1, "Brent Petrol ($/Bbl)", "BRENT_PETROL", "🛢️")
-    d_jet = emtia_karti(e5, "✈️ Jet A-1 ($/Bbl)", "JET_FUEL") # <--- JET FUEL KARTI
+    d_jet = emtia_karti(e5, "✈️ Jet A-1 ($/Bbl)", "JET_FUEL")
 
     benzin_yeni_val = yakit_guncel.get("benzin", 0.0) if yakit_guncel.get("benzin", 0) > 0 else 44.0
     motorin_yeni_val = yakit_guncel.get("motorin", 0.0) if yakit_guncel.get("motorin", 0) > 0 else 45.0
@@ -918,11 +884,7 @@ with st.container(border=True):
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
-    # ============================================================================
-    # SANAYİ, METAL VE YENİ EKLENEN TÜM EMTİALAR MODÜLÜ
-    # ============================================================================
     st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
-    
     
     em1, em2, em3, em4 = st.columns(4)
     d_bakir  = emtia_karti(em1, "🔌 Bakır ($/Lbs)", "BAKIR")
@@ -931,10 +893,10 @@ with st.container(border=True):
     d_propan = emtia_karti(em4, "🔥 Propan ($/Gal)", "PROPAN")
 
     em5, em6, em7, em8 = st.columns(4)
-    d_celik       = emtia_karti(em5, "🔩 Çelik / HRC ($/Ton)", "HRC_STEEL")
+    d_celik        = emtia_karti(em5, "🔩 Çelik / HRC ($/Ton)", "HRC_STEEL")
     d_scrap_steel = emtia_karti(em6, "♻️ Hurda Çelik ($/Ton)", "SCRAP_STEEL")
     d_scrap_alum  = emtia_karti(em7, "♻️ Hurda Alüminyum ($/Ton)", "SCRAP_ALUM")
-    d_demir       = emtia_karti(em8, "⛏️ Demir Cevheri ($/Ton)", "DEMIR")
+    d_demir        = emtia_karti(em8, "⛏️ Demir Cevheri ($/Ton)", "DEMIR")
 
     em9, em10, em11, em12 = st.columns(4)
     d_lityum  = emtia_karti(em9, "🔋 Lityum (CNY/T)", "LITYUM")
@@ -949,27 +911,22 @@ with st.container(border=True):
     d_plastik = emtia_karti(em16, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
 
 # ============================================================================
-# %100 İNTERAKTİF PLOTLY BORSA GRAFİK MODÜLÜ
+# İNTERAKTİF PLOTLY BORSA GRAFİK MODÜLÜ
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
     st.subheader("📈 Emtia & Kur İnteraktif Trend Analizi (Plotly Borsa Terminali)")
     
     chart_symbols = {
-        # Döviz & Değerli Madenler
         "Dolar (USD/TL)": "TRY=X",
         "Euro (EUR/TL)": "EURTRY=X",
         "Parite (EUR/USD)": "EURUSD=X",
         "Gram Altın (TL)": "GC=F",
-        
-        # Enerji Emtiaları
         "Brent Petrol ($/Bbl)": "BZ=F",
         "Jet A-1 Yakıt ($/Bbl)": "HO=F",
         "Doğal Gaz ($/MMBtu)": "NG=F",
         "Propan ($/Gal)": "PN=F",
         "Kömür ($/Ton)": "MTF=F",
-        
-        # Metaller & Sanayi
         "Bakır ($/Lbs)": "HG=F",
         "Alüminyum ($/Ton)": "ALI=F",
         "Hurda Alüminyum ($/Ton)": "ALI=F",
@@ -978,8 +935,6 @@ with st.container(border=True):
         "Demir Cevheri ($/Ton)": "TI=F",
         "Nikel ($/Ton)": "NKL=F",
         "Çinko ($/Ton)": "ZNC=F",
-        
-        # Tarım & Diğer
         "Pamuk ($/Lbs)": "CT=F",
         "Buğday ($/Bu)": "ZW=F",
         "Kakao ($/MT)": "CC=F",
@@ -1002,7 +957,6 @@ with st.container(border=True):
             close_series = close_series.dropna()
             
             fig_plotly = go.Figure()
-            
             fig_plotly.add_trace(go.Scatter(
                 x=close_series.index,
                 y=close_series.values,
@@ -1022,16 +976,8 @@ with st.container(border=True):
                 hovermode="x unified",
                 height=420,
                 margin=dict(l=40, r=40, t=50, b=40),
-                xaxis=dict(
-                    showgrid=True,
-                    gridcolor='rgba(0,0,0,0.05)',
-                    rangeslider=dict(visible=True),
-                    type="date"
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridcolor='rgba(0,0,0,0.05)'
-                )
+                xaxis=dict(showgrid=True, gridcolor='rgba(0,0,0,0.05)', rangeslider=dict(visible=True), type="date"),
+                yaxis=dict(showgrid=True, gridcolor='rgba(0,0,0,0.05)')
             )
 
             st.plotly_chart(fig_plotly, use_container_width=True)
@@ -1079,7 +1025,7 @@ with st.container(border=True):
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
 
 # ============================================================================
-# HESAPLAMA MOTORU (GOOGLE SHEET H-ÜFE ENTEGRASYONLU & DEBUGGERLI)
+# HESAPLAMA MOTORU
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -1169,7 +1115,6 @@ with st.container(border=True):
     val_iscilik, asgari_eski, asgari_yeni = get_asgari_ucret_degisim(start_date, end_date)
     iscilik_notu = f"{tr_fmt(asgari_eski)} ➡️ {tr_fmt(asgari_yeni)} TL"
 
-   # Eğer key daha önce yoksa veya güncellenecekse session state'i güvenli şekilde set ediyoruz
     if f"t_{d_key}" not in st.session_state:
         st.session_state[f"t_{d_key}"] = val_tufe
 
@@ -1199,53 +1144,58 @@ with st.container(border=True):
             with st.spinner("Jarvis şartnameyi analiz ediyor ve maliyet kırılımı çıkarıyor..."):
                 ai_weights = ai_kapsam_analizi(kapsam_input, GEMINI_API_KEY)
                 if ai_weights:
-                    # Otomatik ağırlıkları st.session_state içine yüklüyoruz
+                    # Mevcut tüm ağırlıkları sıfırla
+                    for k in WEIGHT_KEYS:
+                        st.session_state[f"w_{k}"] = 0.0
+                    # Yapay zekadan gelenleri yükle
                     for key, val in ai_weights.items():
-                        st.session_state[f"w_{key}"] = float(val)
+                        clean_k = key.lower().replace("ğ", "g")
+                        if clean_k in WEIGHT_KEYS:
+                            st.session_state[f"w_{clean_k}"] = float(val)
                     st.success("✅ Şartname analiz edildi ve sepet ağırlıkları başarıyla güncellendi!")
                     st.rerun()
 
     w1, w2, w3, w4 = st.columns(4)
-    w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", value=auto_weights["mix"])
-    w_tufe = w2.number_input("Saf TÜFE %", value=auto_weights["tufe"])
-    w_ufe = w3.number_input("Saf ÜFE %", value=auto_weights["ufe"])
-    w_hufe = w4.number_input("H-ÜFE %", value=auto_weights["hufe"])
+    w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", key="w_mix")
+    w_tufe = w2.number_input("Saf TÜFE %", key="w_tufe")
+    w_ufe = w3.number_input("Saf ÜFE %", key="w_ufe")
+    w_hufe = w4.number_input("H-ÜFE %", key="w_hufe")
     
     w5, w6, w7, w8 = st.columns(4)
-    w_iscilik = w5.number_input("İşçilik %", value=auto_weights["iscilik"])
-    w_usd = w6.number_input("USD %", value=auto_weights["usd"])
-    w_eur = w7.number_input("EUR %", value=auto_weights["eur"])
-    w_altin = w8.number_input("Altın %", value=auto_weights["altin"])
+    w_iscilik = w5.number_input("İşçilik %", key="w_iscilik")
+    w_usd = w6.number_input("USD %", key="w_usd")
+    w_eur = w7.number_input("EUR %", key="w_eur")
+    w_altin = w8.number_input("Altın %", key="w_altin")
     
     w9, w10, w11, w12 = st.columns(4)
-    w_benzin = w9.number_input("Benzin %", value=auto_weights["benzin"])
-    w_dizel = w10.number_input("Motorin %", value=auto_weights["dizel"])
-    w_brent = w11.number_input("Brent %", value=auto_weights["brent"])
-    w_abd = w12.number_input("ABD Enf. %", value=auto_weights["abd"])
+    w_benzin = w9.number_input("Benzin %", key="w_benzin")
+    w_dizel = w10.number_input("Motorin %", key="w_dizel")
+    w_brent = w11.number_input("Brent %", key="w_brent")
+    w_abd = w12.number_input("ABD Enf. %", key="w_abd")
 
     w13, w14, w15, w16 = st.columns(4)
-    w_bakir = w13.number_input("Bakır %", value=auto_weights.get("bakir", 0))
-    w_alum  = w14.number_input("Alüminyum %", value=auto_weights.get("alum", 0))
-    w_gaz   = w15.number_input("Doğal Gaz %", value=auto_weights.get("gaz", 0))
-    w_celik = w16.number_input("Çelik %", value=auto_weights.get("celik", 0))
+    w_bakir = w13.number_input("Bakır %", key="w_bakir")
+    w_alum  = w14.number_input("Alüminyum %", key="w_alum")
+    w_gaz   = w15.number_input("Doğal Gaz %", key="w_gaz")
+    w_celik = w16.number_input("Çelik %", key="w_celik")
 
     w17, w18, w19, w20 = st.columns(4)
-    w_scrap_steel = w17.number_input("Hurda Çelik %", value=auto_weights.get("scrap_steel", 0))
-    w_scrap_alum  = w18.number_input("Hurda Alüminyum %", value=auto_weights.get("scrap_alum", 0))
-    w_propan      = w19.number_input("Propan %", value=auto_weights.get("propan", 0))
-    w_lityum      = w20.number_input("Lityum %", value=auto_weights.get("lityum", 0))
+    w_scrap_steel = w17.number_input("Hurda Çelik %", key="w_scrap_steel")
+    w_scrap_alum  = w18.number_input("Hurda Alüminyum %", key="w_scrap_alum")
+    w_propan      = w19.number_input("Propan %", key="w_propan")
+    w_lityum      = w20.number_input("Lityum %", key="w_lityum")
 
     w21, w22, w23, w24 = st.columns(4)
-    w_demir   = w21.number_input("Demir Cevheri %", value=auto_weights.get("demir", 0))
-    w_nikel   = w22.number_input("Nikel %", value=auto_weights.get("nikel", 0))
-    w_cinko   = w23.number_input("Çinko %", value=auto_weights.get("cinko", 0))
-    w_pamuk   = w24.number_input("Pamuk %", value=auto_weights.get("pamuk", 0))
+    w_demir   = w21.number_input("Demir Cevheri %", key="w_demir")
+    w_nikel   = w22.number_input("Nikel %", key="w_nikel")
+    w_cinko   = w23.number_input("Çinko %", key="w_cinko")
+    w_pamuk   = w24.number_input("Pamuk %", key="w_pamuk")
 
     w25, w26, w27, w28 = st.columns(4)
-    w_bugday  = w25.number_input("Buğday %", value=auto_weights.get("buğday", 0))
-    w_kakao   = w26.number_input("Kakao %", value=auto_weights.get("kakao", 0))
-    w_plastik = w27.number_input("Plastik %", value=auto_weights.get("plastik", 0))
-    w_jet_fuel = w28.number_input("Jet A-1 %", value=auto_weights.get("jet_fuel", 0))
+    w_bugday  = w25.number_input("Buğday %", key="w_bugday")
+    w_kakao   = w26.number_input("Kakao %", key="w_kakao")
+    w_plastik = w27.number_input("Plastik %", key="w_plastik")
+    w_jet_fuel = w28.number_input("Jet A-1 %", key="w_jet_fuel")
 
     toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik+w_jet_fuel
     kalan = 100.0 - toplam
@@ -1294,7 +1244,7 @@ with st.container(border=True):
     # --- RISK & HEDGING UYARI MOTORU ---
     riskli_kalemler = []
     for ad, deg, agr in etkiler:
-        if agr > 0:  # Sadece sepette payı olan kalemleri kontrol et
+        if agr > 0: 
             if deg >= 15.0:
                 riskli_kalemler.append((ad, deg, agr, "YÜKSELİŞ_RISKI"))
             elif deg <= -10.0:
@@ -1335,7 +1285,7 @@ with st.container(border=True):
         st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
 
 # ============================================================================
-# JARVIS PROJEKSİYONU (SENARYO ANALİZİ & BÜTÇE SİMÜLASYONU) v2.0
+# JARVIS PROJEKSİYONU
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -1354,7 +1304,7 @@ with st.container(border=True):
         st.markdown("**📉 İyimser Senaryo**")
         rate_opt = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc * 0.7, step=0.1, key="rate_opt")
     with col_set2:
-        st.markdown("**Example: 📊 Gerçekçi Senaryo (Jarvis)**")
+        st.markdown("**📊 Gerçekçi Senaryo (Jarvis)**")
         rate_base = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc, step=0.1, key="rate_base")
     with col_set3:
         st.markdown("**📈 Kötümser Senaryo**")
@@ -1387,13 +1337,10 @@ with st.container(border=True):
     with tab_line:
         if HAS_MATPLOTLIB:
             fig, ax = plt.subplots(figsize=(10, 5))
-            
             ax.plot(dates_str, vals_pes, color='#C0392B', linestyle='--', marker='o', linewidth=2, label=f'Kötümser (%{rate_pes:.1f}/ay)')
             ax.plot(dates_str, vals_base, color='#2980B9', marker='s', linewidth=3, label=f'Gerçekçi (%{rate_base:.1f}/ay)')
             ax.plot(dates_str, vals_opt, color='#27AE60', linestyle='-.', marker='^', linewidth=2, label=f'İyimser (%{rate_opt:.1f}/ay)')
-            
             ax.fill_between(dates_str, vals_opt, vals_pes, color='gray', alpha=0.1)
-            
             ax.set_title(f"Gelecek 12 Ay Fiyat Projeksiyonu (Başlangıç: {tr_fmt(yeni)} TL)", fontsize=12)
             ax.set_ylabel("Aylık Fatura Tutarı (TL)")
             ax.legend()
@@ -1418,9 +1365,9 @@ with st.container(border=True):
             cum_base = np.cumsum(vals_base)
             cum_pes = np.cumsum(vals_pes)
             
-            rects1 = ax2.bar(x - width, cum_opt, width, label='İyimser', color='#A9DFBF')
-            rects2 = ax2.bar(x, cum_base, width, label='Gerçekçi', color='#5DADE2')
-            rects3 = ax2.bar(x + width, cum_pes, width, label='Kötümser', color='#E6B0AA')
+            ax2.bar(x - width, cum_opt, width, label='İyimser', color='#A9DFBF')
+            ax2.bar(x, cum_base, width, label='Gerçekçi', color='#5DADE2')
+            ax2.bar(x + width, cum_pes, width, label='Kötümser', color='#E6B0AA')
             
             ax2.set_ylabel('Kümülatif Toplam (TL)')
             ax2.set_title('Yıl Sonu Toplam Maliyet Birikimi')
@@ -1434,14 +1381,13 @@ with st.container(border=True):
             st.info("Kümülatif grafik için matplotlib gereklidir.")
 
 # ============================================================================
-# JARVIS AI & YORUM MODÜLÜ (MASTER SÜRÜM - v1.6 - FUTURE READY / 2.5 FLASH)
+# JARVIS AI & YORUM MODÜLÜ
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
     st.markdown("### 🤖 Jarvis Finansal Yorumu")
     
     col_j1, col_j2 = st.columns([1, 4])
-    
     risk_durumu = "Yüksek" if zam > 20 else "Düşük"
     with col_j1:
         st.metric("Risk Skoru", risk_durumu, delta="Dikkat" if zam > 20 else "Stabil", delta_color="inverse")
@@ -1475,20 +1421,10 @@ with st.container(border=True):
                         - Enflasyon (TÜFE): %{val_tufe:.2f}
                         - İşçilik: %{iscilik:.2f}
                         - Akaryakıt: %{d_dizel:.2f}
+                        - Jet A-1 Yakıt: %{piyasa['JET_FUEL']['degisim']:.2f}
                         - Bakır: %{d_bakir:.2f}
                         - Alüminyum: %{d_alum:.2f}
                         - Çelik: %{d_celik:.2f}
-                        - Hurda Çelik: %{d_scrap_steel:.2f}
-                        - Hurda Alüminyum: %{d_scrap_alum:.2f}
-                        - Propan: %{d_propan:.2f}
-                        - Lityum: %{d_lityum:.2f}
-                        
-                        SEPET AĞIRLIKLARI:
-                        - Döviz: %{w_usd + w_eur}
-                        - İşçilik: %{w_iscilik}
-                        - Enerji: %{w_benzin + w_dizel + w_brent + w_propan}
-                        - Enflasyon: %{w_tufe + w_ufe + w_mix_oran + w_hufe}
-                        - Sanayi & Metal Emtiası: %{w_bakir + w_alum + w_gaz + w_celik + w_scrap_steel + w_scrap_alum + w_lityum + w_demir + w_nikel + w_cinko}
 
                         YÖNERGE:
                         Hangi kalemin artışa en çok sebep olduğunu tespit et. 
@@ -1504,6 +1440,5 @@ with st.container(border=True):
                         
                     except Exception as e:
                         st.error(f"Bir hata oluştu: {str(e)}")
-                        st.info("Eğer yine hata alırsanız, lütfen model adını 'gemini-2.5-pro' olarak değiştirip deneyin.")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
