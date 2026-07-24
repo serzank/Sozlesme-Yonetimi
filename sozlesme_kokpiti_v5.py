@@ -360,11 +360,10 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (TOPLU/BATCH YFINANCE + FMP HYBRID MOTOR)
+# PİYASA VERİSİ İŞLEME (GÜVENLİ ZIRHLANMIŞ SÖZLÜK MOTORU)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, fmp_key):
-    # Tüm sembollerin haritası
     symbol_map = {
         "USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X", 
         "ONS_ALTIN": "GC=F", "ABD_TAHVIL": "^TNX",
@@ -373,47 +372,47 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
         "PLATIN": "PL=F", "PALADYUM": "PA=F", "KERESTE": "LBS=F",
         "BUGDAY": "ZW=F", "MISIR": "ZC=F", "KAHVE": "KC=F", "PAMUK": "CT=F"
     }
-    data_dict = {}
+    
+    # 1. Kendi içinde sıfır korumalı varsayılan sözlük hazırlığı
+    data_dict = {key: {"ilk": 0.0, "son": 0.0, "degisim": 0.0} for key in symbol_map.keys()}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
     all_tickers = list(symbol_map.values())
 
-    # --- TOPLU ÇEKİM (BATCH DOWNLOAD - 0.5 saniyede tüm piyasa tek pakette çekilir) ---
+    # --- TOPLU BATCH İNDİRME ---
     try:
-        df_batch = yf.download(all_tickers, period="2y", interval="1d", progress=False)["Close"]
+        df_batch = yf.download(all_tickers, period="2y", interval="1d", progress=False)
         if not df_batch.empty:
-            df_batch.index = pd.to_datetime(df_batch.index).tz_localize(None)
+            close_df = df_batch['Close'] if 'Close' in df_batch else df_batch
+            close_df.index = pd.to_datetime(close_df.index).tz_localize(None)
             for key, sym in symbol_map.items():
-                ilk, son = 0.0, 0.0
-                if sym in df_batch.columns:
-                    s_series = df_batch[sym].dropna()
+                if sym in close_df.columns:
+                    s_series = close_df[sym].dropna()
                     if not s_series.empty:
                         idx = (s_series.index - target_start).abs().argmin()
-                        ilk = float(s_series.iloc[idx])
-                        son = float(s_series.iloc[-1])
-                data_dict[key] = {"ilk": ilk, "son": son, "degisim": ((son - ilk) / ilk * 100) if ilk > 0 else 0.0}
-    except:
-        pass
+                        ilk_v = float(s_series.iloc[idx])
+                        son_v = float(s_series.iloc[-1])
+                        data_dict[key] = {"ilk": ilk_v, "son": son_v, "degisim": ((son_v - ilk_v) / ilk_v * 100) if ilk_v > 0 else 0.0}
+    except: pass
 
-    # Eksik/Sıfır kalan dövizleri EVDS ile tamamlama
+    # --- TCMB / EVDS DÖVİZ TAMAMLAMASI ---
     for key in ["USDTRY", "EURTRY"]:
-        if data_dict.get(key, {}).get("ilk", 0) == 0 and evds_key:
+        if data_dict[key]["ilk"] == 0 and evds_key:
             try:
                 evds_service = evdsAPI(evds_key)
                 tcmb_code = "TP.DK.USD.A.YTL" if key == "USDTRY" else "TP.DK.EUR.A.YTL"
                 evds_df = evds_service.get_data([tcmb_code], startdate=(d_start - timedelta(days=10)).strftime("%d-%m-%Y"), enddate=d_start.strftime("%d-%m-%Y"))
                 if evds_df is not None and not evds_df.empty:
                     val_col = tcmb_code.replace(".", "_")
-                    ilk_v = float(pd.to_numeric(evds_df[val_col], errors='coerce').dropna().iloc[-1])
-                    data_dict[key]["ilk"] = ilk_v
+                    data_dict[key]["ilk"] = float(pd.to_numeric(evds_df[val_col], errors='coerce').dropna().iloc[-1])
             except: pass
 
         if key == "USDTRY" and live_data.get("USD", 0) > 0: data_dict[key]["son"] = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: data_dict[key]["son"] = live_data["EUR"]
         
-        ilk_v, son_v = data_dict[key]["ilk"], data_dict[key]["son"]
-        data_dict[key]["degisim"] = ((son_v - ilk_v) / ilk_v * 100) if ilk_v > 0 else 0.0
+        i_val, s_val = data_dict[key]["ilk"], data_dict[key]["son"]
+        data_dict[key]["degisim"] = ((s_val - i_val) / i_val * 100) if i_val > 0 else 0.0
 
-    # FINANCIAL MODELING PREP (FMP) YEDEK DESTEĞİ
+    # --- FMP YEDEK ENTEGRASYONU ---
     if fmp_key:
         fmp_map = [
             ("BRENT_PETROL", "BZUSD"), ("WTI_PETROL", "CLUSD"), ("DOGALGAZ", "NGUSD"),
@@ -423,7 +422,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
             ("KAHVE", "KCUSD"), ("PAMUK", "CTUSD")
         ]
         for key, fmp_sym in fmp_map:
-            if data_dict.get(key, {}).get("son", 0) == 0:
+            if data_dict[key]["son"] == 0:
                 f_ilk, f_son = fmp_emtia_al(fmp_key, fmp_sym, d_start)
                 if f_son > 0:
                     data_dict[key] = {
@@ -437,19 +436,19 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
         data_dict["EURUSD"]["ilk"] = data_dict["EURTRY"]["ilk"] / data_dict["USDTRY"]["ilk"]
             
     if data_dict["EURUSD"]["son"] == 0 or live_data.get("USD", 0) > 0:
-        u_son = data_dict["USDTRY"]["son"] if data_dict["USDTRY"]["son"] > 0 else live_data.get("USD", 1)
-        e_son = data_dict["EURTRY"]["son"] if data_dict["EURTRY"]["son"] > 0 else live_data.get("EUR", 1)
-        data_dict["EURUSD"]["son"] = e_son / u_son
+        u_s = data_dict["USDTRY"]["son"] if data_dict["USDTRY"]["son"] > 0 else live_data.get("USD", 1)
+        e_s = data_dict["EURTRY"]["son"] if data_dict["EURTRY"]["son"] > 0 else live_data.get("EUR", 1)
+        data_dict["EURUSD"]["son"] = e_s / u_s
     
-    p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
-    data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
+    p_i, p_s = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
+    data_dict["EURUSD"]["degisim"] = ((p_s - p_i) / p_i * 100) if p_i > 0 else 0.0
 
     gold_ilk = evds_gold_start
-    if gold_ilk <= 0 and data_dict.get("ONS_ALTIN", {}).get("ilk", 0) > 0 and data_dict.get("USDTRY", {}).get("ilk", 0) > 0:
+    if gold_ilk <= 0 and data_dict["ONS_ALTIN"]["ilk"] > 0 and data_dict["USDTRY"]["ilk"] > 0:
         gold_ilk = (data_dict["ONS_ALTIN"]["ilk"] / 31.1035) * data_dict["USDTRY"]["ilk"]
 
     gold_son = live_data.get("ALTIN", 0)
-    if gold_son <= 0 and data_dict.get("ONS_ALTIN", {}).get("son", 0) > 0 and data_dict.get("USDTRY", {}).get("son", 0) > 0:
+    if gold_son <= 0 and data_dict["ONS_ALTIN"]["son"] > 0 and data_dict["USDTRY"]["son"] > 0:
         gold_son = (data_dict["ONS_ALTIN"]["son"] / 31.1035) * data_dict["USDTRY"]["son"]
 
     data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
@@ -500,7 +499,7 @@ with st.container(border=True):
             st.markdown(f"<div style='text-align:right;'><span class='{'pozitif' if deg >= 0 else 'negatif'}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
         return deg
 
-    # --- KAPSAMLI EMTİA GÖSTERİMİ (CANLI CANLI) ---
+    # --- KAPSAMLI EMTİA GÖSTERİMİ ---
     st.markdown("### 🛢️ Enerji & Akaryakıt")
     e1, e2, e3 = st.columns(3)
     d_brent = emtia_karti(e1, "🛢️ Brent Petrol ($/Bbl)", "BRENT_PETROL")
