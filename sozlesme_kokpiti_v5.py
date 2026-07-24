@@ -158,7 +158,7 @@ def get_evds_gold_history(api_key, d_start):
     except: pass
     return price
 
-# --- GOOGLE SHEET TABANLI KUSURSUZ TÜFE MOTORU (H-ÜFE MANTIĞI) ---
+# --- KESİN ÇÖZÜM: H-ÜFE MANTIĞIYLA BİREBİR TÜFE MOTORU ---
 @st.cache_data(ttl=300)
 def get_sheets_tufe_data(sheet_url, start_date, end_date):
     res = {"TUFE": 0.0, "UFE": 0.0, "HUFE": 0.0, "Status": False, "Msg": "Veri Yok"}
@@ -172,23 +172,29 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
         df_raw.columns = df_raw.columns.str.strip()
         df_raw = df_raw.dropna(how='all')
         
-        # H-ÜFE mantığıyla aynı: İlk sütun Tarih, ikinci sütun Değer
+        # Kolon isimlerinden bağımsız ilk iki kolonu doğrudan alıyoruz (H-ÜFE taktiği)
         tarih_col = df_raw.columns[0]
         tufe_col = df_raw.columns[1]
 
         df_clean = pd.DataFrame()
         df_clean['Tarih'] = pd.to_datetime(df_raw[tarih_col], errors='coerce')
         
-        # Değerleri sayısal formata çevirme
-        df_clean['TUFE_VAL'] = pd.to_numeric(df_raw[tufe_col].astype(str).str.replace(',', '.'), errors='coerce')
+        # Değerleri temizle ve sayıya çevir
+        raw_vals = df_raw[tufe_col].astype(str).str.strip().str.replace(',', '.', regex=False)
+        df_clean['TUFE_VAL'] = pd.to_numeric(raw_vals, errors='coerce')
+        
         df_clean = df_clean.dropna(subset=['Tarih', 'TUFE_VAL']).sort_values('Tarih')
+
+        if df_clean.empty:
+            res["Msg"] = "Tarih veya değerler dönüştürülemedi."
+            return res
 
         target_start = pd.to_datetime(start_date)
         
-        # Başlangıç tarihine en yakın geçmiş veriyi bulma (H-ÜFE mantığı)
+        # Başlangıç tarihine en yakın geçmiş veriyi bul
         past_data = df_clean[df_clean['Tarih'] <= target_start]
         row_s = past_data.iloc[-1] if not past_data.empty else df_clean.iloc[0]
-        row_e = df_clean.iloc[-1] # En güncel satır (tablonun sonu)
+        row_e = df_clean.iloc[-1] # Tablonun en güncel son satırı
 
         v_start = safe_float(row_s['TUFE_VAL'])
         v_end = safe_float(row_e['TUFE_VAL'])
@@ -203,6 +209,8 @@ def get_sheets_tufe_data(sheet_url, start_date, end_date):
                 "Status": True,
                 "Msg": f"Sheet TÜFE Dönemi: {d1_str} ({v_start}) ➡️ {d2_str} ({v_end})"
             })
+        else:
+            res["Msg"] = f"Bulunan değerler sıfır: Başlangıç={v_start}, Bitiş={v_end}"
     except Exception as e:
         res["Msg"] = f"Sheet Okuma Hatası: {str(e)}"
     return res
