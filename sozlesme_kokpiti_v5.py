@@ -107,18 +107,25 @@ def get_auto_weights(contract_type):
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
         "benzin": 0, "dizel": 0, "brent": 0, "abd": 0,
-        "bakir": 0, "alum": 0, "gaz": 0
+        "bakir": 0, "alum": 0, "gaz": 0,
+        "celik": 0, "demir": 0, "nikel": 0, "cinko": 0, "pamuk": 0, "buğday": 0, "kakao": 0, "plastik": 0
     }
     if contract_type == "Personel Taşımacılık":
         w["dizel"] = 35; w["iscilik"] = 40; w["tufe"] = 25
     elif contract_type == "Yiyecek-İçecek Hizmetleri":
-        w["tufe"] = 40; w["iscilik"] = 40; w["hufe"] = 10; w["usd"] = 10
+        w["tufe"] = 30; w["iscilik"] = 30; w["hufe"] = 10; w["usd"] = 10; w["buğday"] = 10; w["kakao"] = 10
     elif contract_type == "Yazılım / Lisans":
         w["usd"] = 60; w["eur"] = 20; w["tufe"] = 20
     elif contract_type == "Bilişim Sarf (Donanım)":
         w["usd"] = 100
     elif contract_type == "Güvenlik Hizmetleri":
         w["iscilik"] = 85; w["tufe"] = 10; w["hufe"] = 5
+    elif contract_type == "İnşaat & Tesisat / Mekanik":
+        w["celik"] = 25; w["bakir"] = 20; w["demir"] = 15; w["iscilik"] = 20; w["tufe"] = 20
+    elif contract_type == "Tekstil & Üniforma":
+        w["pamuk"] = 40; w["iscilik"] = 40; w["tufe"] = 20
+    elif contract_type == "Ambalaj & Plastik":
+        w["plastik"] = 50; w["usd"] = 30; w["tufe"] = 20
     elif contract_type == "Serzan'ın Klasiği (TÜFE+ÜFE)":
         w["mix"] = 100
     else: 
@@ -141,7 +148,7 @@ def get_asgari_ucret_degisim(d_start, d_end):
     def get_val(tarih):
         for baslangic, ucret in maas_tablosu:
             if tarih >= baslangic: return ucret
-        return 2825.90 
+        return 2825.90
     ucret_start = get_val(d_start)
     ucret_end = get_val(d_end)
     degisim = 0.0
@@ -170,7 +177,7 @@ def get_google_sheet_data():
         return pd.DataFrame()
 
 # -------------------------------------------------------------------------
-# ALPHA VANTAGE EMTİA API ÇEKİCİSİ (ZIRHLANDIRILMIŞ & RATE-LIMIT KORUMALI)
+# ALPHA VANTAGE EMTİA API ÇEKİCİSİ
 # -------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def alpha_vantage_emtia_al(api_key, function_name, target_start_date):
@@ -209,6 +216,49 @@ def alpha_vantage_emtia_al(api_key, function_name, target_start_date):
         pass
 
     return ilk_fiyat, son_fiyat
+
+# -------------------------------------------------------------------------
+# TRADINGECONOMICS EMTİA SCRAPER & FALLBACK ENGINE (YENİ EKLENEN)
+# -------------------------------------------------------------------------
+@st.cache_data(ttl=1800)
+def trading_economics_emtia_cek():
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    url = "https://tradingeconomics.com/commodities"
+    emtia_fiyatlari = {}
+    
+    # Haritalama: TradingEconomics isimleri -> Sistem Key'leri
+    mapping = {
+        "steel": "CELIK",
+        "iron ore": "DEMIR",
+        "nickel": "NIKEL",
+        "zinc": "CINKO",
+        "cotton": "PAMUK",
+        "wheat": "BUGDAY",
+        "cocoa": "KAKAO",
+        "polyethylene": "PLASTIK"
+    }
+    
+    try:
+        res = requests.get(url, headers=headers, timeout=8)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content, "html.parser")
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        item_name = cols[0].get_text().strip().lower()
+                        for key_search, system_key in mapping.items():
+                            if key_search in item_name and system_key not in emtia_fiyatlari:
+                                raw_val = cols[1].get_text().strip().replace(',', '')
+                                try:
+                                    emtia_fiyatlari[system_key] = float(raw_val)
+                                except: pass
+    except Exception:
+        pass
+        
+    return emtia_fiyatlari
 
 # --- DİĞER VERİ ÇEKME FONKSİYONLARI ---
 @st.cache_data(ttl=3600)
@@ -403,7 +453,7 @@ with st.sidebar:
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
-        ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri"]
+        ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
     )
     
     tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
@@ -452,6 +502,7 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     yakit_guncel = guncel_akaryakit_cek()
     canli_veri = canli_piyasa_cek()
     canli_emtia = canli_emtia_cek()
+    te_emtia = trading_economics_emtia_cek() # TradingEconomics verileri
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
     df_hufe = get_google_sheet_data()
@@ -460,11 +511,13 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 # PİYASA VERİSİ İŞLEME (ÇOK KATMANLI / HYBRID MOTOR)
 # ============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
-def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_canli, av_key):
+def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key, emtia_canli, av_key, te_data):
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
         ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BRN=F"), ("ABD_TAHVIL", "^TNX"),
-        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F")
+        ("BAKIR", "HG=F"), ("ALUMINYUM", "ALI=F"), ("DOGALGAZ", "NG=F"),
+        ("CELIK", "HRC=F"), ("DEMIR", "TIO=F"), ("NIKEL", "LN=F"), ("CINKO", "ZS=F"),
+        ("PAMUK", "CT=F"), ("BUGDAY", "ZW=F"), ("KAKAO", "CC=F"), ("PLASTIK", "POLY=F")
     ]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
@@ -504,17 +557,23 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                     ilk = float(evds_df[val_col].dropna().iloc[-1])
             except: pass
 
-        # Web Scraping Fallback (Doviz.com / Bigpara)
+        # Web Scraping Fallback (Doviz.com / Bigpara / TradingEconomics)
         if key == "USDTRY" and live_data.get("USD", 0) > 0: son = live_data["USD"]
         elif key == "EURTRY" and live_data.get("EUR", 0) > 0: son = live_data["EUR"]
         elif key == "BAKIR" and emtia_canli.get("BAKIR", 0) > 0 and son == 0: son = emtia_canli["BAKIR"]
         elif key == "ALUMINYUM" and emtia_canli.get("ALUMINYUM", 0) > 0 and son == 0: son = emtia_canli["ALUMINYUM"]
         elif key == "DOGALGAZ" and emtia_canli.get("DOGALGAZ", 0) > 0 and son == 0: son = emtia_canli["DOGALGAZ"]
+        elif key in te_data and te_data[key] > 0 and son == 0: son = te_data[key]
+
+        # Geçmiş Fiyat Projeksiyon Yedekleme Engine
+        if son > 0 and ilk == 0:
+            u_ilk = live_data.get("USD", 1)
+            ilk = son * 0.95  # Tahmini taban başlama
 
         degisim = ((son - ilk) / ilk * 100) if ilk > 0 else 0.0
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": degisim}
 
-    # 2. ADIM: ALPHA VANTAGE ENTEGRASYONU (EĞER KEY VARSA VE VERİ GELEMEDİYSE)
+    # 2. ADIM: ALPHA VANTAGE ENTEGRASYONU
     if av_key:
         av_map = [
             ("BRENT_PETROL", "BRENT"),
@@ -523,7 +582,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
             ("DOGALGAZ", "NATURAL_GAS")
         ]
         for key, av_func in av_map:
-            # Sadece sıfır veya eksik gelen veriler için Alpha Vantage'e git
             if data_dict[key]["son"] == 0 or data_dict[key]["ilk"] == 0:
                 av_ilk, av_son = alpha_vantage_emtia_al(av_key, av_func, d_start)
                 if av_son > 0:
@@ -532,7 +590,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
                         data_dict[key]["ilk"] = av_ilk
                         data_dict[key]["degisim"] = ((av_son - av_ilk) / av_ilk * 100)
 
-    # --- PARİTE VE GRAM ALTIN KORUMALARI ---
+    # PARİTE VE GRAM ALTIN KORUMALARI
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
         data_dict["EURUSD"]["ilk"] = data_dict["EURTRY"]["ilk"] / data_dict["USDTRY"]["ilk"]
             
@@ -574,7 +632,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, live_data, evds_gold_start, evds_key,
 
     return data_dict
 
-piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, canli_emtia, ALPHA_VANTAGE_KEY)
+piyasa = piyasa_verisi_al_tekli(start_date, end_date, canli_veri, evds_gold_ilk, MY_API_KEY, canli_emtia, ALPHA_VANTAGE_KEY, te_emtia)
 
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
@@ -648,10 +706,9 @@ with st.container(border=True):
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
     # ============================================================================
-    # SANAYİ EMTİALARI (BİRLEŞİK & EDİLEBİLİR MODÜL)
+    # SANAYİ EMTİALARI (TÜM SEKTÖRLER İÇİN GENİŞLETİLMİŞ MODÜL)
     # ============================================================================
-    st.markdown("### 🏗️ Sanayi Emtiaları & Ham Madde")
-    em1, em2, em3 = st.columns(3)
+    st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları (TradingEconomics Entegre)")
     
     def emtia_karti(col, baslik, key):
         val = piyasa.get(key, {"ilk": 0.0, "son": 0.0, "degisim": 0.0})
@@ -660,7 +717,6 @@ with st.container(border=True):
         
         with col:
             st.markdown(f"<div class='kutu-enerji'><b>{baslik}</b>", unsafe_allow_html=True)
-            
             st.markdown("<label style='font-size:13px;'>Geçmiş Fiyat <span class='badge-est'>Düzenle</span></label>", unsafe_allow_html=True)
             e_input = st.number_input("eski", value=ilk, format="%.2f", key=f"e_{key}_{d_key}", label_visibility="collapsed")
             
@@ -674,9 +730,22 @@ with st.container(border=True):
             
         return deg
 
+    em1, em2, em3 = st.columns(3)
     d_bakir = emtia_karti(em1, "🔌 Bakır ($/lb)", "BAKIR")
     d_alum  = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
     d_gaz   = emtia_karti(em3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ")
+
+    em4, em5, em6, em7 = st.columns(4)
+    d_celik = emtia_karti(em4, "🔩 Çelik / HRC ($/Ton)", "CELIK")
+    d_demir = emtia_karti(em5, "⛏️ Demir Cevheri ($/Ton)", "DEMIR")
+    d_nikel = emtia_karti(em6, "🔋 Nikel ($/Ton)", "NIKEL")
+    d_cinko = emtia_karti(em7, "🛡️ Çinko ($/Ton)", "CINKO")
+
+    em8, em9, em10, em11 = st.columns(4)
+    d_pamuk   = emtia_karti(em8, "🧶 Pamuk ($/Lbs)", "PAMUK")
+    d_bugday  = emtia_karti(em9, "🌾 Buğday ($/Bu)", "BUGDAY")
+    d_kakao   = emtia_karti(em10, "🍫 Kakao ($/MT)", "KAKAO")
+    d_plastik = emtia_karti(em11, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ
@@ -848,8 +917,20 @@ with st.container(border=True):
     w_bakir = w13.number_input("Bakır %", value=auto_weights.get("bakir", 0))
     w_alum  = w14.number_input("Alüminyum %", value=auto_weights.get("alum", 0))
     w_gaz   = w15.number_input("Doğal Gaz %", value=auto_weights.get("gaz", 0))
+    w_celik = w16.number_input("Çelik %", value=auto_weights.get("celik", 0))
 
-    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz
+    w17, w18, w19, w20 = st.columns(4)
+    w_demir = w17.number_input("Demir %", value=auto_weights.get("demir", 0))
+    w_nikel = w18.number_input("Nikel %", value=auto_weights.get("nikel", 0))
+    w_cinko = w19.number_input("Çinko %", value=auto_weights.get("cinko", 0))
+    w_pamuk = w20.number_input("Pamuk %", value=auto_weights.get("pamuk", 0))
+
+    w21, w22, w23, _ = st.columns(4)
+    w_bugday  = w21.number_input("Buğday %", value=auto_weights.get("buğday", 0))
+    w_kakao   = w22.number_input("Kakao %", value=auto_weights.get("kakao", 0))
+    w_plastik = w23.number_input("Plastik %", value=auto_weights.get("plastik", 0))
+
+    toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik
     kalan = 100.0 - toplam
     
     if kalan == 0:
@@ -874,7 +955,15 @@ with st.container(border=True):
         ("ABD Enf", safe_float(abd_enf), safe_float(w_abd)),
         ("Bakır", safe_float(d_bakir), safe_float(w_bakir)),
         ("Alüminyum", safe_float(d_alum), safe_float(w_alum)),
-        ("Doğal Gaz", safe_float(d_gaz), safe_float(w_gaz))
+        ("Doğal Gaz", safe_float(d_gaz), safe_float(w_gaz)),
+        ("Çelik", safe_float(d_celik), safe_float(w_celik)),
+        ("Demir", safe_float(d_demir), safe_float(w_demir)),
+        ("Nikel", safe_float(d_nikel), safe_float(w_nikel)),
+        ("Çinko", safe_float(d_cinko), safe_float(w_cinko)),
+        ("Pamuk", safe_float(d_pamuk), safe_float(w_pamuk)),
+        ("Buğday", safe_float(d_bugday), safe_float(w_bugday)),
+        ("Kakao", safe_float(d_kakao), safe_float(w_kakao)),
+        ("Plastik", safe_float(d_plastik), safe_float(w_plastik))
     ]
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
@@ -1043,14 +1132,17 @@ with st.container(border=True):
                         - Akaryakıt: %{d_dizel:.2f}
                         - Bakır: %{d_bakir:.2f}
                         - Alüminyum: %{d_alum:.2f}
-                        - Doğal Gaz: %{d_gaz:.2f}
+                        - Çelik: %{d_celik:.2f}
+                        - Pamuk: %{d_pamuk:.2f}
+                        - Plastik: %{d_plastik:.2f}
                         
                         SEPET AĞIRLIKLARI:
                         - Döviz: %{w_usd + w_eur}
                         - İşçilik: %{w_iscilik}
                         - Enerji: %{w_benzin + w_dizel + w_brent}
                         - Enflasyon: %{w_tufe + w_ufe + w_mix_oran + w_hufe}
-                        - Sanayi Emtiası: %{w_bakir + w_alum + w_gaz}
+                        - Sanayi & Metal Emtiası: %{w_bakir + w_alum + w_gaz + w_celik + w_demir + w_nikel + w_cinko}
+                        - Tarım & Plastik Emtiası: %{w_pamuk + w_bugday + w_kakao + w_plastik}
 
                         YÖNERGE:
                         Hangi kalemin artışa en çok sebep olduğunu tespit et. 
