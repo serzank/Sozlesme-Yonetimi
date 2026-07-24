@@ -179,21 +179,23 @@ def get_google_sheet_data():
         return pd.DataFrame()
 
 # -------------------------------------------------------------------------
-# DOVIZ.COM DOĞRUDAN CANLI SCRAPER (BRENT & DÖVİZ İÇİN %100 CANLI YEDEK)
+# DOVIZ.COM DÜZELTİLMİŞ CANLI SCRAPER (GRAM ALTIN & DÖVİZ & BRENT)
 # -------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def doviz_com_canli_cek():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     data = {"USD": 0.0, "EUR": 0.0, "BRENT_PETROL": 0.0, "ALTIN": 0.0}
     
-    # 1. Döviz Kurları (Dolar / Euro)
+    # 1. Döviz Kurları (Dolar / Euro / Gram Altın)
     try:
         res = requests.get("https://www.doviz.com", headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, "html.parser")
             usd_box = soup.find("span", {"data-socket-key": "USD", "data-socket-attr": "s"})
             eur_box = soup.find("span", {"data-socket-key": "EUR", "data-socket-attr": "s"})
-            altin_box = soup.find("span", {"data-socket-key": "GA", "data-socket-attr": "s"})
+            # GRAM ALTIN İÇİN DOĞRU SELECTOR -> gram-altin
+            altin_box = soup.find("span", {"data-socket-key": "gram-altin", "data-socket-attr": "s"})
+            
             if usd_box: data["USD"] = float(usd_box.get_text().replace(".", "").replace(",", "."))
             if eur_box: data["EUR"] = float(eur_box.get_text().replace(".", "").replace(",", "."))
             if altin_box: data["ALTIN"] = float(altin_box.get_text().replace(".", "").replace(",", "."))
@@ -410,11 +412,7 @@ with st.sidebar:
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
     
     st.info("ℹ️ Merhaba Sir, finansal düğümlerin çözüldüğü yerdesiniz.")
-    if ALPHA_VANTAGE_KEY:
-        st.success("✅ Alpha Vantage API Aktif")
-    else:
-        st.caption("ℹ️ Secrets'a 'ALPHA_VANTAGE_KEY' ekleyerek resmi emtia verilerini bağlayabilirsiniz.")
-    st.markdown("---")
+   
     
     sozlesme_tipi = st.selectbox(
         "📄 Sözleşme Türü",
@@ -465,20 +463,21 @@ d_key = f"{start_date}_{end_date}"
 with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
     tcmb = get_tcmb_data(MY_API_KEY, start_date, end_date)
     yakit_guncel = guncel_akaryakit_cek()
-    doviz_com_data = doviz_com_canli_cek() # Doviz.com Canlı Çekim
-    te_data_live = trading_economics_live_all() # TradingEconomics Canlı Çekim
+    doviz_com_data = doviz_com_canli_cek() 
+    te_data_live = trading_economics_live_all() 
     evds_gold_ilk = get_evds_gold_history(MY_API_KEY, start_date)
     evds_fuel_ilk = get_evds_fuel_history(MY_API_KEY, start_date)
     df_hufe = get_google_sheet_data()
 
 # ============================================================================
-# PİYASA VERİSİ İŞLEME (BRENT PETROL & DÖVİZ TAM DÜZELTİLMİŞ)
+# PİYASA VERİSİ İŞLEME (BRENT PETROL & GRAM ALTIN TAM DÜZELTİLMİŞ)
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data):
+    # YAHOO BRENT SEMBOLÜ CB=F İLE DEĞİŞTİRİLDİ (SABİT ESKİ VERİ DÜZELTİLDİ)
     symbol_map = [
         ("USDTRY", "TRY=X"), ("EURTRY", "EURTRY=X"), ("EURUSD", "EURUSD=X"), 
-        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "BZ=F"), ("ABD_TAHVIL", "^TNX")
+        ("ONS_ALTIN", "GC=F"), ("BRENT_PETROL", "CB=F"), ("ABD_TAHVIL", "^TNX")
     ]
     data_dict = {}
     target_start = pd.Timestamp(d_start).replace(hour=0, minute=0, second=0)
@@ -488,8 +487,8 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
         ilk, son = 0.0, 0.0
         try:
             url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2y"
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            res = requests.get(url, headers=headers, timeout=3)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            res = requests.get(url, headers=headers, timeout=4)
             if res.status_code == 200:
                 result = res.json().get('chart', {}).get('result', [])
                 if result:
@@ -506,11 +505,9 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
         data_dict[key] = {"ilk": ilk, "son": son, "degisim": 0.0}
 
-    # 2. CANLI BRENT PETROL VE DÖVİZ YEDEKLEME (DOVIZ.COM & TRADINGECONOMICS)
-    if data_dict["USDTRY"]["son"] == 0 and doviz_data.get("USD", 0) > 0:
-        data_dict["USDTRY"]["son"] = doviz_data["USD"]
-    if data_dict["EURTRY"]["son"] == 0 and doviz_data.get("EUR", 0) > 0:
-        data_dict["EURTRY"]["son"] = doviz_data["EUR"]
+    # 2. BRENT PETROL & DÖVİZ CANLI DÜZELTME
+    if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
+    if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
     # Brent Petrol Canlı Değer Garantisi
     if doviz_data.get("BRENT_PETROL", 0) > 0:
@@ -518,7 +515,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     elif te_data.get("BRENT_PETROL", 0) > 0:
         data_dict["BRENT_PETROL"]["son"] = te_data["BRENT_PETROL"]
 
-    # 3. EVDS DÖVİZ VE BRENT ESKİ FİYAT YEDEKLERİ
+    # 3. EVDS DÖVİZ VE ONS ALTIN ESKİ FİYAT YEDEKLERİ
     if data_dict["USDTRY"]["ilk"] == 0 and evds_key:
         try:
             evds_service = evdsAPI(evds_key)
@@ -544,13 +541,32 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
         if te_key not in data_dict:
             data_dict[te_key] = {"ilk": 0.0, "son": te_val, "degisim": 0.0}
 
+    # GRAM ALTIN GARANTİ DÜZELTME MOTORU (ZİNCİRLEME KONTROL)
+    gold_son = doviz_data.get("ALTIN", 0.0)
+    
+    # Eğer Doviz.com'dan gram altın çekilemezse, TE Ons Altın * Dolar Kuru üzerinden anında hesapla!
+    if gold_son <= 0:
+        ons_s = te_data.get("ONS_ALTIN", 0.0) if te_data.get("ONS_ALTIN", 0) > 0 else data_dict.get("ONS_ALTIN", {}).get("son", 0)
+        usd_s = data_dict.get("USDTRY", {}).get("son", 0)
+        if ons_s > 0 and usd_s > 0: 
+            gold_son = (ons_s / 31.1035) * usd_s
+
+    gold_ilk = evds_gold_start
+    if gold_ilk <= 0:
+        ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
+        usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
+        if ons_i > 0 and usd_i > 0: 
+            gold_ilk = (ons_i / 31.1035) * usd_i
+
+    data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
+
     # Bütün Kalemler İçin Değişim Yüzdesi Hesabı
     for k, v in data_dict.items():
         ilk_val = safe_float(v["ilk"])
         son_val = safe_float(v["son"])
         v["degisim"] = ((son_val - ilk_val) / ilk_val * 100) if (ilk_val > 0 and son_val > 0) else 0.0
 
-    # PARİTE VE GRAM ALTIN KORUMALARI
+    # PARİTE KORUMASI
     if data_dict["EURUSD"]["ilk"] == 0 and data_dict["USDTRY"]["ilk"] > 0 and data_dict["EURTRY"]["ilk"] > 0:
         data_dict["EURUSD"]["ilk"] = data_dict["EURTRY"]["ilk"] / data_dict["USDTRY"]["ilk"]
             
@@ -561,20 +577,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     
     p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
-
-    gold_ilk = evds_gold_start
-    if gold_ilk <= 0:
-        ons_i = data_dict.get("ONS_ALTIN", {}).get("ilk", 0)
-        usd_i = data_dict.get("USDTRY", {}).get("ilk", 0)
-        if ons_i > 0 and usd_i > 0: gold_ilk = (ons_i / 31.1035) * usd_i
-
-    gold_son = doviz_data.get("ALTIN", 0)
-    if gold_son <= 0:
-        ons_s = data_dict.get("ONS_ALTIN", {}).get("son", 0)
-        usd_s = data_dict.get("USDTRY", {}).get("son", 0)
-        if ons_s > 0 and usd_s > 0: gold_son = (ons_s / 31.1035) * usd_s
-
-    data_dict["GRAM_ALTIN_TL"] = {"ilk": gold_ilk, "son": gold_son, "degisim": ((gold_son - gold_ilk) / gold_ilk * 100) if gold_ilk > 0 else 0.0}
 
     return data_dict
 
@@ -597,7 +599,7 @@ with st.container(border=True):
             else:
                 renk = "pozitif" if deg >= 0 else "negatif"
                 st.markdown(f"<div style='font-size:12px; color:#666 !important;'>Eski: {tr_fmt(ilk)}</div>", unsafe_allow_html=True)
-                ek_bilgi = " (Canlı)" if ("GRAM" in key or "USD" in key or "EUR" in key or "BRENT" in key) and (doviz_com_data.get("USD",0) > 0 or doviz_com_data.get("BRENT_PETROL",0) > 0) else ""
+                ek_bilgi = " (Canlı)" if ("GRAM" in key or "USD" in key or "EUR" in key or "BRENT" in key) and (doviz_com_data.get("USD",0) > 0 or doviz_com_data.get("BRENT_PETROL",0) > 0 or doviz_com_data.get("ALTIN",0) > 0) else ""
                 st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:baseline;'><span class='big-metric'>{tr_fmt(son)}</span><span class='{renk}'>%{deg:+.2f}</span></div>", unsafe_allow_html=True)
                 if ek_bilgi: st.markdown(f"<div style='font-size:10px; color:#27AE60; text-align:right;'>{ek_bilgi}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
