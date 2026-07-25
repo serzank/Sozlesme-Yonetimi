@@ -1703,11 +1703,54 @@ with st.container(border=True):
             
         return simulation_matrix
 
+    # ============================================================================
+# MONTE CARLO RISK & BÜTÇE SIMÜLASYONU (PERİYOT UYUMLU)
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    c_m1, c_m2 = st.columns([3, 1])
+    with c_m1: 
+        st.header("🎲 Monte Carlo Olasılıklı Bütçe Risk Simülasyonu")
+    with c_m2: 
+        st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*1.000 Piyasa Şoku Simüle Edilmiştir.</div>", unsafe_allow_html=True)
+    
+    is_yillik = (sozlesme_periyodu == "Yıllık") if 'sozlesme_periyodu' in locals() or 'sozlesme_periyodu' in globals() else False
+    base_start_val = (yeni / 12) if is_yillik else yeni
+
+    def run_monte_carlo(start_val, base_monthly_rate, vol_rate, months=12, sims=1000):
+        np.random.seed(42)
+        simulation_matrix = np.zeros((sims, months + 1))
+        simulation_matrix[:, 0] = start_val
+        
+        for t in range(1, months + 1):
+            shocks = np.random.normal(loc=base_monthly_rate, scale=vol_rate, size=sims)
+            simulation_matrix[:, t] = simulation_matrix[:, t-1] * (1 + shocks / 100)
+            
+        return simulation_matrix
+
+    # 🟢 1. Sepet Değiştikçe Kutuyu Zorunlu Yenileyen Dinamik Key
+    mc_key = f"mc_base_{d_key}_{round(zam, 2)}"
+
+    # 🟢 2. Sepetteki Riskli Emtialara Göre Dinamik Oynaklık (Volatilite) Hesabı
+    emtia_agirligi = safe_float(w_bakir) + safe_float(w_alum) + safe_float(w_celik) + safe_float(w_brent) + safe_float(w_dizel) + safe_float(w_jet_fuel)
+    dinamik_volatilite = float(round(1.5 + (emtia_agirligi / 100) * 2.5, 2))
+
     c_sim1, c_sim2 = st.columns(2)
     with c_sim1:
-        base_monthly = st.number_input("Beklenen Aylık Ortalama Artış Trendi (%)", value=round((zam/12) if zam > 0 else 2.5, 2), step=0.1, key="mc_base")
+        base_monthly = st.number_input(
+            "Beklenen Aylık Ortalama Artış Trendi (%)", 
+            value=float(round((zam/12) if zam > 0 else 2.5, 2)), 
+            step=0.1, 
+            key=mc_key
+        )
     with c_sim2:
-        volatility = st.number_input("Piyasa Volatilitesi / Oynaklık Sapması (%)", value=1.8, step=0.1, key="mc_vol", help="Yüksek oynaklıklı emtialar için sapmayı artırabilirsiniz.")
+        volatility = st.number_input(
+            "Piyasa Volatilitesi / Oynaklık Sapması (%)", 
+            value=dinamik_volatilite, 
+            step=0.1, 
+            key=f"mc_vol_{mc_key}", 
+            help="Sepetinizdeki emtia ağırlığı arttıkça otomatik olarak riski yükseltir."
+        )
 
     proj_months = 12
     dates_str = [(date.today() + relativedelta(months=i)).strftime("%Y-%m") for i in range(1, proj_months + 1)]
