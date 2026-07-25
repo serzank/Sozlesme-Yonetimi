@@ -15,6 +15,7 @@ fpdf
 fuzzywuzzy
 python-Levenshtein
 fpdf2
+pypdf
 
 
 
