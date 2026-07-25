@@ -91,6 +91,28 @@ st.markdown("""
 
 WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "euro_enf", "abd_enf", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
 
+def get_cross_currency_rate(base_curr, target_curr, start_dt, end_dt):
+    """
+    Sözleşme para birimi ile masraf para birimi arasındaki çapraz kur değişimini hesaplar.
+    Örn: base_curr='EUR', target_curr='TRY' -> EUR/TRY değişim yüzdesini verir.
+    """
+    if base_curr == target_curr:
+        return 0.0, 1.0, 1.0 # Aynı para birimi ise değişim sıfırdır
+    
+    ticker_symbol = f"{base_curr}{target_curr}=X"
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(ticker_symbol)
+        df_fx = ticker.history(start=start_dt, end=end_dt)
+        if not df_fx.empty:
+            p_start = float(df_fx['Close'].iloc[0])
+            p_end = float(df_fx['Close'].iloc[-1])
+            pct_change = ((p_end - p_start) / p_start) * 100
+            return pct_change, p_start, p_end
+    except Exception:
+        pass
+    return 0.0, 1.0, 1.0
+
 def extract_text_from_pdf(uploaded_file):
     if not HAS_PYPDF or uploaded_file is None:
         return ""
@@ -239,7 +261,76 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
     except Exception as e:
         st.error(f"Kapsam analizi yapılırken hata oluştu: {str(e)}")
         return None
+        
+# ============================================================================
+# 🌍 ÇAPRAZ KUR & HEDGING ANALİZ MATRİSİ (CROSS-CURRENCY MATRIX)
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    st.header("🌍 Çapraz Kur & Hedging Analiz Matrisi (Cross-Currency Risk)")
+    
+    # Çapraz Kur Değişimini Hesapla
+    fx_change_pct, p_start_fx, p_end_fx = get_cross_currency_rate(contract_curr, cost_curr, start_date, end_date)
+    
+    # Reel Sözleşme Etkisi Formülü: ((1 + Sepet Zam%) / (1 + FX Zam%)) - 1
+    # Bu formül, sözleşme dövizi cinsinden yüklenicinin reelde ne kadar eridiğini veya kar ettiğini çıkarır.
+    reel_net_impact = (((1 + (zam / 100)) / (1 + (fx_change_pct / 100))) - 1) * 100
 
+    col_fx1, col_fx2, col_fx3 = st.columns(3)
+    
+    col_fx1.metric(
+        label=f"Çapraz Kur Değişimi ({contract_curr}/{cost_curr})",
+        value=f"%{fx_change_pct:+.2f}",
+        delta=f"Başlangıç: {p_start_fx:.2f} ➔ Güncel: {p_end_fx:.2f}",
+        delta_color="off"
+    )
+    
+    col_fx2.metric(
+        label=f"Lokal Masraf Eskalasyonu ({cost_curr})",
+        value=f"%{zam:.2f}",
+        delta="Lokal Sepet Yükü",
+        delta_color="off"
+    )
+    
+    # Reel Etki Rengi ve Anlatımı
+    delta_color_type = "inverse" if reel_net_impact > 0 else "normal"
+    col_fx3.metric(
+        label=f"Sözleşme Bazlı Reel Maliyet Yükü ({contract_curr})",
+        value=f"%{reel_net_impact:+.2f}",
+        delta="Haksız Avantaj / Tedarikçi Erimesi",
+        delta_color=delta_color_type
+    )
+
+    st.markdown("<div style='margin-top:15px;'></div>", unsafe_allow_html=True)
+
+    # --- PAZARLIK VE MÜZAKERE KOZU BANDEROLÜ ---
+    if contract_curr != cost_curr:
+        if reel_net_impact < -2.0:
+            # Şirket lehine durum: Döviz fırlamış, lokal enflasyon geride kalmış
+            st.success(
+                f"💡 **MÜZAKERE KOZU (Şirket Lehine / İndirim Talebi):**\n\n"
+                f"Sözleşme para biriminiz (**{contract_curr}**), sahadaki masraf birimine (**{cost_curr}**) karşı "
+                f"lokal enflasyondan **%{abs(reel_net_impact):.2f} daha hızlı değer kazanmıştır.** "
+                f"Tedarikçinin {contract_curr} bazında **haksız kur marjı kazandığı** tespit edilmiştir. "
+                f"Pazarlık masasında **%{abs(reel_net_impact):.2f} oranında indirim veya sabit kur kilitlemesi (Lock-In)** talep ediniz Sir!"
+            )
+        elif reel_net_impact > 2.0:
+            # Tedarikçi aleyhine durum: Enflasyon dövizi aşmış
+            st.warning(
+                f"⚠️ **TEDARİKCİ ERİME RİSKİ (İtiraz / İş Durdurma Uyarısı):**\n\n"
+                f"Sahanın lokal maliyet artışı (%{zam:.2f}), sözleşme döviz artışını (%{fx_change_pct:.2f}) aşmıştır. "
+                f"Tedarikçi **{contract_curr}** bazında reelde **%{reel_net_impact:.2f} net maliyet erimesi** yaşamaktadır. "
+                f"Tedarikçiden ek fiyat revizyonu veya hakediş itirazı gelme olasılığı yüksektir."
+            )
+        else:
+            st.info(
+                f"⚖️ **DENGELİ PARİTE DENGESİ:**\n\n"
+                f"Sözleşme para birimi (**{contract_curr}**) artışı ile saha maliyet enflasyonu (**{cost_curr}**) tam dengededir. "
+                f"Çapraz kur tarafında kayda değer bir arbitraj veya erime riski bulunmamaktadır."
+            )
+    else:
+        st.info("ℹ️ Sözleşme para birimi ile Saha masraf birimi aynı seçildiği için Çapraz Kur arbitrajı hesaplanmamıştır.")
+        
 # --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
 @st.cache_data(ttl=3600)
 def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
@@ -679,6 +770,7 @@ def get_evds_fuel_history(api_key, d_start):
     return res
 
 # Sol Menü (Sidebar) Tanımları
+
 with st.sidebar:
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
@@ -699,6 +791,14 @@ with st.sidebar:
         sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: 
         sozlesme_tutari = 0.0
+        
+# Sol Menüye Eklenecek Çapraz Kur Bölümü
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("##### 🌍 Sözleşme & Saha Para Birimi")
+    c_fx1, c_fx2 = st.columns(2)
+    contract_curr = c_fx1.selectbox("Sözleşme Döviz Türü", ["EUR", "USD", "TRY", "GBP"], index=0)
+    cost_curr = c_fx2.selectbox("Saha / Masraf Birimi", ["TRY", "KZT", "EUR", "USD", "GEL"], index=0)
 
 # ============================================================================
 # SEPET AĞIRLIKLARI STATE YÖNETİMİ
