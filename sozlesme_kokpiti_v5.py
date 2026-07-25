@@ -265,6 +265,12 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
 # ============================================================================
 # 🌍 ÇAPRAZ KUR & HEDGING ANALİZ MATRİSİ (CROSS-CURRENCY MATRIX)
 # ============================================================================
+# Emniyet Supabı: Değişkenler sidebar'da henüz oluşmadıysa varsayılan ata
+if 'contract_curr' not in locals() and 'contract_curr' not in globals():
+    contract_curr = "EUR"
+if 'cost_curr' not in locals() and 'cost_curr' not in globals():
+    cost_curr = "TRY"
+
 st.markdown("---")
 with st.container(border=True):
     st.header("🌍 Çapraz Kur & Hedging Analiz Matrisi (Cross-Currency Risk)")
@@ -791,14 +797,13 @@ with st.sidebar:
         sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: 
         sozlesme_tutari = 0.0
-        
-# Sol Menüye Eklenecek Çapraz Kur Bölümü
-with st.sidebar:
+
     st.markdown("---")
     st.markdown("##### 🌍 Sözleşme & Saha Para Birimi")
     c_fx1, c_fx2 = st.columns(2)
     contract_curr = c_fx1.selectbox("Sözleşme Döviz Türü", ["EUR", "USD", "TRY", "GBP"], index=0)
-    cost_curr = c_fx2.selectbox("Saha / Masraf Birimi", ["TRY", "KZT", "EUR", "USD", "GEL"], index=0)
+    cost_curr = c_fx2.selectbox("Saha / Masraf Birimi", ["TRY", "KZT", "EUR", "USD", "GEL"], index=0)        
+
 
 # ============================================================================
 # SEPET AĞIRLIKLARI STATE YÖNETİMİ
