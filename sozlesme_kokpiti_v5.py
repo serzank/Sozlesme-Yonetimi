@@ -92,16 +92,11 @@ st.markdown("""
 WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "euro_enf", "abd_enf", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
 
 def get_cross_currency_rate(base_curr, target_curr, start_dt, end_dt):
-    """
-    Sözleşme para birimi ile masraf para birimi arasındaki çapraz kur değişimini hesaplar.
-    Örn: base_curr='EUR', target_curr='TRY' -> EUR/TRY değişim yüzdesini verir.
-    """
     if base_curr == target_curr:
-        return 0.0, 1.0, 1.0 # Aynı para birimi ise değişim sıfırdır
+        return 0.0, 1.0, 1.0 
     
     ticker_symbol = f"{base_curr}{target_curr}=X"
     try:
-        import yfinance as yf
         ticker = yf.Ticker(ticker_symbol)
         df_fx = ticker.history(start=start_dt, end=end_dt)
         if not df_fx.empty:
@@ -145,24 +140,20 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    # Font Ayarları
     pdf.set_font("Helvetica", "B", 16)
-    pdf.set_text_color(30, 61, 89) # Kurumsal Lacivert (#1E3D59)
+    pdf.set_text_color(30, 61, 89)
     
-    # Başlık
     pdf.cell(0, 10, clean_str("COST NEXUS | EXECUTIVE PROCUREMENT REPORT"), new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 5, clean_str(f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Donem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"), new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(5)
     
-    # Çizgi
-    pdf.set_draw_color(39, 174, 96) # Yeşil Çizgi (#27AE60)
+    pdf.set_draw_color(39, 174, 96)
     pdf.set_line_width(0.8)
     pdf.line(10, 30, 200, 30)
     pdf.ln(5)
     
-    # Finansal Özet Tablosu
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 61, 89)
     pdf.cell(0, 8, clean_str("1. SOZLESME VE HAKEDIS OZETI"), new_x="LMARGIN", new_y="NEXT")
@@ -170,7 +161,6 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.set_font("Helvetica", "", 10)
     pdf.set_fill_color(248, 249, 250)
     
-    # Metinleri temizleyerek FPDF'e iletiyoruz
     safe_sozlesme_tipi = clean_str(sozlesme_tipi)
     
     pdf.cell(60, 8, clean_str(" Sozlesme Turu:"), 1, 0, "L", fill=True)
@@ -186,7 +176,6 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.cell(130, 8, clean_str(f" {tr_fmt(yeni)} TL"), 1, 1, "L")
     pdf.ln(5)
     
-    # Aktif Sepet Detayları
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 61, 89)
     pdf.cell(0, 8, clean_str("2. AKTIF SEPET VE MALIYET ETKI DETAYLARI"), new_x="LMARGIN", new_y="NEXT")
@@ -209,7 +198,6 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
             pdf.cell(40, 6, f" %{(deg*agr)/100:+.2f}", 1, 1, "C")
     pdf.ln(5)
     
-    # Jarvis Yorumu
     if jarvis_comment:
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(30, 61, 89)
@@ -220,7 +208,6 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
         pdf.multi_cell(0, 5, clean_comment, border=1)
         pdf.ln(10)
         
-    # Onay İmzaları
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(30, 61, 89)
     pdf.cell(63, 6, clean_str("Hazirlayan (Purchasing Spec.)"), 0, 0, "C")
@@ -261,86 +248,7 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
     except Exception as e:
         st.error(f"Kapsam analizi yapılırken hata oluştu: {str(e)}")
         return None
-        
-# ============================================================================
-# 🌍 ÇAPRAZ KUR & HEDGING ANALİZ MATRİSİ (CROSS-CURRENCY MATRIX)
-# ============================================================================
-# Emniyet Supapları: Değişkenler sidebar veya ana ekranda henüz oluşmadıysa varsayılan atıyoruz
-if 'contract_curr' not in locals() and 'contract_curr' not in globals():
-    contract_curr = "EUR"
-if 'cost_curr' not in locals() and 'cost_curr' not in globals():
-    cost_curr = "TRY"
-if 'start_date' not in locals() and 'start_date' not in globals():
-    start_date = date.today() - timedelta(days=365)
-if 'end_date' not in locals() and 'end_date' not in globals():
-    end_date = date.today()
 
-st.markdown("---")
-with st.container(border=True):
-    st.header("🌍 Çapraz Kur & Hedging Analiz Matrisi (Cross-Currency Risk)")
-    
-    # Çapraz Kur Değişimini Hesapla
-    fx_change_pct, p_start_fx, p_end_fx = get_cross_currency_rate(contract_curr, cost_curr, start_date, end_date)
-    
-    # Reel Sözleşme Etkisi Formülü: ((1 + Sepet Zam%) / (1 + FX Zam%)) - 1
-    # Bu formül, sözleşme dövizi cinsinden yüklenicinin reelde ne kadar eridiğini veya kar ettiğini çıkarır.
-    reel_net_impact = (((1 + (zam / 100)) / (1 + (fx_change_pct / 100))) - 1) * 100
-
-    col_fx1, col_fx2, col_fx3 = st.columns(3)
-    
-    col_fx1.metric(
-        label=f"Çapraz Kur Değişimi ({contract_curr}/{cost_curr})",
-        value=f"%{fx_change_pct:+.2f}",
-        delta=f"Başlangıç: {p_start_fx:.2f} ➔ Güncel: {p_end_fx:.2f}",
-        delta_color="off"
-    )
-    
-    col_fx2.metric(
-        label=f"Lokal Masraf Eskalasyonu ({cost_curr})",
-        value=f"%{zam:.2f}",
-        delta="Lokal Sepet Yükü",
-        delta_color="off"
-    )
-    
-    # Reel Etki Rengi ve Anlatımı
-    delta_color_type = "inverse" if reel_net_impact > 0 else "normal"
-    col_fx3.metric(
-        label=f"Sözleşme Bazlı Reel Maliyet Yükü ({contract_curr})",
-        value=f"%{reel_net_impact:+.2f}",
-        delta="Haksız Avantaj / Tedarikçi Erimesi",
-        delta_color=delta_color_type
-    )
-
-    st.markdown("<div style='margin-top:15px;'></div>", unsafe_allow_html=True)
-
-    # --- PAZARLIK VE MÜZAKERE KOZU BANDEROLÜ ---
-    if contract_curr != cost_curr:
-        if reel_net_impact < -2.0:
-            # Şirket lehine durum: Döviz fırlamış, lokal enflasyon geride kalmış
-            st.success(
-                f"💡 **MÜZAKERE KOZU (Şirket Lehine / İndirim Talebi):**\n\n"
-                f"Sözleşme para biriminiz (**{contract_curr}**), sahadaki masraf birimine (**{cost_curr}**) karşı "
-                f"lokal enflasyondan **%{abs(reel_net_impact):.2f} daha hızlı değer kazanmıştır.** "
-                f"Tedarikçinin {contract_curr} bazında **haksız kur marjı kazandığı** tespit edilmiştir. "
-                f"Pazarlık masasında **%{abs(reel_net_impact):.2f} oranında indirim veya sabit kur kilitlemesi (Lock-In)** talep ediniz Sir!"
-            )
-        elif reel_net_impact > 2.0:
-            # Tedarikçi aleyhine durum: Enflasyon dövizi aşmış
-            st.warning(
-                f"⚠️ **TEDARİKCİ ERİME RİSKİ (İtiraz / İş Durdurma Uyarısı):**\n\n"
-                f"Sahanın lokal maliyet artışı (%{zam:.2f}), sözleşme döviz artışını (%{fx_change_pct:.2f}) aşmıştır. "
-                f"Tedarikçi **{contract_curr}** bazında reelde **%{reel_net_impact:.2f} net maliyet erimesi** yaşamaktadır. "
-                f"Tedarikçiden ek fiyat revizyonu veya hakediş itirazı gelme olasılığı yüksektir."
-            )
-        else:
-            st.info(
-                f"⚖️ **DENGELİ PARİTE DENGESİ:**\n\n"
-                f"Sözleşme para birimi (**{contract_curr}**) artışı ile saha maliyet enflasyonu (**{cost_curr}**) tam dengededir. "
-                f"Çapraz kur tarafında kayda değer bir arbitraj veya erime riski bulunmamaktadır."
-            )
-    else:
-        st.info("ℹ️ Sözleşme para birimi ile Saha masraf birimi aynı seçildiği için Çapraz Kur arbitrajı hesaplanmamıştır.")
-        
 # --- FRED ENDEKS BAZLI YÜZDE DEĞİŞİM MOTORU ---
 @st.cache_data(ttl=3600)
 def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
@@ -779,8 +687,9 @@ def get_evds_fuel_history(api_key, d_start):
     except: pass
     return res
 
-# Sol Menü (Sidebar) Tanımları
-
+# ============================================================================
+# SOL MENÜ (SIDEBAR) TANIMLARI
+# ============================================================================
 with st.sidebar:
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
@@ -796,7 +705,6 @@ with st.sidebar:
     tutar_giris = c_tutar1.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     sozlesme_periyodu = c_tutar2.selectbox("Periyot", ["Yıllık", "Aylık"])
     
-    # Güvenli Tutar Çevrimi (Varsayılan olarak her zaman tanımlı kalsın)
     try: 
         sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
     except: 
@@ -819,7 +727,7 @@ if 'last_sozlesme_tipi' not in st.session_state or st.session_state.last_sozlesm
         st.session_state[f"w_{k}"] = float(auto_w.get(k, 0))
 
 # ============================================================================
-# ANA EKRAN - ÜST KISIM
+# ANA EKRAN - ÜST KISIM (TARİH SEÇİMİ)
 # ============================================================================
 if 'ss_start' not in st.session_state:
     st.session_state.ss_start = date.today() - relativedelta(years=1)
@@ -919,7 +827,6 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     if doviz_data.get("USD", 0) > 0: data_dict["USDTRY"]["son"] = doviz_data["USD"]
     if doviz_data.get("EUR", 0) > 0: data_dict["EURTRY"]["son"] = doviz_data["EUR"]
 
-    # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
     euro_ilk, euro_son, euro_deg = get_global_inflation_change(
         fred_key,
         "CP0000EZ19M086NEST",
@@ -999,21 +906,11 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     if fred_key:
         fred_map = {
-            "BAKIR": "PCOPPUSDM",
-            "ALUMINYUM": "PALUMUSDM",
-            "DOGALGAZ": "PNGASUSDM",
-            "PLASTIK": "WPU066",
-            "PROPAN": "PROPANEM",
-            "SCRAP_STEEL": "WPU1012",
-            "SCRAP_ALUM": "WPU102301",
-            "HRC_STEEL": "WPUSI019011",
-            "DEMIR": "PIRONUSDM",
-            "NIKEL": "PNICKUSDM",
-            "CINKO": "PZINCUSDM",
-            "PAMUK": "PCOTTUSDM",
-            "BUGDAY": "PWHEAMTUSDM",
-            "KAKAO": "PCOCOUSDM",
-            "COAL": "PCOALAUUSDM"
+            "BAKIR": "PCOPPUSDM", "ALUMINYUM": "PALUMUSDM", "DOGALGAZ": "PNGASUSDM",
+            "PLASTIK": "WPU066", "PROPAN": "PROPANEM", "SCRAP_STEEL": "WPU1012",
+            "SCRAP_ALUM": "WPU102301", "HRC_STEEL": "WPUSI019011", "DEMIR": "PIRONUSDM",
+            "NIKEL": "PNICKUSDM", "CINKO": "PZINCUSDM", "PAMUK": "PCOTTUSDM",
+            "BUGDAY": "PWHEAMTUSDM", "KAKAO": "PCOCOUSDM", "COAL": "PCOALAUUSDM"
         }
         for k_fred, series_id in fred_map.items():
             if k_fred in data_dict and data_dict[k_fred]["son"] > 0:
@@ -1163,14 +1060,14 @@ with st.container(border=True):
     st.markdown("### 🌍 Küresel Enflasyon Endeksleri")
     i1, i2, _, _ = st.columns(4)
     d_euro_enf = kutu(i1, "Avrupa Enf. (HICP)", "EURO_HICP", "🇪🇺")
-    d_abd_cpi  = kutu(i2, "ABD CPI", "ABD_CPI", "🇺🇸")
+    d_abd_cpi   = kutu(i2, "ABD CPI", "ABD_CPI", "🇺🇸")
 
     st.markdown("### 🏗️ Sanayi, Metal, Tarım & Hammadde Emtiaları")
     
     em1, em2, em3, em4 = st.columns(4)
-    d_bakir  = emtia_karti(em1, "🔌 Bakır ($/Lbs)", "BAKIR")
-    d_alum   = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
-    d_gaz    = emtia_karti(em3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ")
+    d_bakir   = emtia_karti(em1, "🔌 Bakır ($/Lbs)", "BAKIR")
+    d_alum    = emtia_karti(em2, "🏗️ Alüminyum ($/Ton)", "ALUMINYUM")
+    d_gaz     = emtia_karti(em3, "🔥 Doğal Gaz ($/MMBtu)", "DOGALGAZ")
     d_propan = emtia_karti(em4, "🔥 Propan ($/Gal)", "PROPAN")
 
     em5, em6, em7, em8 = st.columns(4)
@@ -1237,7 +1134,6 @@ with st.container(border=True):
                 
             close_series = close_series.dropna().copy()
             
-            # --- JET A-1 (HO=F) GALON ($4.36) -> VARİL ($172+) KESİN ÇEVRİMİ ---
             if "HO=F" in symbol_code or selected_chart_item.startswith("Jet"):
                 close_series = close_series * 42.0
             
@@ -1310,7 +1206,7 @@ with st.container(border=True):
     st.markdown(f"<div style='font-size:11px; color:gray; text-align:right'>*Hesaplama: Girilen {tr_fmt(sozlesme_tutari)} TL'nin, başlangıç tarihi ve bugünkü kurlar üzerinden karşılığıdır.</div>", unsafe_allow_html=True)
 
 # ============================================================================
-# HESAPLAMA MOTORU
+# HESAPLAMA MOTORU & SEPET AĞIRLIKLARI
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
@@ -1439,7 +1335,6 @@ with st.container(border=True):
                 with st.spinner("PDF dokümanı okunuyor ve OCR işlemi yapılıyor..."):
                     extracted_text = extract_text_from_pdf(uploaded_pdf)
             
-            # Eğer PDF yüklendiyse öncelik PDF metnindedir, yoksa metin alanına bakılır
             final_text_to_analyze = extracted_text if extracted_text.strip() else kapsam_input
             
             if not final_text_to_analyze.strip():
@@ -1459,19 +1354,6 @@ with st.container(border=True):
                         if extracted_text:
                             st.info(f"ℹ️ Okunan PDF Boyutu: {len(extracted_text)} karakter. Şartname içindeki maliyet girdileri tespit edildi.")
                         st.rerun()
-        
-        if st.button("🚀 Kapsamı Analiz Et ve Ağırlıkları Doldur"):
-            with st.spinner("Jarvis şartnameyi analiz ediyor ve maliyet kırılımı çıkarıyor..."):
-                ai_weights = ai_kapsam_analizi(kapsam_input, GEMINI_API_KEY)
-                if ai_weights:
-                    for k in WEIGHT_KEYS:
-                        st.session_state[f"w_{k}"] = 0.0
-                    for key, val in ai_weights.items():
-                        clean_k = key.lower().replace("ğ", "g")
-                        if clean_k in WEIGHT_KEYS:
-                            st.session_state[f"w_{clean_k}"] = float(val)
-                    st.success("✅ Şartname analiz edildi ve sepet ağırlıkları başarıyla güncellendi!")
-                    st.rerun()
 
     w1, w2, w3, w4 = st.columns(4)
     w_mix_oran = w1.number_input("TÜFE+ÜFE Ort. %", key="w_mix")
@@ -1609,7 +1491,7 @@ with st.container(border=True):
     r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
     r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
     
-    # DETAY TABLOSU & VURGULAMA
+    # DETAY TABLOSU
     data = {"Kalem": [], "Değişim": [], "Ağırlık": [], "Etki": []}
     for ad, deg, agr in etkiler:
         if agr > 0:
@@ -1631,7 +1513,6 @@ with st.container(border=True):
         use_container_width=True
     )
     
-    
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         if HAS_XLSX:
@@ -1647,8 +1528,70 @@ with st.container(border=True):
             st.download_button("📄 Executive A4 PDF Raporu İndir", data=pdf_bytes, file_name=f"Executive_Eskalasyon_Raporu_{date.today().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
 
 # ============================================================================
-# MONTE CARLO RISK & BÜTÇE SIMÜLASYONU
+# 🌍 ÇAPRAZ KUR & HEDGING ANALİZ MATRİSİ (DOĞRU YERİ: SEPET HESABI SONRASI)
 # ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    st.header("🌍 Çapraz Kur & Hedging Analiz Matrisi (Cross-Currency Risk)")
+    
+    # Çapraz Kur Değişimini Hesapla
+    fx_change_pct, p_start_fx, p_end_fx = get_cross_currency_rate(contract_curr, cost_curr, start_date, end_date)
+    
+    # Reel Sözleşme Etkisi (Yukarıda hesaplanan 'zam' değerini kusursuz şekilde kullanır)
+    reel_net_impact = (((1 + (zam / 100)) / (1 + (fx_change_pct / 100))) - 1) * 100
+
+    col_fx1, col_fx2, col_fx3 = st.columns(3)
+    
+    col_fx1.metric(
+        label=f"Çapraz Kur Değişimi ({contract_curr}/{cost_curr})",
+        value=f"%{fx_change_pct:+.2f}",
+        delta=f"Başlangıç: {p_start_fx:.2f} ➔ Güncel: {p_end_fx:.2f}",
+        delta_color="off"
+    )
+    
+    col_fx2.metric(
+        label=f"Lokal Masraf Eskalasyonu ({cost_curr})",
+        value=f"%{zam:.2f}",
+        delta="Lokal Sepet Yükü",
+        delta_color="off"
+    )
+    
+    delta_color_type = "inverse" if reel_net_impact > 0 else "normal"
+    col_fx3.metric(
+        label=f"Sözleşme Bazlı Reel Maliyet Yükü ({contract_curr})",
+        value=f"%{reel_net_impact:+.2f}",
+        delta="Haksız Avantaj / Tedarikçi Erimesi",
+        delta_color=delta_color_type
+    )
+
+    st.markdown("<div style='margin-top:15px;'></div>", unsafe_allow_html=True)
+
+    # --- PAZARLIK VE MÜZAKERE KOZU BANDEROLÜ ---
+    if contract_curr != cost_curr:
+        if reel_net_impact < -2.0:
+            st.success(
+                f"💡 **MÜZAKERE KOZU (Şirket Lehine / İndirim Talebi):**\n\n"
+                f"Sözleşme para biriminiz (**{contract_curr}**), sahadaki masraf birimine (**{cost_curr}**) karşı "
+                f"lokal enflasyondan **%{abs(reel_net_impact):.2f} daha hızlı değer kazanmıştır.** "
+                f"Tedarikçinin {contract_curr} bazında **haksız kur marjı kazandığı** tespit edilmiştir. "
+                f"Pazarlık masasında **%{abs(reel_net_impact):.2f} oranında indirim veya sabit kur kilitlemesi (Lock-In)** talep ediniz Sir!"
+            )
+        elif reel_net_impact > 2.0:
+            st.warning(
+                f"⚠️ **TEDARİKCİ ERİME RİSKİ (İtiraz / İş Durdurma Uyarısı):**\n\n"
+                f"Sahanın lokal maliyet artışı (%{zam:.2f}), sözleşme döviz artışını (%{fx_change_pct:.2f}) aşmıştır. "
+                f"Tedarikçi **{contract_curr}** bazında reelde **%{reel_net_impact:.2f} net maliyet erimesi** yaşamaktadır. "
+                f"Tedarikçiden ek fiyat revizyonu veya hakediş itirazı gelme olasılığı yüksektir."
+            )
+        else:
+            st.info(
+                f"⚖️ **DENGELİ PARİTE DENGESİ:**\n\n"
+                f"Sözleşme para birimi (**{contract_curr}**) artışı ile saha maliyet enflasyonu (**{cost_curr}**) tam dengededir. "
+                f"Çapraz kur tarafında kayda değer bir arbitraj veya erime riski bulunmamaktadır."
+            )
+    else:
+        st.info("ℹ️ Sözleşme para birimi ile Saha masraf birimi aynı seçildiği için Çapraz Kur arbitrajı hesaplanmamıştır.")
+
 # ============================================================================
 # MONTE CARLO RISK & BÜTÇE SIMÜLASYONU (PERİYOT UYUMLU)
 # ============================================================================
@@ -1660,15 +1603,11 @@ with st.container(border=True):
     with c_m2: 
         st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*1.000 Piyasa Şoku Simüle Edilmiştir.</div>", unsafe_allow_html=True)
     
-    # --- PERİYOT BAZLI TABAN BÜTÇE AYARLAMASI ---
-    # Eğer kullanıcı sol menüden "Yıllık" seçtiyse aylık bazı 12'ye bölerek hesaplıyoruz
-    is_yillik = (sozlesme_periyodu == "Yıllık") if 'sozlesme_periyodu' in locals() or 'sozlesme_periyodu' in globals() else False
-    
+    is_yillik = (sozlesme_periyodu == "Yıllık")
     base_start_val = (yeni / 12) if is_yillik else yeni
 
-    # --- MONTE CARLO SIMÜLASYON MOTORU ---
     def run_monte_carlo(start_val, base_monthly_rate, vol_rate, months=12, sims=1000):
-        np.random.seed(42) # Kararlı sonuçlar için
+        np.random.seed(42)
         simulation_matrix = np.zeros((sims, months + 1))
         simulation_matrix[:, 0] = start_val
         
@@ -1688,14 +1627,10 @@ with st.container(border=True):
     dates_str = [(date.today() + relativedelta(months=i)).strftime("%Y-%m") for i in range(1, proj_months + 1)]
     chart_dates = [datetime.today().strftime("%Y-%m")] + dates_str
 
-    # Simülasyonu Çalıştır (1000 Senaryo)
     sim_matrix = run_monte_carlo(base_start_val, base_monthly, volatility, proj_months, 1000)
-    
-    # Kümülatif (Yıl Sonu Toplam) Hesaplamaları
-    cum_matrix = np.cumsum(sim_matrix[:, 1:], axis=1) # 12 ayın toplamı
+    cum_matrix = np.cumsum(sim_matrix[:, 1:], axis=1)
     
     if is_yillik:
-        # Yıllık seçimde odak noktamız kümülatif yıllık bütçedir
         final_p10 = np.percentile(cum_matrix[:, -1], 10)
         final_p50 = np.percentile(cum_matrix[:, -1], 50)
         final_p95 = np.percentile(cum_matrix[:, -1], 95)
@@ -1708,7 +1643,6 @@ with st.container(border=True):
         sub_p50 = f"Aylık Ort: {tr_fmt(final_p50/12)} TL"
         sub_p95 = f"Risk Farkı: +{tr_fmt(final_p95 - final_p50)} TL"
     else:
-        # Aylık seçimde odak noktamız 12. ay faturası ve kümülatif dip toplamdır
         final_p10 = np.percentile(sim_matrix[:, -1], 10)
         final_p50 = np.percentile(sim_matrix[:, -1], 50)
         final_p95 = np.percentile(sim_matrix[:, -1], 95)
@@ -1740,7 +1674,6 @@ with st.container(border=True):
 
         fig_fan = go.Figure()
 
-        # P95 - P10 Aralığı
         fig_fan.add_trace(go.Scatter(
             x=chart_dates + chart_dates[::-1],
             y=np.concatenate([p95_series, p10_series[::-1]]),
@@ -1751,7 +1684,6 @@ with st.container(border=True):
             name="%90 Güven Aralığı (P10-P95)"
         ))
 
-        # P75 - P25 Aralığı
         fig_fan.add_trace(go.Scatter(
             x=chart_dates + chart_dates[::-1],
             y=np.concatenate([p75_series, p25_series[::-1]]),
@@ -1762,7 +1694,6 @@ with st.container(border=True):
             name="%50 Güven Aralığı (P25-P75)"
         ))
 
-        # Medyan Çizgi
         fig_fan.add_trace(go.Scatter(
             x=chart_dates,
             y=p50_series,
@@ -1785,7 +1716,6 @@ with st.container(border=True):
         st.plotly_chart(fig_fan, use_container_width=True)
 
     with tab_dist:
-        # Çan Eğrisi Dağılımı (Yıllık ise kümülatif dağılım, Aylık ise 12. ay dağılımı gösterilir)
         dist_data = cum_matrix[:, -1] if is_yillik else sim_matrix[:, -1]
         
         fig_dist = go.Figure()
@@ -1870,6 +1800,7 @@ with st.container(border=True):
                         model = genai.GenerativeModel(model_name)
                         response = model.generate_content(prompt)
                         
+                        st.session_state["last_jarvis_comment"] = response.text
                         st.success(f"Analiz Tamamlandı (Motor: {model_name})")
                         st.markdown(response.text)
                         
