@@ -1469,18 +1469,20 @@ with st.container(border=True):
     st.markdown("---")
     st.markdown("##### ⚖️ Tedarikçi Zam Talebi vs. Piyasa Gerçeği Analizi")
     
-    pazarlik_marji = tedarikci_zam - zam
-    pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
-    
-    # 1. ŞIK KPI KARTLARI (Koyu Temaya Tam Uyumlu)
+    # 1. ŞIK KPI KARTLARI (Önce girdi kutusu oluşturuluyor)
     c_k1, c_k2, c_k3 = st.columns([2, 2, 3])
     with c_k1:
         tedarikci_zam = st.number_input(
             "Tedarikçi Talep Ettiği Zam (%)", 
-            value=round(zam * 1.2, 2) if zam > 0 else 15.0, 
+            value=float(round(zam * 1.2, 2)) if zam > 0 else 15.0, 
             step=0.5, 
             key=f"ted_zam_{d_key}"
         )
+    
+    # Değişken tanımlandıktan hemen sonra hesaplama yapıyoruz
+    pazarlik_marji = tedarikci_zam - zam
+    pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
+
     with c_k2:
         st.metric("Piyasa Sepet Eskalasyonu", f"%{zam:.2f}")
     with c_k3:
@@ -1547,11 +1549,11 @@ with st.container(border=True):
             z=heatmap_data,
             x=[f"+%{s} Şok" for s in shock_rates],
             y=y_labels,
-            colorscale=[[0, '#1E2A38'], [0.5, '#2C3E50'], [1.0, '#C0392B']], # Şık koyu ton geçişi
+            colorscale=[[0, '#1E2A38'], [0.5, '#2C3E50'], [1.0, '#C0392B']],
             text=[[f"+{tr_fmt(val)} TL" for val in row] for row in heatmap_data],
             texttemplate="%{text}",
             textfont={"size": 11, "color": "white"},
-            showscale=False # Yan taraftaki çirkin renk çubuğu kaldırıldı
+            showscale=False
         ))
         
         fig_heat.update_layout(
@@ -1564,23 +1566,6 @@ with st.container(border=True):
             yaxis=dict(showgrid=False)
         )
         st.plotly_chart(fig_heat, use_container_width=True, config={'displayModeBar': False})
-
-    st.markdown("---")
-    r1, r2, r3 = st.columns(3)
-    r1.metric("Toplam Artış", f"%{zam:.2f}")
-    r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
-    r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
-    
-    # DETAY TABLOSU
-    data = {"Kalem": [], "Değişim": [], "Ağırlık": [], "Etki": []}
-    for ad, deg, agr in etkiler:
-        if agr > 0:
-            data["Kalem"].append(f"📌 {ad}")
-            data["Değişim"].append(deg)
-            data["Ağırlık"].append(agr)
-            data["Etki"].append((deg * agr) / 100)
-
-    df = pd.DataFrame(data)
 
     st.dataframe(
         df.style.format({
