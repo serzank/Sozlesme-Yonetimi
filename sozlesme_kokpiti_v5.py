@@ -98,12 +98,12 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.cell(0, 10, "COST NEXUS | EXECUTIVE PROCUREMENT REPORT", ln=True, align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 5, f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Dönem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}", ln=True, align="C")
+    pdf.cell(0, 5, f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Donem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}", ln=True, align="C")
     pdf.ln(5)
     
-    # Çizgi
+    # Çizgi (Düzeltildi: set_line_width)
     pdf.set_draw_color(39, 174, 96) # Yeşil Çizgi (#27AE60)
-    pdf.set_linewidth(1)
+    pdf.set_line_width(0.8)
     pdf.line(10, 30, 200, 30)
     pdf.ln(5)
     
@@ -142,7 +142,9 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.set_text_color(0, 0, 0)
     for ad, deg, agr in etkiler:
         if agr > 0:
-            pdf.cell(70, 6, f" {ad}", 1, 0, "L")
+            # Türkçe karakter temizliği
+            clean_ad = ad.replace("İ", "I").replace("ı", "i").replace("Ğ", "G").replace("ğ", "g").replace("Ü", "U").replace("ü", "u").replace("Ş", "S").replace("ş", "s").replace("Ö", "O").replace("ö", "o").replace("Ç", "C").replace("ç", "c")
+            pdf.cell(70, 6, f" {clean_ad}", 1, 0, "L")
             pdf.cell(40, 6, f" %{deg:+.2f}", 1, 0, "C")
             pdf.cell(40, 6, f" %{agr:.0f}", 1, 0, "C")
             pdf.cell(40, 6, f" %{(deg*agr)/100:+.2f}", 1, 1, "C")
@@ -155,7 +157,6 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
         pdf.cell(0, 8, "3. JARVIS AI FINANSAL EVALUATION & RISK DEGERLENDIRMESI", ln=True)
         pdf.set_font("Helvetica", "I", 9)
         pdf.set_text_color(50, 50, 50)
-        # Türkçe karakter temizliği (FPDF standart font uyumu için)
         clean_comment = jarvis_comment.replace("İ", "I").replace("ı", "i").replace("Ğ", "G").replace("ğ", "g").replace("Ü", "U").replace("ü", "u").replace("Ş", "S").replace("ş", "s").replace("Ö", "O").replace("ö", "o").replace("Ç", "C").replace("ç", "c")
         pdf.multi_cell(0, 5, clean_comment, border=1)
         pdf.ln(10)
@@ -171,7 +172,7 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.cell(63, 15, "Imza: ....................", 0, 0, "C")
     pdf.cell(63, 15, "Imza: ....................", 0, 1, "C")
     
-    return pdf.output(dest='S').encode('latin-1', errors='replace')
+    return bytes(pdf.output())
 
 def ai_kapsam_analizi(kapsam_metni, api_key):
     if not api_key or not kapsam_metni.strip():
