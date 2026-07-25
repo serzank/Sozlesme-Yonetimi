@@ -1459,17 +1459,30 @@ with st.container(border=True):
             unsafe_allow_html=True
         )
 
+# ============================================================================
+    # ⚡ SEPET HESAPLAMALARI VE DATAFRAME OLUŞTURMA
+    # ============================================================================
     zam = sum([(e[1] * e[2])/100 for e in etkiler])
     fark = sozlesme_tutari * (zam / 100)
     yeni = sozlesme_tutari + fark
 
+    # DETAY DATAFRAME (Tablodan ve Grafiklerden Önce Tanımlanmalıdır)
+    data = {"Kalem": [], "Değişim": [], "Ağırlık": [], "Etki": []}
+    for ad, deg, agr in etkiler:
+        if agr > 0:
+            data["Kalem"].append(f"📌 {ad}")
+            data["Değişim"].append(deg)
+            data["Ağırlık"].append(agr)
+            data["Etki"].append((deg * agr) / 100)
+
+    df = pd.DataFrame(data)
+
     # ============================================================================
-    # ⚖️ TEDARİKCİ KIYASLAMA & ŞIK MALİYET HASSASİYETİ
+    # ⚖️ TEDARİKCİ KIYASLAMA & ŞIK MALİYET HASSASİYETİ (DARK THEME)
     # ============================================================================
     st.markdown("---")
     st.markdown("##### ⚖️ Tedarikçi Zam Talebi vs. Piyasa Gerçeği Analizi")
     
-    # 1. ŞIK KPI KARTLARI (Önce girdi kutusu oluşturuluyor)
     c_k1, c_k2, c_k3 = st.columns([2, 2, 3])
     with c_k1:
         tedarikci_zam = st.number_input(
@@ -1479,7 +1492,6 @@ with st.container(border=True):
             key=f"ted_zam_{d_key}"
         )
     
-    # Değişken tanımlandıktan hemen sonra hesaplama yapıyoruz
     pazarlik_marji = tedarikci_zam - zam
     pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
 
@@ -1491,7 +1503,7 @@ with st.container(border=True):
         else:
             st.metric("Fiyat Avantajı", f"%{abs(pazarlik_marji):.2f}", delta=f"+{tr_fmt(abs(pazarlik_tl))} TL Avantajlı", delta_color="normal")
 
-    # 2. İNCE VE ZARİF ZAM KIYASLAMA ÇUBUĞU (PLOTLY DARK TEMALI)
+    # İNCE ZAM KIYASLAMA BARU
     fig_gouging = go.Figure()
     fig_gouging.add_trace(go.Bar(
         y=['Zam'],
@@ -1527,7 +1539,7 @@ with st.container(border=True):
     )
     st.plotly_chart(fig_gouging, use_container_width=True, config={'displayModeBar': False})
 
-    # 3. ZARİF MALİYET HASSASİYET MATRİSİ (DARK THEME HEATMAP)
+    # MALİYET HASSASİYET MATRİSİ (HEATMAP)
     st.markdown("##### 🌡️ Bütçe Hassasiyet Haritası (Ek Şok Senaryoları)")
     
     top_items = sorted([e for e in etkiler if e[2] > 0], key=lambda x: x[2], reverse=True)[:4]
@@ -1567,28 +1579,15 @@ with st.container(border=True):
         )
         st.plotly_chart(fig_heat, use_container_width=True, config={'displayModeBar': False})
 
-    st.dataframe(
-        df.style.format({
-            "Değişim": "%{:+.2f}",
-            "Ağırlık": "%{:.0f}",
-            "Etki": "%{:+.2f}"
-        })
-        .background_gradient(subset=["Ağırlık"], cmap="YlGn")
-        .highlight_max(subset=["Etki"], color="#D4EFDF"),
-        use_container_width=True
-    )
-
-    st.dataframe(
-        df.style.format({
-            "Değişim": "%{:+.2f}",
-            "Ağırlık": "%{:.0f}",
-            "Etki": "%{:+.2f}"
-        })
-        .background_gradient(subset=["Ağırlık"], cmap="YlGn")
-        .highlight_max(subset=["Etki"], color="#D4EFDF"),
-        use_container_width=True
-    )
-
+    # ============================================================================
+    # 📊 FİNANSAL ÖZET & DETAY TABLOSU
+    # ============================================================================
+    st.markdown("---")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Toplam Artış", f"%{zam:.2f}")
+    r2.metric("Fiyat Farkı", f"{tr_fmt(fark)} TL")
+    r3.metric("YENİ TUTAR", f"{tr_fmt(yeni)} TL", delta_color="normal")
+    
     st.dataframe(
         df.style.format({
             "Değişim": "%{:+.2f}",
