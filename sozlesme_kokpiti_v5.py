@@ -77,7 +77,7 @@ st.markdown("""
 
 # --- YARDIMCI FONKSİYONLAR ---
 
-WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
+WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "euro_enf", "abd_enf", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
 
 def ai_kapsam_analizi(kapsam_metni, api_key):
     if not api_key or not kapsam_metni.strip():
@@ -91,7 +91,7 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
         Aşağıda verilen İş Kapsamı / İhale Şartnamesi metnini analiz et ve bu işin maliyet yapısını oluşturan hammadde/girdi ağırlıklarını %100 toplam verecek şekilde dağıt.
 
         KULLANILABİLİR KALEMLER (Sadece bu anahtarları kullan):
-        "mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"
+        "mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "euro_enf", "abd_enf", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"
 
         İŞ KAPSAMI METNİ:
         "{kapsam_metni}"
@@ -112,44 +112,38 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
 @st.cache_data(ttl=3600)
 def get_global_inflation_change(api_key, series_id, target_start_date, target_end_date):
     if not api_key:
-        return 0.0
+        return 0.0, 0.0, 0.0
 
     try:
-        s_date = target_start_date.strftime("%Y-%m-%d")
-        e_date = target_end_date.strftime("%Y-%m-%d")
+        s_date = (target_start_date - timedelta(days=90)).strftime("%Y-%m-%d")
+        e_date = datetime.today().strftime("%Y-%m-%d")
         url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&observation_start={s_date}&observation_end={e_date}"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
             obs = res.json().get("observations", [])
             valid = []
             for o in obs:
-                if o["value"] != ".":
-                    valid.append(
-                        (
-                            pd.to_datetime(o["date"]),
-                            float(o["value"])
-                        )
-                    )
+                if o["value"] not in [None, ".", ""]:
+                    valid.append((pd.to_datetime(o["date"]), float(o["value"])))
 
-            df = pd.DataFrame(valid, columns=["Date","Value"]).set_index("Date")
+            if valid:
+                df = pd.DataFrame(valid, columns=["Date", "Value"]).set_index("Date")
 
-            past = df[df.index <= pd.Timestamp(target_start_date)]
-            latest = df[df.index <= pd.Timestamp(target_end_date)]
+                past = df[df.index <= pd.Timestamp(target_start_date)]
+                latest = df[df.index <= pd.Timestamp(target_end_date)]
 
-            if past.empty or latest.empty:
-                return 0.0,0.0,0.0
+                ilk = float(past.iloc[-1]["Value"]) if not past.empty else float(df.iloc[0]["Value"])
+                son = float(latest.iloc[-1]["Value"]) if not latest.empty else float(df.iloc[-1]["Value"])
 
-            ilk = float(past.iloc[-1]["Value"])
-            son = float(latest.iloc[-1]["Value"])
+                deg = ((son - ilk) / ilk) * 100 if ilk > 0 else 0.0
 
-            deg = ((son-ilk)/ilk)*100 if ilk>0 else 0
-
-            return round(ilk,2),round(son,2),round(deg,2)
+                return round(ilk, 2), round(son, 2), round(deg, 2)
 
     except:
         pass
 
-    return 0.0,0.0,0.0
+    return 0.0, 0.0, 0.0
+
 def get_fred_index_change(api_key, series_id, target_start_date):
     _, _, degisim = get_global_inflation_change(
         api_key,
@@ -158,6 +152,7 @@ def get_fred_index_change(api_key, series_id, target_start_date):
         datetime.today().date())
         
     return degisim
+
 def render_svg_logo():
     return """
     <svg width="100%" height="auto" viewBox="0 0 280 70" xmlns="http://www.w3.org/2000/svg">
@@ -217,7 +212,6 @@ def emtia_karti(col, baslik, key):
         st.markdown(f"<div style='text-align:right;'><span class='{renk}'>%{deg:+.2f}</span></div></div>", unsafe_allow_html=True)
         
     return deg
-
 
 # --- ALTIN GEÇMİŞİ EVDS MOTORU ---
 @st.cache_data(ttl=600)
@@ -286,7 +280,7 @@ def get_auto_weights(contract_type):
         "mix": 0, "tufe": 0, "ufe": 0, "hufe": 0,
         "iscilik": 0, "usd": 0, "eur": 0, "altin": 0,
         "benzin": 0, "dizel": 0, "brent": 0, "abd": 0,
-        "jet_fuel": 0,
+        "jet_fuel": 0, "euro_enf": 0, "abd_enf": 0,
         "bakir": 0, "alum": 0, "gaz": 0, "celik": 0, "demir": 0, "nikel": 0, "cinko": 0,
         "pamuk": 0, "bugday": 0, "kakao": 0, "plastik": 0, "propan": 0, "scrap_steel": 0,
         "scrap_alum": 0, "lityum": 0, "gumus": 0, "coal": 0, "eugas": 0, "naphtha": 0
@@ -640,9 +634,6 @@ with st.spinner("PNX Veritabanlarına Bağlanıyor..."):
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key, te_data, fred_key):
-
-   
-     
     data_dict = {}
 
     fx_map = {"USDTRY": "TRY=X", "EURTRY": "EURTRY=X", "EURUSD": "EURUSD=X"}
@@ -685,16 +676,16 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
 
     # --- KÜRESEL ENFLASYON VERİLERİ (FRED: Eurozone HICP & US CPI) ---
     euro_ilk, euro_son, euro_deg = get_global_inflation_change(
-    fred_key,
-    "CP0000EZ19M086NEST",
-    d_start,
-    d_end)
+        fred_key,
+        "CP0000EZ19M086NEST",
+        d_start,
+        d_end)
     
     abd_ilk, abd_son, abd_deg = get_global_inflation_change(
-    fred_key,
-    "CPIAUCSL",
-    d_start,
-    d_end)
+        fred_key,
+        "CPIAUCSL",
+        d_start,
+        d_end)
 
     data_dict["BRENT_PETROL"] = {"ilk": 0.0, "son": 0.0, "degisim": 0.0}
     try:
@@ -843,22 +834,15 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
     p_ilk, p_son = data_dict["EURUSD"]["ilk"], data_dict["EURUSD"]["son"]
     data_dict["EURUSD"]["degisim"] = ((p_son - p_ilk) / p_ilk * 100) if p_ilk > 0 else 0.0
 
-    data_dict["EURO_HICP"] = {
-    "ilk": euro_ilk,
-    "son": euro_son,
-    "degisim": euro_deg}
-    
-    data_dict["ABD_CPI"] = {
-    "ilk": abd_ilk,
-    "son": abd_son,
-    "degisim": abd_deg}
+    data_dict["EURO_HICP"] = {"ilk": euro_ilk, "son": euro_son, "degisim": euro_deg}
+    data_dict["ABD_CPI"] = {"ilk": abd_ilk, "son": abd_son, "degisim": abd_deg}
     
     return data_dict
 
-
 piyasa = piyasa_verisi_al_tekli(start_date, end_date, doviz_com_data, evds_gold_ilk, MY_API_KEY, te_data_live, FRED_API_KEY)
-euro_enf_val = piyasa["EURO_HICP"]["degisim"]
-abd_cpi_val = piyasa["ABD_CPI"]["degisim"]
+euro_enf_val = piyasa.get("EURO_HICP", {}).get("degisim", 0.0)
+abd_cpi_val = piyasa.get("ABD_CPI", {}).get("degisim", 0.0)
+
 # ============================================================================
 # GÖSTERGE PANELİ (DASHBOARD)
 # ============================================================================
@@ -931,7 +915,7 @@ with st.container(border=True):
 
     kutu(e4, "ABD 10Y", "ABD_TAHVIL", "🇺🇸")
 
-    st.markdown("### 🌍 Küresel Enflasyon")
+    st.markdown("### 🌍 Küresel Enflasyon Endeksleri")
     i1, i2, _, _ = st.columns(4)
     d_euro_enf = kutu(i1, "Avrupa Enf. (HICP)", "EURO_HICP", "🇪🇺")
     d_abd_cpi  = kutu(i2, "ABD CPI", "ABD_CPI", "🇺🇸")
@@ -1252,8 +1236,8 @@ with st.container(border=True):
     w_jet_fuel = w28.number_input("Jet A-1 %", key="w_jet_fuel")
 
     w29, w30, _, _ = st.columns(4)
-    w_euro_enf = w29.number_input("Avrupa Enf. (HICP) %", value=0.0, key="w_euro_enf")
-    w_abd_enf_new = w30.number_input("ABD CPI Enf. %", value=0.0, key="w_abd_enf")
+    w_euro_enf = w29.number_input("Avrupa Enf. (HICP) %", key="w_euro_enf")
+    w_abd_enf_new = w30.number_input("ABD CPI Enf. %", key="w_abd_enf")
 
     toplam = w_mix_oran+w_tufe+w_ufe+w_hufe+w_iscilik+w_usd+w_eur+w_altin+w_benzin+w_dizel+w_brent+w_abd+w_bakir+w_alum+w_gaz+w_celik+w_scrap_steel+w_scrap_alum+w_propan+w_lityum+w_demir+w_nikel+w_cinko+w_pamuk+w_bugday+w_kakao+w_plastik+w_jet_fuel+w_euro_enf+w_abd_enf_new
     kalan = 100.0 - toplam
@@ -1335,7 +1319,7 @@ with st.container(border=True):
                 )
             elif risk_turu == "FIRSAT_DUSUS":
                 st.info(
-                    f"💡 **{ad} Maliyet Fırsatı (%{deg:+.2f}):** Sepetinizde **%{agr:.0f}** ağırlığa sahip bu kalemde piyasa gevşemesi var. "
+                    f"💡 **{ad} Maliyet FIRSATI (%{deg:+.2f}):** Sepetinizde **%{agr:.0f}** ağırlığa sahip bu kalemde piyasa gevşemesi var. "
                     f"Tedarikçiden ek indirim/revizyon talep etmek için pazarlık masasında koz olarak kullanılabilir."
                 )
     
@@ -1508,6 +1492,8 @@ with st.container(border=True):
                         - Dolar (USD): %{piyasa['USDTRY']['degisim']:.2f}
                         - Euro (EUR): %{piyasa['EURTRY']['degisim']:.2f}
                         - Enflasyon (TÜFE): %{val_tufe:.2f}
+                        - Avrupa Enf. (HICP): %{euro_enf_val:.2f}
+                        - ABD CPI Enf.: %{abd_cpi_val:.2f}
                         - İşçilik: %{iscilik:.2f}
                         - Akaryakıt: %{d_dizel:.2f}
                         - Jet A-1 Yakıt: %{piyasa['JET_FUEL']['degisim']:.2f}
