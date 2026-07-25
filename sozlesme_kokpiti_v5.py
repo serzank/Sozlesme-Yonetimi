@@ -35,6 +35,12 @@ try:
 except ImportError:
     HAS_XLSX = False
 
+try:
+    import pypdf
+    HAS_PYPDF = True
+except ImportError:
+    HAS_PYPDF = False
+
 # SSL Hatalarını Sustur
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -84,6 +90,21 @@ st.markdown("""
 # --- YARDIMCI FONKSİYONLAR ---
 
 WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "euro_enf", "abd_enf", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
+
+def extract_text_from_pdf(uploaded_file):
+    if not HAS_PYPDF or uploaded_file is None:
+        return ""
+    try:
+        reader = pypdf.PdfReader(uploaded_file)
+        text = ""
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+        return text
+    except Exception as e:
+        st.error(f"PDF okuma hatası: {str(e)}")
+        return ""
 
 def clean_str(text):
     if not text:
@@ -671,9 +692,9 @@ with st.sidebar:
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
     )
     
-    tutar_giris = st.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
-    try: sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
-    except: sozlesme_tutari = 0.0
+    c_tutar1, c_tutar2 = st.sidebar.columns([2, 1])
+    tutar_giris = c_tutar1.text_input("Sözleşme Tutarı (TL):", value="1.000.000,00")
+    sozlesme_periyodu = c_tutar2.selectbox("Periyot", ["Yıllık", "Aylık"])
 
 # ============================================================================
 # SEPET AĞIRLIKLARI STATE YÖNETİMİ
@@ -1286,10 +1307,45 @@ with st.container(border=True):
     st.markdown("---")
     st.markdown("#### ⚖️ Sepet Ağırlıkları")
 
-    with st.expander("✨ Yapay Zeka ile İş Kapsamından / Şartnameden Otomatik Sepet Oluştur", expanded=False):
-        kapsam_input = st.text_area("İhale Şartnamesi, Metraj / BoQ Açıklaması veya İş Kapsamını Yapıştırın:", 
-                                   placeholder="Örn: Lounge ince işler kapsamında ahşap kaplamalar, özel imalat mobilya, lokal işçilik, ithal aydınlatma ve lojistik giderleri dahildir...",
-                                   height=100)
+    with st.expander("✨ Yapay Zeka ile Şartname / PDF Okuyucu (Drag & Drop)", expanded=False):
+        c_up1, c_up2 = st.columns([1, 1])
+        
+        with c_up1:
+            uploaded_pdf = st.file_uploader("📄 Şartname veya Sözleşme PDF'i Sürükleyin", type=["pdf"], help="Tedarikçiden gelen teklif, şartname veya sözleşme PDF'ini yükleyin.")
+            
+        with c_up2:
+            kapsam_input = st.text_area(
+                "Veya İş Kapsamını / Metraj Açıklamasını Metin Olarak Yapıştırın:", 
+                placeholder="Örn: Lounge ince işler kapsamında ahşap kaplamalar, özel imalat mobilya, lokal işçilik, ithal aydınlatma ve lojistik giderleri dahildir...",
+                height=100
+            )
+        
+        if st.button("🚀 Şartnameyi Analiz Et ve Sepeti Doldur", use_container_width=True):
+            extracted_text = ""
+            if uploaded_pdf is not None:
+                with st.spinner("PDF dokümanı okunuyor ve OCR işlemi yapılıyor..."):
+                    extracted_text = extract_text_from_pdf(uploaded_pdf)
+            
+            # Eğer PDF yüklendiyse öncelik PDF metnindedir, yoksa metin alanına bakılır
+            final_text_to_analyze = extracted_text if extracted_text.strip() else kapsam_input
+            
+            if not final_text_to_analyze.strip():
+                st.warning("Lütfen bir PDF dosyası yükleyin veya metin alanına iş kapsamını girin.")
+            else:
+                with st.spinner("Jarvis (Gemini 2.5) şartname maddelerini tarıyor ve maliyet kırılımı çıkarıyor..."):
+                    ai_weights = ai_kapsam_analizi(final_text_to_analyze, GEMINI_API_KEY)
+                    if ai_weights:
+                        for k in WEIGHT_KEYS:
+                            st.session_state[f"w_{k}"] = 0.0
+                        for key, val in ai_weights.items():
+                            clean_k = key.lower().replace("ğ", "g")
+                            if clean_k in WEIGHT_KEYS:
+                                st.session_state[f"w_{clean_k}"] = float(val)
+                        
+                        st.success("✅ Şartname / PDF başarıyla analiz edildi ve sepet ağırlıkları güncellendi!")
+                        if extracted_text:
+                            st.info(f"ℹ️ Okunan PDF Boyutu: {len(extracted_text)} karakter. Şartname içindeki maliyet girdileri tespit edildi.")
+                        st.rerun()
         
         if st.button("🚀 Kapsamı Analiz Et ve Ağırlıkları Doldur"):
             with st.spinner("Jarvis şartnameyi analiz ediyor ve maliyet kırılımı çıkarıyor..."):
@@ -1480,6 +1536,9 @@ with st.container(border=True):
 # ============================================================================
 # MONTE CARLO RISK & BÜTÇE SIMÜLASYONU
 # ============================================================================
+# ============================================================================
+# MONTE CARLO RISK & BÜTÇE SIMÜLASYONU (PERİYOT UYUMLU)
+# ============================================================================
 st.markdown("---")
 with st.container(border=True):
     c_m1, c_m2 = st.columns([3, 1])
@@ -1488,14 +1547,19 @@ with st.container(border=True):
     with c_m2: 
         st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*1.000 Piyasa Şoku Simüle Edilmiştir.</div>", unsafe_allow_html=True)
     
+    # --- PERİYOT BAZLI TABAN BÜTÇE AYARLAMASI ---
+    # Eğer kullanıcı sol menüden "Yıllık" seçtiyse aylık bazı 12'ye bölerek hesaplıyoruz
+    is_yillik = (sozlesme_periyodu == "Yıllık") if 'sozlesme_periyodu' in locals() or 'sozlesme_periyodu' in globals() else False
+    
+    base_start_val = (yeni / 12) if is_yillik else yeni
+
     # --- MONTE CARLO SIMÜLASYON MOTORU ---
     def run_monte_carlo(start_val, base_monthly_rate, vol_rate, months=12, sims=1000):
-        np.random.seed(42) # Tekrarlanabilir ve kararlı sonuçlar için
+        np.random.seed(42) # Kararlı sonuçlar için
         simulation_matrix = np.zeros((sims, months + 1))
         simulation_matrix[:, 0] = start_val
         
         for t in range(1, months + 1):
-            # Normal dağılımdan rastgele piyasa şokları üret
             shocks = np.random.normal(loc=base_monthly_rate, scale=vol_rate, size=sims)
             simulation_matrix[:, t] = simulation_matrix[:, t-1] * (1 + shocks / 100)
             
@@ -1505,36 +1569,56 @@ with st.container(border=True):
     with c_sim1:
         base_monthly = st.number_input("Beklenen Aylık Ortalama Artış Trendi (%)", value=round((zam/12) if zam > 0 else 2.5, 2), step=0.1, key="mc_base")
     with c_sim2:
-        volatility = st.number_input("Piyasa Volatilitesi / Oynaklık Sapması (%)", value=1.8, step=0.1, key="mc_vol", help="Yüksek volatiliteli emtialar için sapma oranını artırabilirsiniz.")
+        volatility = st.number_input("Piyasa Volatilitesi / Oynaklık Sapması (%)", value=1.8, step=0.1, key="mc_vol", help="Yüksek oynaklıklı emtialar için sapmayı artırabilirsiniz.")
 
     proj_months = 12
     dates_str = [(date.today() + relativedelta(months=i)).strftime("%Y-%m") for i in range(1, proj_months + 1)]
     chart_dates = [datetime.today().strftime("%Y-%m")] + dates_str
 
     # Simülasyonu Çalıştır (1000 Senaryo)
-    sim_matrix = run_monte_carlo(yeni, base_monthly, volatility, proj_months, 1000)
+    sim_matrix = run_monte_carlo(base_start_val, base_monthly, volatility, proj_months, 1000)
     
-    # Yıl Sonu (12. Ay) Yüzdelik Dilimler (Percentiles)
-    final_values = sim_matrix[:, -1]
-    p10_val = np.percentile(final_values, 10)  # İyimser (%10)
-    p50_val = np.percentile(final_values, 50)  # Medyan / En Olası (%50)
-    p95_val = np.percentile(final_values, 95)  # Kötümser / Stres Testi (VaR %95)
+    # Kümülatif (Yıl Sonu Toplam) Hesaplamaları
+    cum_matrix = np.cumsum(sim_matrix[:, 1:], axis=1) # 12 ayın toplamı
+    
+    if is_yillik:
+        # Yıllık seçimde odak noktamız kümülatif yıllık bütçedir
+        final_p10 = np.percentile(cum_matrix[:, -1], 10)
+        final_p50 = np.percentile(cum_matrix[:, -1], 50)
+        final_p95 = np.percentile(cum_matrix[:, -1], 95)
+        
+        lbl_p10 = "İyimser Yıllık Bütçe (P10)"
+        lbl_p50 = "En Olası Yıllık Bütçe (P50 Medyan)"
+        lbl_p95 = "Maksimum Riskli Yıllık Bütçe (P95 VaR)"
+        
+        sub_p10 = f"Aylık Ort: {tr_fmt(final_p10/12)} TL"
+        sub_p50 = f"Aylık Ort: {tr_fmt(final_p50/12)} TL"
+        sub_p95 = f"Risk Farkı: +{tr_fmt(final_p95 - final_p50)} TL"
+    else:
+        # Aylık seçimde odak noktamız 12. ay faturası ve kümülatif dip toplamdır
+        final_p10 = np.percentile(sim_matrix[:, -1], 10)
+        final_p50 = np.percentile(sim_matrix[:, -1], 50)
+        final_p95 = np.percentile(sim_matrix[:, -1], 95)
+        
+        cum_p50 = np.percentile(cum_matrix[:, -1], 50)
+        
+        lbl_p10 = "İyimser 12. Ay Faturası (P10)"
+        lbl_p50 = "En Olası 12. Ay Faturası (P50 Medyan)"
+        lbl_p95 = "Maksimum Risk (P95 VaR)"
+        
+        sub_p10 = "Şanslı Piyasa"
+        sub_p50 = f"Kümülatif Yıl Sonu: {tr_fmt(cum_p50)} TL"
+        sub_p95 = f"Risk Farkı: +{tr_fmt(final_p95 - final_p50)} TL"
 
-    # Kümülatif Bütçe Yükü Hesaplama
-    cum_matrix = np.cumsum(sim_matrix[:, 1:], axis=1)
-    cum_p50 = np.percentile(cum_matrix[:, -1], 50)
-    cum_p95 = np.percentile(cum_matrix[:, -1], 95)
-
-    st.markdown("##### 📊 12 Aylık Olasılıklı Bütçe Risk Karnesi (Percentile Matrix)")
+    st.markdown("##### 📊 Olasılıklı Bütçe Risk Karnesi (Percentile Matrix)")
     mc_kpi1, mc_kpi2, mc_kpi3 = st.columns(3)
-    mc_kpi1.metric("İyimser Senaryo (P10)", f"{tr_fmt(p10_val)} TL", delta="Şanslı Piyasa", delta_color="normal")
-    mc_kpi2.metric("En Olası Bütçe (P50 Medyan)", f"{tr_fmt(p50_val)} TL", delta=f"Kümülatif Yıl Sonu: {tr_fmt(cum_p50)} TL", delta_color="off")
-    mc_kpi3.metric("Maksimum Risk (P95 VaR)", f"{tr_fmt(p95_val)} TL", delta=f"Risk Farkı: +{tr_fmt(p95_val - p50_val)} TL", delta_color="inverse")
+    mc_kpi1.metric(lbl_p10, f"{tr_fmt(final_p10)} TL", delta=sub_p10, delta_color="normal")
+    mc_kpi2.metric(lbl_p50, f"{tr_fmt(final_p50)} TL", delta=sub_p50, delta_color="off")
+    mc_kpi3.metric(lbl_p95, f"{tr_fmt(final_p95)} TL", delta=sub_p95, delta_color="inverse")
 
     tab_fan, tab_dist = st.tabs(["📈 Monte Carlo Yelpaze Grafiği (Fan Chart)", "🔔 Bütçe Risk Dağılımı (Çan Eğrisi)"])
 
     with tab_fan:
-        # Zaman Serisi Yüzdelikleri
         p10_series = np.percentile(sim_matrix, 10, axis=0)
         p25_series = np.percentile(sim_matrix, 25, axis=0)
         p50_series = np.percentile(sim_matrix, 50, axis=0)
@@ -1543,7 +1627,7 @@ with st.container(border=True):
 
         fig_fan = go.Figure()
 
-        # P95 - P10 Aralığı (Geniş Band - Açık Mavi)
+        # P95 - P10 Aralığı
         fig_fan.add_trace(go.Scatter(
             x=chart_dates + chart_dates[::-1],
             y=np.concatenate([p95_series, p10_series[::-1]]),
@@ -1554,7 +1638,7 @@ with st.container(border=True):
             name="%90 Güven Aralığı (P10-P95)"
         ))
 
-        # P75 - P25 Aralığı (Dar Band - Koyu Mavi)
+        # P75 - P25 Aralığı
         fig_fan.add_trace(go.Scatter(
             x=chart_dates + chart_dates[::-1],
             y=np.concatenate([p75_series, p25_series[::-1]]),
@@ -1565,14 +1649,14 @@ with st.container(border=True):
             name="%50 Güven Aralığı (P25-P75)"
         ))
 
-        # Medyan / En Olası Çizgi (P50)
+        # Medyan Çizgi
         fig_fan.add_trace(go.Scatter(
             x=chart_dates,
             y=p50_series,
             mode='lines+markers',
             line=dict(color='#1E3D59', width=3),
             name="En Olası Trend (P50 Medyan)",
-            hovertemplate="<b>Tarih:</b> %{x}<br><b>Beklenen Tutar:</b> %{y:,.2f} TL<extra></extra>"
+            hovertemplate="<b>Tarih:</b> %{x}<br><b>Aylık Tutar:</b> %{y:,.2f} TL<extra></extra>"
         ))
 
         fig_fan.update_layout(
@@ -1588,23 +1672,26 @@ with st.container(border=True):
         st.plotly_chart(fig_fan, use_container_width=True)
 
     with tab_dist:
-        # Çan Eğrisi / Histogram Grafiği
+        # Çan Eğrisi Dağılımı (Yıllık ise kümülatif dağılım, Aylık ise 12. ay dağılımı gösterilir)
+        dist_data = cum_matrix[:, -1] if is_yillik else sim_matrix[:, -1]
+        
         fig_dist = go.Figure()
         fig_dist.add_trace(go.Histogram(
-            x=final_values,
+            x=dist_data,
             nbinsx=40,
             marker_color='#2980B9',
             opacity=0.75,
             name="Simülasyon Sıklığı"
         ))
 
-        # Dikey Çizgiler (P50 ve P95)
-        fig_dist.add_vline(x=p50_val, line_width=3, line_dash="dash", line_color="#27AE60", annotation_text=f"Medyan (P50): {tr_fmt(p50_val)} TL")
-        fig_dist.add_vline(x=p95_val, line_width=3, line_dash="dot", line_color="#C0392B", annotation_text=f"Maksimum Risk (P95): {tr_fmt(p95_val)} TL")
+        fig_dist.add_vline(x=final_p50, line_width=3, line_dash="dash", line_color="#27AE60", annotation_text=f"Medyan (P50): {tr_fmt(final_p50)} TL")
+        fig_dist.add_vline(x=final_p95, line_width=3, line_dash="dot", line_color="#C0392B", annotation_text=f"Maksimum Risk (P95): {tr_fmt(final_p95)} TL")
+
+        dist_title = "<b>Yıllık Toplam Bütçe Dağılım Çan Eğrisi</b>" if is_yillik else "<b>12. Ay Sonu Aylık Fatura Dağılım Çan Eğrisi</b>"
 
         fig_dist.update_layout(
-            title="<b>12. Ay Sonu Bütçe Dağılım Çan Eğrisi (Gaussian Risk Distribution)</b>",
-            xaxis_title="Tahmini Yıl Sonu Aylık Fatura Tutarı (TL)",
+            title=dist_title,
+            xaxis_title="Tahmini Tutarlar (TL)",
             yaxis_title="Senaryo Frekansı (1.000 Üzerinden)",
             template="plotly_white",
             height=430,
