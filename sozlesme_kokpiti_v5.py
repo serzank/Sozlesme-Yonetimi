@@ -1478,100 +1478,140 @@ with st.container(border=True):
             st.download_button("📄 Executive A4 PDF Raporu İndir", data=pdf_bytes, file_name=f"Executive_Eskalasyon_Raporu_{date.today().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
 
 # ============================================================================
-# JARVIS PROJEKSİYONU
+# MONTE CARLO RISK & BÜTÇE SIMÜLASYONU
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
-    c_p1, c_p2 = st.columns([3,1])
-    with c_p1: st.header("🔮 Jarvis Gelecek Projeksiyonu & Senaryo Analizi")
-    with c_p2: st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*Tahminler bileşik faiz etkisiyle hesaplanır.</div>", unsafe_allow_html=True)
+    c_m1, c_m2 = st.columns([3, 1])
+    with c_m1: 
+        st.header("🎲 Monte Carlo Olasılıklı Bütçe Risk Simülasyonu")
+    with c_m2: 
+        st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*1.000 Piyasa Şoku Simüle Edilmiştir.</div>", unsafe_allow_html=True)
     
+    # --- MONTE CARLO SIMÜLASYON MOTORU ---
+    def run_monte_carlo(start_val, base_monthly_rate, vol_rate, months=12, sims=1000):
+        np.random.seed(42) # Tekrarlanabilir ve kararlı sonuçlar için
+        simulation_matrix = np.zeros((sims, months + 1))
+        simulation_matrix[:, 0] = start_val
+        
+        for t in range(1, months + 1):
+            # Normal dağılımdan rastgele piyasa şokları üret
+            shocks = np.random.normal(loc=base_monthly_rate, scale=vol_rate, size=sims)
+            simulation_matrix[:, t] = simulation_matrix[:, t-1] * (1 + shocks / 100)
+            
+        return simulation_matrix
+
+    c_sim1, c_sim2 = st.columns(2)
+    with c_sim1:
+        base_monthly = st.number_input("Beklenen Aylık Ortalama Artış Trendi (%)", value=round((zam/12) if zam > 0 else 2.5, 2), step=0.1, key="mc_base")
+    with c_sim2:
+        volatility = st.number_input("Piyasa Volatilitesi / Oynaklık Sapması (%)", value=1.8, step=0.1, key="mc_vol", help="Yüksek volatiliteli emtialar için sapma oranını artırabilirsiniz.")
+
     proj_months = 12
-    dates = [date.today() + relativedelta(months=i) for i in range(1, proj_months + 1)]
-    dates_str = [d.strftime("%Y-%m") for d in dates]
+    dates_str = [(date.today() + relativedelta(months=i)).strftime("%Y-%m") for i in range(1, proj_months + 1)]
+    chart_dates = [datetime.today().strftime("%Y-%m")] + dates_str
 
-    base_monthly_inc = (zam / 12) if zam > 5 else 2.5
+    # Simülasyonu Çalıştır (1000 Senaryo)
+    sim_matrix = run_monte_carlo(yeni, base_monthly, volatility, proj_months, 1000)
     
-    col_set1, col_set2, col_set3 = st.columns(3)
-    with col_set1:
-        st.markdown("**📉 İyimser Senaryo**")
-        rate_opt = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc * 0.7, step=0.1, key="rate_opt")
-    with col_set2:
-        st.markdown("**📊 Gerçekçi Senaryo (Jarvis)**")
-        rate_base = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc, step=0.1, key="rate_base")
-    with col_set3:
-        st.markdown("**📈 Kötümser Senaryo**")
-        rate_pes = st.number_input("Aylık Artış Beklentisi (%)", value=base_monthly_inc * 1.5, step=0.1, key="rate_pes")
+    # Yıl Sonu (12. Ay) Yüzdelik Dilimler (Percentiles)
+    final_values = sim_matrix[:, -1]
+    p10_val = np.percentile(final_values, 10)  # İyimser (%10)
+    p50_val = np.percentile(final_values, 50)  # Medyan / En Olası (%50)
+    p95_val = np.percentile(final_values, 95)  # Kötümser / Stres Testi (VaR %95)
 
-    def calculate_projection(start_val, monthly_rate, months):
-        values = []
-        curr = start_val
-        for _ in range(months):
-            curr = curr * (1 + monthly_rate/100)
-            values.append(curr)
-        return values
+    # Kümülatif Bütçe Yükü Hesaplama
+    cum_matrix = np.cumsum(sim_matrix[:, 1:], axis=1)
+    cum_p50 = np.percentile(cum_matrix[:, -1], 50)
+    cum_p95 = np.percentile(cum_matrix[:, -1], 95)
 
-    vals_opt = calculate_projection(yeni, rate_opt, proj_months)
-    vals_base = calculate_projection(yeni, rate_base, proj_months)
-    vals_pes = calculate_projection(yeni, rate_pes, proj_months)
-    
-    total_opt = sum(vals_opt)
-    total_base = sum(vals_base)
-    total_pes = sum(vals_pes)
+    st.markdown("##### 📊 12 Aylık Olasılıklı Bütçe Risk Karnesi (Percentile Matrix)")
+    mc_kpi1, mc_kpi2, mc_kpi3 = st.columns(3)
+    mc_kpi1.metric("İyimser Senaryo (P10)", f"{tr_fmt(p10_val)} TL", delta="Şanslı Piyasa", delta_color="normal")
+    mc_kpi2.metric("En Olası Bütçe (P50 Medyan)", f"{tr_fmt(p50_val)} TL", delta=f"Kümülatif Yıl Sonu: {tr_fmt(cum_p50)} TL", delta_color="off")
+    mc_kpi3.metric("Maksimum Risk (P95 VaR)", f"{tr_fmt(p95_val)} TL", delta=f"Risk Farkı: +{tr_fmt(p95_val - p50_val)} TL", delta_color="inverse")
 
-    st.markdown("##### 🗓️ 12 Aylık Toplam Tahmini Bütçe")
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("İyimser Toplam", f"{tr_fmt(total_opt)} TL", delta=f"Ort. Aylık: {tr_fmt(total_opt/12)}")
-    kpi2.metric("Gerçekçi Toplam", f"{tr_fmt(total_base)} TL", delta=f"Ort. Aylık: {tr_fmt(total_base/12)}", delta_color="off")
-    kpi3.metric("Kötümser Toplam", f"{tr_fmt(total_pes)} TL", delta=f"Risk Farkı: {tr_fmt(total_pes - total_base)}", delta_color="inverse")
+    tab_fan, tab_dist = st.tabs(["📈 Monte Carlo Yelpaze Grafiği (Fan Chart)", "🔔 Bütçe Risk Dağılımı (Çan Eğrisi)"])
 
-    tab_line, tab_bar = st.tabs(["📈 Aylık Trend Analizi", "📊 Kümülatif Bütçe Yükü"])
+    with tab_fan:
+        # Zaman Serisi Yüzdelikleri
+        p10_series = np.percentile(sim_matrix, 10, axis=0)
+        p25_series = np.percentile(sim_matrix, 25, axis=0)
+        p50_series = np.percentile(sim_matrix, 50, axis=0)
+        p75_series = np.percentile(sim_matrix, 75, axis=0)
+        p95_series = np.percentile(sim_matrix, 95, axis=0)
 
-    with tab_line:
-        if HAS_MATPLOTLIB:
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(dates_str, vals_pes, color='#C0392B', linestyle='--', marker='o', linewidth=2, label=f'Kötümser (%{rate_pes:.1f}/ay)')
-            ax.plot(dates_str, vals_base, color='#2980B9', marker='s', linewidth=3, label=f'Gerçekçi (%{rate_base:.1f}/ay)')
-            ax.plot(dates_str, vals_opt, color='#27AE60', linestyle='-.', marker='^', linewidth=2, label=f'İyimser (%{rate_opt:.1f}/ay)')
-            ax.fill_between(dates_str, vals_opt, vals_pes, color='gray', alpha=0.1)
-            ax.set_title(f"Gelecek 12 Ay Fiyat Projeksiyonu (Başlangıç: {tr_fmt(yeni)} TL)", fontsize=12)
-            ax.set_ylabel("Aylık Fatura Tutarı (TL)")
-            ax.legend()
-            ax.grid(True, alpha=0.3, linestyle='--')
-            plt.xticks(rotation=45)
-            
-            for i, val in enumerate([vals_base[0], vals_base[-1]]):
-                idx = 0 if i==0 else -1
-                ax.annotate(f"{tr_fmt(val)}", (dates_str[idx], vals_base[idx]), xytext=(0,10), textcoords='offset points', ha='center', fontsize=9, fontweight='bold', color='#2980B9')
+        fig_fan = go.Figure()
 
-            st.pyplot(fig)
-        else:
-            st.line_chart(pd.DataFrame({"İyimser": vals_opt, "Gerçekçi": vals_base, "Kötümser": vals_pes}, index=dates_str))
+        # P95 - P10 Aralığı (Geniş Band - Açık Mavi)
+        fig_fan.add_trace(go.Scatter(
+            x=chart_dates + chart_dates[::-1],
+            y=np.concatenate([p95_series, p10_series[::-1]]),
+            fill='toself',
+            fillcolor='rgba(41, 128, 185, 0.15)',
+            line=dict(color='rgba(255,255,255,0)'),
+            hoverinfo="skip",
+            name="%90 Güven Aralığı (P10-P95)"
+        ))
 
-    with tab_bar:
-        if HAS_MATPLOTLIB:
-            fig2, ax2 = plt.subplots(figsize=(10, 5))
-            x = np.arange(len(dates_str))
-            width = 0.25
-            
-            cum_opt = np.cumsum(vals_opt)
-            cum_base = np.cumsum(vals_base)
-            cum_pes = np.cumsum(vals_pes)
-            
-            ax2.bar(x - width, cum_opt, width, label='İyimser', color='#A9DFBF')
-            ax2.bar(x, cum_base, width, label='Gerçekçi', color='#5DADE2')
-            ax2.bar(x + width, cum_pes, width, label='Kötümser', color='#E6B0AA')
-            
-            ax2.set_ylabel('Kümülatif Toplam (TL)')
-            ax2.set_title('Yıl Sonu Toplam Maliyet Birikimi')
-            ax2.set_xticks(x)
-            ax2.set_xticklabels(dates_str, rotation=45)
-            ax2.legend()
-            ax2.grid(axis='y', alpha=0.3)
-            
-            st.pyplot(fig2)
-        else:
-            st.info("Kümülatif grafik için matplotlib gereklidir.")
+        # P75 - P25 Aralığı (Dar Band - Koyu Mavi)
+        fig_fan.add_trace(go.Scatter(
+            x=chart_dates + chart_dates[::-1],
+            y=np.concatenate([p75_series, p25_series[::-1]]),
+            fill='toself',
+            fillcolor='rgba(41, 128, 185, 0.3)',
+            line=dict(color='rgba(255,255,255,0)'),
+            hoverinfo="skip",
+            name="%50 Güven Aralığı (P25-P75)"
+        ))
+
+        # Medyan / En Olası Çizgi (P50)
+        fig_fan.add_trace(go.Scatter(
+            x=chart_dates,
+            y=p50_series,
+            mode='lines+markers',
+            line=dict(color='#1E3D59', width=3),
+            name="En Olası Trend (P50 Medyan)",
+            hovertemplate="<b>Tarih:</b> %{x}<br><b>Beklenen Tutar:</b> %{y:,.2f} TL<extra></extra>"
+        ))
+
+        fig_fan.update_layout(
+            title="<b>1.000 Simülasyonlu Bütçe Yelpaze Grafiği (Monte Carlo Fan Chart)</b>",
+            xaxis_title="Dönem",
+            yaxis_title="Aylık Bütçe Yükü (TL)",
+            template="plotly_white",
+            height=430,
+            hovermode="x unified",
+            margin=dict(l=40, r=40, t=50, b=40)
+        )
+
+        st.plotly_chart(fig_fan, use_container_width=True)
+
+    with tab_dist:
+        # Çan Eğrisi / Histogram Grafiği
+        fig_dist = go.Figure()
+        fig_dist.add_trace(go.Histogram(
+            x=final_values,
+            nbinsx=40,
+            marker_color='#2980B9',
+            opacity=0.75,
+            name="Simülasyon Sıklığı"
+        ))
+
+        # Dikey Çizgiler (P50 ve P95)
+        fig_dist.add_vline(x=p50_val, line_width=3, line_dash="dash", line_color="#27AE60", annotation_text=f"Medyan (P50): {tr_fmt(p50_val)} TL")
+        fig_dist.add_vline(x=p95_val, line_width=3, line_dash="dot", line_color="#C0392B", annotation_text=f"Maksimum Risk (P95): {tr_fmt(p95_val)} TL")
+
+        fig_dist.update_layout(
+            title="<b>12. Ay Sonu Bütçe Dağılım Çan Eğrisi (Gaussian Risk Distribution)</b>",
+            xaxis_title="Tahmini Yıl Sonu Aylık Fatura Tutarı (TL)",
+            yaxis_title="Senaryo Frekansı (1.000 Üzerinden)",
+            template="plotly_white",
+            height=430,
+            margin=dict(l=40, r=40, t=50, b=40)
+        )
+
+        st.plotly_chart(fig_dist, use_container_width=True)
 
 # ============================================================================
 # JARVIS AI & YORUM MODÜLÜ
