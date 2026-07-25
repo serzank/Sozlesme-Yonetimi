@@ -16,6 +16,12 @@ import re
 import plotly.graph_objects as go
 import json
 
+try:
+    from fpdf import FPDF
+    HAS_FPDF = True
+except ImportError:
+    HAS_FPDF = False
+
 # --- KÜTÜPHANE KONTROLÜ ---
 try:
     import matplotlib.pyplot as plt
@@ -78,6 +84,94 @@ st.markdown("""
 # --- YARDIMCI FONKSİYONLAR ---
 
 WEIGHT_KEYS = ["mix", "tufe", "ufe", "hufe", "iscilik", "usd", "eur", "altin", "benzin", "dizel", "brent", "jet_fuel", "abd", "euro_enf", "abd_enf", "bakir", "alum", "gaz", "celik", "scrap_steel", "scrap_alum", "propan", "lityum", "demir", "nikel", "cinko", "pamuk", "bugday", "kakao", "plastik"]
+
+def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni, etkiler, jarvis_comment, start_date, end_date):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Font Ayarları
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(30, 61, 89) # Kurumsal Lacivert (#1E3D59)
+    
+    # Başlık
+    pdf.cell(0, 10, "COST NEXUS | EXECUTIVE PROCUREMENT REPORT", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 5, f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Dönem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}", ln=True, align="C")
+    pdf.ln(5)
+    
+    # Çizgi
+    pdf.set_draw_color(39, 174, 96) # Yeşil Çizgi (#27AE60)
+    pdf.set_linewidth(1)
+    pdf.line(10, 30, 200, 30)
+    pdf.ln(5)
+    
+    # Finansal Özet Tablosu
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(30, 61, 89)
+    pdf.cell(0, 8, "1. SOZLESME VE HAKEDIS OZETI", ln=True)
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_fill_color(248, 249, 250)
+    pdf.cell(60, 8, " Sozlesme Turu:", 1, 0, "L", fill=True)
+    pdf.cell(130, 8, f" {sozlesme_tipi}", 1, 1, "L")
+    pdf.cell(60, 8, " Baslangic Tutari:", 1, 0, "L", fill=True)
+    pdf.cell(130, 8, f" {tr_fmt(sozlesme_tutari)} TL", 1, 1, "L")
+    pdf.cell(60, 8, " Toplam Eskalasyon Orani:", 1, 0, "L", fill=True)
+    pdf.cell(130, 8, f" %{zam:.2f}", 1, 1, "L")
+    pdf.cell(60, 8, " Fiyat Farkı Yuksekligi:", 1, 0, "L", fill=True)
+    pdf.cell(130, 8, f" {tr_fmt(fark)} TL", 1, 1, "L")
+    pdf.cell(60, 8, " GUNCEL HAKEDIS TUTARI:", 1, 0, "L", fill=True)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(130, 8, f" {tr_fmt(yeni)} TL", 1, 1, "L")
+    pdf.ln(5)
+    
+    # Aktif Sepet Detayları
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "2. AKTIF SEPET VE MALIYET ETKI DETAYLARI", ln=True)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(30, 61, 89)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(70, 7, " Girdi Kalemi", 1, 0, "L", fill=True)
+    pdf.cell(40, 7, " Degisim (%)", 1, 0, "C", fill=True)
+    pdf.cell(40, 7, " Sepet Agirligi (%)", 1, 0, "C", fill=True)
+    pdf.cell(40, 7, " Net Etki (%)", 1, 1, "C", fill=True)
+    
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(0, 0, 0)
+    for ad, deg, agr in etkiler:
+        if agr > 0:
+            pdf.cell(70, 6, f" {ad}", 1, 0, "L")
+            pdf.cell(40, 6, f" %{deg:+.2f}", 1, 0, "C")
+            pdf.cell(40, 6, f" %{agr:.0f}", 1, 0, "C")
+            pdf.cell(40, 6, f" %{(deg*agr)/100:+.2f}", 1, 1, "C")
+    pdf.ln(5)
+    
+    # Jarvis Yorumu
+    if jarvis_comment:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(30, 61, 89)
+        pdf.cell(0, 8, "3. JARVIS AI FINANSAL EVALUATION & RISK DEGERLENDIRMESI", ln=True)
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(50, 50, 50)
+        # Türkçe karakter temizliği (FPDF standart font uyumu için)
+        clean_comment = jarvis_comment.replace("İ", "I").replace("ı", "i").replace("Ğ", "G").replace("ğ", "g").replace("Ü", "U").replace("ü", "u").replace("Ş", "S").replace("ş", "s").replace("Ö", "O").replace("ö", "o").replace("Ç", "C").replace("ç", "c")
+        pdf.multi_cell(0, 5, clean_comment, border=1)
+        pdf.ln(10)
+        
+    # Onay İmzaları
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(30, 61, 89)
+    pdf.cell(63, 6, "Hazirlayan (Purchasing Spec.)", 0, 0, "C")
+    pdf.cell(63, 6, "Inceleyen (Procurement Mgr.)", 0, 0, "C")
+    pdf.cell(63, 6, "Onaylayan (CFO / Committee)", 0, 1, "C")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(63, 15, "Imza: ....................", 0, 0, "C")
+    pdf.cell(63, 15, "Imza: ....................", 0, 0, "C")
+    pdf.cell(63, 15, "Imza: ....................", 0, 1, "C")
+    
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 def ai_kapsam_analizi(kapsam_metni, api_key):
     if not api_key or not kapsam_metni.strip():
@@ -1351,11 +1445,20 @@ with st.container(border=True):
         use_container_width=True
     )
     
-    if HAS_XLSX:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, sheet_name='Detay', index=False)
-        st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel")
+    
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        if HAS_XLSX:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, sheet_name='Detay', index=False)
+            st.download_button("📥 Excel Raporu İndir", data=buffer.getvalue(), file_name=f"Hakedis.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
+            
+    with col_dl2:
+        if HAS_FPDF:
+            jarvis_text = st.session_state.get("last_jarvis_comment", "")
+            pdf_bytes = create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni, etkiler, jarvis_text, start_date, end_date)
+            st.download_button("📄 Executive A4 PDF Raporu İndir", data=pdf_bytes, file_name=f"Executive_Eskalasyon_Raporu_{date.today().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
 
 # ============================================================================
 # JARVIS PROJEKSİYONU
