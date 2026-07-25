@@ -713,8 +713,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("##### 🌍 Sözleşme & Saha Para Birimi")
     c_fx1, c_fx2 = st.columns(2)
-    contract_curr = c_fx1.selectbox("Sözleşme Döviz Türü", ["EUR", "USD", "TRY", "GBP"], index=0)
-    cost_curr = c_fx2.selectbox("Saha / Masraf Birimi", ["TRY", "KZT", "EUR", "USD", "GEL"], index=0)        
+    # KZT, GEL, BHD ve SAR hem Sözleşme hem de Saha para birimi listesine eklendi
+    contract_curr = c_fx1.selectbox("Sözleşme Döviz Türü", ["EUR", "USD", "TRY", "GBP", "KZT", "GEL", "BHD", "SAR"], index=0)
+    cost_curr = c_fx2.selectbox("Saha / Masraf Birimi", ["TRY", "KZT", "GEL", "EUR", "USD", "BHD", "SAR"], index=0)      
 
 
 # ============================================================================
@@ -1462,29 +1463,98 @@ with st.container(border=True):
     fark = sozlesme_tutari * (zam / 100)
     yeni = sozlesme_tutari + fark
 
-    # --- RISK & HEDGING UYARI MOTORU ---
-    riskli_kalemler = []
-    for ad, deg, agr in etkiler:
-        if agr > 0: 
-            if deg >= 15.0:
-                riskli_kalemler.append((ad, deg, agr, "YÜKSELİŞ_RISKI"))
-            elif deg <= -10.0:
-                riskli_kalemler.append((ad, deg, agr, "FIRSAT_DUSUS"))
-
-    if riskli_kalemler:
-        st.markdown("##### 🚨 Erken Uyarı & Risk / Hedging Sinyalleri")
-        for ad, deg, agr, risk_turu in riskli_kalemler:
-            if risk_turu == "YÜKSELİŞ_RISKI":
-                st.warning(
-                    f"⚠️ **{ad} Sıçrama Riski (%{deg:+.2f}):** Sepetinizde **%{agr:.0f}** ağırlığa sahip bu kalemde sert yükseliş var. "
-                    f"Sözleşmede sabit fiyat kilitlenmesi (Lock-in/Hedging) veya miktar bazlı ön alım değerlendirilmelidir, Sir!"
-                )
-            elif risk_turu == "FIRSAT_DUSUS":
-                st.info(
-                    f"💡 **{ad} Maliyet FIRSATI (%{deg:+.2f}):** Sepetinizde **%{agr:.0f}** ağırlığa sahip bu kalemde piyasa gevşemesi var. "
-                    f"Tedarikçiden ek indirim/revizyon talep etmek için pazarlık masasında koz olarak kullanılabilir."
-                )
+    # ============================================================================
+    # 🎯 TEDARİKCİ KIYASLAMA & MALİYET HASSASİYET HARİTASI (SENSTIVITY HEATMAP)
+    # ============================================================================
+    st.markdown("---")
+    st.markdown("##### ⚖️ Tedarikçi Zam Talebi vs. Piyasa Gerçeği Kıyaslaması")
     
+    col_g1, col_g2 = st.columns([2, 3])
+    with col_g1:
+        tedarikci_zam = st.number_input(
+            "Tedarikçinin Talep Ettiği Zam Oranı (%)", 
+            value=round(zam * 1.2, 2) if zam > 0 else 15.0, 
+            step=0.5, 
+            key=f"ted_zam_{d_key}"
+        )
+    
+    pazarlik_marji = tedarikci_zam - zam
+    pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
+    
+    with col_g2:
+        if pazarlik_marji > 0:
+            st.error(f"🔴 **ANOMALİ TESPİTİ:** Tedarikçi talebi piyasa sepetinin **%{pazarlik_marji:.2f}** üzerinde! Masada geri istenecek tutar: **{tr_fmt(pazarlik_tl)} TL**")
+        else:
+            st.success(f"🟢 **AVANTAJLI TEKLİF:** Tedarikçi talebi piyasa sepet eskalasyonunun **%{abs(pazarlik_marji):.2f}** altındadır.")
+
+    # Çift Taraflı Progress Bar Görselleştirmesi
+    fig_gouging = go.Figure()
+    fig_gouging.add_trace(go.Bar(
+        y=['Kıyaslama'],
+        x=[zam],
+        name='Piyasa Sepet Eskalasyonu',
+        orientation='h',
+        marker=dict(color='#27AE60'),
+        text=[f"%{zam:.2f}"],
+        textposition='auto'
+    ))
+    fig_gouging.add_trace(go.Bar(
+        y=['Kıyaslama'],
+        x=[max(0, pazarlik_marji)],
+        name='Tedarikçi Fazla Marjı (Pazarlık Payı)',
+        orientation='h',
+        marker=dict(color='#C0392B' if pazarlik_marji > 0 else '#2980B9'),
+        text=[f"%{pazarlik_marji:+.2f}"],
+        textposition='auto'
+    ))
+    fig_gouging.update_layout(
+        barmode='stack',
+        height=140,
+        margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        template="plotly_white",
+        xaxis=dict(title="Artış Oranı (%)", showgrid=True)
+    )
+    st.plotly_chart(fig_gouging, use_container_width=True)
+
+    # --- MALİYET HASSASİYET MATRİSİ (HEATMAP) ---
+    st.markdown("##### 🌡️ Bütçe Hassasiyet Haritası (Olası Şok Senaryoları)")
+    st.caption("Ağırlıklı ana girdilerinizin %5, %10, %20 artması durumunda bütçenizde oluşacak ek yük (TL):")
+    
+    top_items = sorted([e for e in etkiler if e[2] > 0], key=lambda x: x[2], reverse=True)[:4]
+    
+    if top_items:
+        shock_rates = [5, 10, 15, 20]
+        heatmap_data = []
+        y_labels = []
+        
+        for ad, deg, agr in top_items:
+            y_labels.append(f"{ad} (%{agr:.0f})")
+            row = []
+            for shock in shock_rates:
+                # O kaleme gelen ek şokun toplam bütçeye TL etkisi
+                ek_yuk = sozlesme_tutari * ((agr / 100) * (shock / 100))
+                row.append(ek_yuk)
+            heatmap_data.append(row)
+            
+        fig_heat = go.Figure(data=go.Heatmap(
+            z=heatmap_data,
+            x=[f"+%{s} Şok" for s in shock_rates],
+            y=y_labels,
+            colorscale='Reds',
+            text=[[f"+{tr_fmt(val)} TL" for val in row] for row in heatmap_data],
+            texttemplate="%{text}",
+            textfont={"size": 12},
+            hoverongaps=False
+        ))
+        
+        fig_heat.update_layout(
+            height=260,
+            margin=dict(l=10, r=10, t=20, b=20),
+            template="plotly_white"
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+
     st.markdown("---")
     r1, r2, r3 = st.columns(3)
     r1.metric("Toplam Artış", f"%{zam:.2f}")
@@ -1501,6 +1571,17 @@ with st.container(border=True):
             data["Etki"].append((deg * agr) / 100)
 
     df = pd.DataFrame(data)
+
+    st.dataframe(
+        df.style.format({
+            "Değişim": "%{:+.2f}",
+            "Ağırlık": "%{:.0f}",
+            "Etki": "%{:+.2f}"
+        })
+        .background_gradient(subset=["Ağırlık"], cmap="YlGn")
+        .highlight_max(subset=["Etki"], color="#D4EFDF"),
+        use_container_width=True
+    )
 
     st.dataframe(
         df.style.format({
