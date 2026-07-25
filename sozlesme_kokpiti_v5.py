@@ -265,11 +265,15 @@ def ai_kapsam_analizi(kapsam_metni, api_key):
 # ============================================================================
 # 🌍 ÇAPRAZ KUR & HEDGING ANALİZ MATRİSİ (CROSS-CURRENCY MATRIX)
 # ============================================================================
-# Emniyet Supabı: Değişkenler sidebar'da henüz oluşmadıysa varsayılan ata
+# Emniyet Supapları: Değişkenler sidebar veya ana ekranda henüz oluşmadıysa varsayılan atıyoruz
 if 'contract_curr' not in locals() and 'contract_curr' not in globals():
     contract_curr = "EUR"
 if 'cost_curr' not in locals() and 'cost_curr' not in globals():
     cost_curr = "TRY"
+if 'start_date' not in locals() and 'start_date' not in globals():
+    start_date = date.today() - timedelta(days=365)
+if 'end_date' not in locals() and 'end_date' not in globals():
+    end_date = date.today()
 
 st.markdown("---")
 with st.container(border=True):
