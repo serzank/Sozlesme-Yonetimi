@@ -94,7 +94,7 @@ def clean_str(text):
         "Ö": "O", "ö": "o", "Ç": "C", "ç": "c"
     }
     for tr, en in tr_map.items():
-        text = text.replace(tr, en)
+        text = str(text).replace(tr, en)
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni, etkiler, jarvis_comment, start_date, end_date):
@@ -107,10 +107,10 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.set_text_color(30, 61, 89) # Kurumsal Lacivert (#1E3D59)
     
     # Başlık
-    pdf.cell(0, 10, "COST NEXUS | EXECUTIVE PROCUREMENT REPORT", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 10, clean_str("COST NEXUS | EXECUTIVE PROCUREMENT REPORT"), new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 5, f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Donem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 5, clean_str(f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Donem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"), new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(5)
     
     # Çizgi
@@ -122,44 +122,44 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     # Finansal Özet Tablosu
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 61, 89)
-    pdf.cell(0, 8, "1. SOZLESME VE HAKEDIS OZETI", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, clean_str("1. SOZLESME VE HAKEDIS OZETI"), new_x="LMARGIN", new_y="NEXT")
     
     pdf.set_font("Helvetica", "", 10)
     pdf.set_fill_color(248, 249, 250)
     
     # Metinleri temizleyerek FPDF'e iletiyoruz
-    safe_sozlesme_tipi = clean_str(str(sozlesme_tipi))
+    safe_sozlesme_tipi = clean_str(sozlesme_tipi)
     
-    pdf.cell(60, 8, " Sozlesme Turu:", 1, 0, "L", fill=True)
+    pdf.cell(60, 8, clean_str(" Sozlesme Turu:"), 1, 0, "L", fill=True)
     pdf.cell(130, 8, f" {safe_sozlesme_tipi}", 1, 1, "L")
-    pdf.cell(60, 8, " Baslangic Tutari:", 1, 0, "L", fill=True)
-    pdf.cell(130, 8, f" {tr_fmt(sozlesme_tutari)} TL", 1, 1, "L")
-    pdf.cell(60, 8, " Toplam Eskalasyon Orani:", 1, 0, "L", fill=True)
-    pdf.cell(130, 8, f" %{zam:.2f}", 1, 1, "L")
-    pdf.cell(60, 8, " Fiyat Farkı Yuksekligi:", 1, 0, "L", fill=True)
-    pdf.cell(130, 8, f" {tr_fmt(fark)} TL", 1, 1, "L")
-    pdf.cell(60, 8, " GUNCEL HAKEDIS TUTARI:", 1, 0, "L", fill=True)
+    pdf.cell(60, 8, clean_str(" Baslangic Tutari:"), 1, 0, "L", fill=True)
+    pdf.cell(130, 8, clean_str(f" {tr_fmt(sozlesme_tutari)} TL"), 1, 1, "L")
+    pdf.cell(60, 8, clean_str(" Toplam Eskalasyon Orani:"), 1, 0, "L", fill=True)
+    pdf.cell(130, 8, clean_str(f" %{zam:.2f}"), 1, 1, "L")
+    pdf.cell(60, 8, clean_str(" Fiyat Farkı Yuksekligi:"), 1, 0, "L", fill=True)
+    pdf.cell(130, 8, clean_str(f" {tr_fmt(fark)} TL"), 1, 1, "L")
+    pdf.cell(60, 8, clean_str(" GUNCEL HAKEDIS TUTARI:"), 1, 0, "L", fill=True)
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(130, 8, f" {tr_fmt(yeni)} TL", 1, 1, "L")
+    pdf.cell(130, 8, clean_str(f" {tr_fmt(yeni)} TL"), 1, 1, "L")
     pdf.ln(5)
     
     # Aktif Sepet Detayları
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 61, 89)
-    pdf.cell(0, 8, "2. AKTIF SEPET VE MALIYET ETKI DETAYLARI", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, clean_str("2. AKTIF SEPET VE MALIYET ETKI DETAYLARI"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(30, 61, 89)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(70, 7, " Girdi Kalemi", 1, 0, "L", fill=True)
-    pdf.cell(40, 7, " Degisim (%)", 1, 0, "C", fill=True)
-    pdf.cell(40, 7, " Sepet Agirligi (%)", 1, 0, "C", fill=True)
-    pdf.cell(40, 7, " Net Etki (%)", 1, 1, "C", fill=True)
+    pdf.cell(70, 7, clean_str(" Girdi Kalemi"), 1, 0, "L", fill=True)
+    pdf.cell(40, 7, clean_str(" Degisim (%)"), 1, 0, "C", fill=True)
+    pdf.cell(40, 7, clean_str(" Sepet Agirligi (%)"), 1, 0, "C", fill=True)
+    pdf.cell(40, 7, clean_str(" Net Etki (%)"), 1, 1, "C", fill=True)
     
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(0, 0, 0)
     for ad, deg, agr in etkiler:
         if agr > 0:
-            clean_ad = clean_str(str(ad))
+            clean_ad = clean_str(ad)
             pdf.cell(70, 6, f" {clean_ad}", 1, 0, "L")
             pdf.cell(40, 6, f" %{deg:+.2f}", 1, 0, "C")
             pdf.cell(40, 6, f" %{agr:.0f}", 1, 0, "C")
@@ -170,19 +170,19 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     if jarvis_comment:
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(30, 61, 89)
-        pdf.cell(0, 8, "3. JARVIS AI FINANSAL EVALUATION & RISK DEGERLENDIRMESI", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, clean_str("3. JARVIS AI FINANSAL EVALUATION & RISK DEGERLENDIRMESI"), new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "I", 9)
         pdf.set_text_color(50, 50, 50)
-        clean_comment = clean_str(str(jarvis_comment))
+        clean_comment = clean_str(jarvis_comment)
         pdf.multi_cell(0, 5, clean_comment, border=1)
         pdf.ln(10)
         
     # Onay İmzaları
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(30, 61, 89)
-    pdf.cell(63, 6, "Hazirlayan (Purchasing Spec.)", 0, 0, "C")
-    pdf.cell(63, 6, "Inceleyen (Procurement Mgr.)", 0, 0, "C")
-    pdf.cell(63, 6, "Onaylayan (CFO / Committee)", 0, 1, "C")
+    pdf.cell(63, 6, clean_str("Hazirlayan (Purchasing Spec.)"), 0, 0, "C")
+    pdf.cell(63, 6, clean_str("Inceleyen (Procurement Mgr.)"), 0, 0, "C")
+    pdf.cell(63, 6, clean_str("Onaylayan (CFO / Committee)"), 0, 1, "C")
     pdf.set_font("Helvetica", "", 8)
     pdf.cell(63, 15, "Imza: ....................", 0, 0, "C")
     pdf.cell(63, 15, "Imza: ....................", 0, 0, "C")
