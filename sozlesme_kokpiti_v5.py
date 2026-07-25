@@ -678,9 +678,7 @@ def get_evds_fuel_history(api_key, d_start):
     except: pass
     return res
 
-# ============================================================================
-# SOL MENÜ
-# ============================================================================
+# Sol Menü (Sidebar) Tanımları
 with st.sidebar:
     st.markdown(render_svg_logo(), unsafe_allow_html=True)
     st.markdown("<div style='margin-bottom:20px'></div>", unsafe_allow_html=True)
@@ -692,9 +690,15 @@ with st.sidebar:
         ["Serzan'ın Klasiği (TÜFE+ÜFE)", "Manuel Giriş", "Personel Taşımacılık", "Yiyecek-İçecek Hizmetleri", "Yazılım / Lisans", "Bilişim Sarf (Donanım)", "Güvenlik Hizmetleri", "İnşaat & Tesisat / Mekanik", "Tekstil & Üniforma", "Ambalaj & Plastik"]
     )
     
-    c_tutar1, c_tutar2 = st.sidebar.columns([2, 1])
-    tutar_giris = c_tutar1.text_input("Sözleşme Tutarı (TL):", value="1.000.000,00")
+    c_tutar1, c_tutar2 = st.columns([2, 1])
+    tutar_giris = c_tutar1.text_input("Sözleşme Tutarı (TL):", value="100.000,00")
     sozlesme_periyodu = c_tutar2.selectbox("Periyot", ["Yıllık", "Aylık"])
+    
+    # Güvenli Tutar Çevrimi (Varsayılan olarak her zaman tanımlı kalsın)
+    try: 
+        sozlesme_tutari = float(tutar_giris.replace(".", "").replace(",", "."))
+    except: 
+        sozlesme_tutari = 0.0
 
 # ============================================================================
 # SEPET AĞIRLIKLARI STATE YÖNETİMİ
