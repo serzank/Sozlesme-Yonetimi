@@ -1678,32 +1678,8 @@ with st.container(border=True):
     else:
         st.info("ℹ️ Sözleşme para birimi ile Saha masraf birimi aynı seçildiği için Çapraz Kur arbitrajı hesaplanmamıştır.")
 
-# ============================================================================
-# MONTE CARLO RISK & BÜTÇE SIMÜLASYONU (PERİYOT UYUMLU)
-# ============================================================================
-st.markdown("---")
-with st.container(border=True):
-    c_m1, c_m2 = st.columns([3, 1])
-    with c_m1: 
-        st.header("🎲 Monte Carlo Olasılıklı Bütçe Risk Simülasyonu")
-    with c_m2: 
-        st.markdown("<div style='text-align:right; font-size:12px; color:gray'>*1.000 Piyasa Şoku Simüle Edilmiştir.</div>", unsafe_allow_html=True)
-    
-    is_yillik = (sozlesme_periyodu == "Yıllık")
-    base_start_val = (yeni / 12) if is_yillik else yeni
 
-    def run_monte_carlo(start_val, base_monthly_rate, vol_rate, months=12, sims=1000):
-        np.random.seed(42)
-        simulation_matrix = np.zeros((sims, months + 1))
-        simulation_matrix[:, 0] = start_val
-        
-        for t in range(1, months + 1):
-            shocks = np.random.normal(loc=base_monthly_rate, scale=vol_rate, size=sims)
-            simulation_matrix[:, t] = simulation_matrix[:, t-1] * (1 + shocks / 100)
-            
-        return simulation_matrix
-
-    # ============================================================================
+# ============================================================================
 # MONTE CARLO RISK & BÜTÇE SIMÜLASYONU (PERİYOT UYUMLU)
 # ============================================================================
 st.markdown("---")
@@ -1871,6 +1847,66 @@ with st.container(border=True):
         )
 
         st.plotly_chart(fig_dist, use_container_width=True)
+        
+# ============================================================================
+# 📝 TEK TIKLA KARŞI FİYAT REVİZYON & İTİRAZ DİLEKÇESİ GENERATOR
+# ============================================================================
+st.markdown("---")
+with st.container(border=True):
+    st.subheader("📝 Resmi Karşı Fiyat Revizyonu & Müzakere Mektubu")
+    st.caption("Tedarikçinin zam talebine karşı, sistemdeki güncel endeks ve çapraz kur verileriyle otomatik hukuki/ticari itiraz taslağı üretir.")
+
+    col_let1, col_let2 = st.columns(2)
+    with col_let1:
+        tedarikci_firma = st.text_input("Tedarikçi / Yüklenici Firma Adı", value="XYZ Ltd. Şti.", key="let_firm")
+        sozlesme_no_konu = st.text_input("Sözleşme No / İş Kapsamı", value="Lounge İnce İşler Yapım Sözleşmesi", key="let_subj")
+    with col_let2:
+        itiraz_maddesi = st.selectbox(
+            "Müzakere & İtiraz Stratejisi Kurgusu",
+            [
+                "Standart Eskalasyon + Piyasa Sepeti Üstü Zam Reddi",
+                "Çapraz Kur & Reel Dolar/Euro Marjı İndirim Talebi",
+                "Sert Fahiş Fiyat Reddi & Sabit Kur Kilitleme (Lock-In) Önerisi"
+            ],
+            key="let_strat"
+        )
+
+    # Otomatik Dilekçe Metni Oluşturucu
+    mektup_metni = f"""SAYIN {tedarikci_firma.upper()} YÖNETİMİNE,
+
+Konu: {sozlesme_no_konu} Kapsamındaki Fiyat Revizyonu Talebiniz ve Piyasa Sepet Analiz Değerlendirmesi
+
+Tarafımıza iletmiş olduğunuz fiyat artış talebi ve güncel hakediş revizyon öneriniz, TAV Holding Satın Alma Yönetimi Standartları ve PNX Analitik Veri Terminali araçlarıyla detaylıca incelenmiştir.
+
+Sözleşme konusu işin maliyet yapısını oluşturan ana girdiler (TÜFE, ÜFE, İşçilik, Emtia ve Döviz kurları) tarafımızca ağırlıklandırılmış ve {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')} dönemi kapsayan resmi veriler ışığında analiz edilmiştir.
+
+Yapılan analitik değerlendirme neticesinde:
+1. Sahadaki reel maliyet eskalasyonu ve resmi endeks sepet artışı %{zam:.2f} seviyesinde gerçekleşmiştir.
+2. Tarafınızca talep edilen %{tedarikci_zam:.2f}'lik zam oranı, piyasa gerçeklerinin %{max(0, pazarlik_marji):.2f} üzerinde kalmaktadır.
+3. Sözleşme para birimi ({contract_curr}) ile saha maliyet birimi ({cost_curr}) arasındaki çapraz kur etkisinde, reelde %{reel_net_impact:+.2f}'lik bir marj oluştuğu tespit edilmiştir.
+
+Bu doğrultuda; şirketimizin maliyet disiplini ve hakkaniyet ilkeleri gereği, %{tedarikci_zam:.2f}'lik artış talebiniz kabul edilebilir bulunmamış olup, sözleşmenin sürekliliği ve yapıcı iş birliğimizin devamı adına güncellenmiş hakediş tutarımızın %{zam:.2f} artış oranı ile ({tr_fmt(yeni)} TL / {contract_curr}) revize edilmesini teklif ederiz.
+
+Gereğini ve bilgilerinizi rica ederiz.
+
+Saygılarımızla,
+TAV Havalimanları Holding
+Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')}
+"""
+
+    st.text_area("📄 Üretilen Resmi Mektup Taslağı", value=mektup_metni, height=250, key="let_area")
+
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        st.download_button(
+            label="📥 Mektubu TXT / Metin Olarak İndir",
+            data=mektup_metni.encode("utf-8"),
+            file_name=f"Karsi_Fiyat_Revizyon_Mektubu_{datetime.today().strftime('%Y%m%d')}.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+    with col_btn2:
+        st.info("💡 Metni doğrudan kopyalayıp kurumsal e-posta veya resmi yazı ekinde tedarikçinize iletebilirsiniz Sir.")
 
 # ============================================================================
 # JARVIS AI & YORUM MODÜLÜ
