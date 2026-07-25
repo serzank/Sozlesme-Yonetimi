@@ -1859,7 +1859,7 @@ with st.container(border=True):
     col_let1, col_let2 = st.columns(2)
     with col_let1:
         tedarikci_firma = st.text_input("Tedarikçi / Yüklenici Firma Adı", value="XYZ Ltd. Şti.", key="let_firm")
-        sozlesme_no_konu = st.text_input("Sözleşme No / İş Kapsamı", value="xxx Sözleşmesi", key="let_subj")
+        sozlesme_no_konu = st.text_input("Sözleşme No / İş Kapsamı", value="XYZ Sözleşmesi", key="let_subj")
     with col_let2:
         itiraz_maddesi = st.selectbox(
             "Müzakere & İtiraz Stratejisi Kurgusu",
@@ -1880,11 +1880,22 @@ with st.container(border=True):
 Bu doğrultuda, şirketimizin maliyet disiplini gereği %{tedarikci_zam:.2f}'lik artış talebiniz kabul edilmemiş olup, hakedişin resmi sepet oranı olan %{zam:.2f} artış ile ({tr_fmt(yeni)} TL) revize edilmesini teklif ederiz."""
 
     elif itiraz_maddesi == "Çapraz Kur & Reel Dolar/Euro Marjı İndirim Talebi":
-        strateji_detayi = f"""Sözleşme paritesi ve kur hassasiyeti üzerinden yapılan çapraz analizde:
-1. Sözleşme para birimi ({contract_curr}) ile sahadaki harcama birimi ({cost_curr}) arasındaki kur değişimi incelenmiştir.
-2. Döviz kurunun lokal enflasyondan daha hızlı yükselmesi sebebiyle tarafınızca reelde %{abs(reel_net_impact):.2f} oranında haksız kur marjı kazandığınız tespit edilmiştir.
+        if reel_net_impact < 0:
+            # Şirket Lehine: Döviz artışı enflasyonu geçti (Haksız Marj)
+            kur_analiz_paragrafi = f"""1. Sözleşme para birimi ({contract_curr}) ile sahadaki harcama birimi ({cost_curr}) arasındaki kur değişimi incelenmiştir.
+2. Döviz kurunun lokal maliyet enflasyonundan daha hızlı yükselmesi sebebiyle tarafınızca reelde %{abs(reel_net_impact):.2f} oranında ek kur marjı kazandığınız tespit edilmiştir.
 
-Sözleşmenin döviz bazlı alım gücü korunduğundan, %{tedarikci_zam:.2f}'lik ek zam talebiniz reddedilmiş; aksine çapraz kur avantajı doğrultusunda %{abs(reel_net_impact):.2f} oranında bir kur iskonto/revizyonu yapılması talep olunmaktadır."""
+Sözleşmenin döviz bazlı alım gücü fazlasıyla korunduğundan, %{tedarikci_zam:.2f}'lik ek zam talebiniz reddedilmiş; aksine çapraz kur avantajı doğrultusunda %{abs(reel_net_impact):.2f} oranında bir kur iskonto/revizyonu yapılması talep olunmaktadır."""
+        else:
+            # Tedarikçi Aleyhine: Enflasyon dövizi geçti (Tedarikçi Eridi)
+            kur_analiz_paragrafi = f"""1. Sözleşme para birimi ({contract_curr}) ile sahadaki harcama birimi ({cost_curr}) arasındaki çapraz kur dengesi incelenmiştir.
+2. Tarafınızla akdedilen sözleşme {contract_curr} bazlı olup, kur riskleri ve parite dalgalanmaları döviz bazlı sözleşmelerin doğası gereği yüklenici sorumluluğundadır.
+3. Sahadaki lokal masraf artışı %{zam:.2f} iken, tarafınızca talep edilen %{tedarikci_zam:.2f}'lik zam oranı piyasa gerçeklerinin son derece üzerindedir.
+
+Döviz bazlı sözleşme yapısı uyarınca kur riskinin tarafınızda olması sebebiyle fahiş zam talebiniz reddedilmiş; hakedişin makul piyasa sepet artışı olan %{zam:.2f} seviyesinde ({tr_fmt(yeni)} TL / {contract_curr}) sabitlenerek revize edilmesi teklif edilmektedir."""
+
+        strateji_detayi = f"""Sözleşme paritesi ve kur hassasiyeti üzerinden yapılan çapraz analizde:
+{kur_analiz_paragrafi}"""
 
     else: # Sert Fahiş Fiyat Reddi & Lock-In
         strateji_detayi = f"""Yapılan piyasa ve risk analizlerinde:
@@ -1898,7 +1909,7 @@ Söz konusu fahiş talep tamamen reddedilmiş olup; iş birliğimizin devamı ad
 
 Konu: {sozlesme_no_konu} Kapsamındaki Fiyat Revizyonu Talebiniz Hk.
 
-Tarafımıza iletmiş olduğunuz fiyat artış talebi ve hakediş revizyon öneriniz, TAV Holding Satın Alma / Maliyet Yönetimi Standartları ve PNX Analitik Veri Terminali araçlarıyla detaylıca incelenmiştir.
+Tarafımıza iletmiş olduğunuz fiyat artış talebi ve hakediş revizyon öneriniz, Satın Alma Yönetimi Standartları ve PNX Analitik Veri Terminali araçlarıyla detaylıca incelenmiştir.
 
 Sözleşme konusu işin maliyet yapısını oluşturan ana girdiler (TÜFE, ÜFE, İşçilik, Emtia ve Döviz kurları) tarafımızca ağırlıklandırılmış ve {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')} dönemi kapsayan resmi veriler ışığında analiz edilmiştir.
 
