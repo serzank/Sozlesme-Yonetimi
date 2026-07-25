@@ -1464,62 +1464,69 @@ with st.container(border=True):
     yeni = sozlesme_tutari + fark
 
     # ============================================================================
-    # 🎯 TEDARİKCİ KIYASLAMA & MALİYET HASSASİYET HARİTASI (SENSTIVITY HEATMAP)
+    # ⚖️ TEDARİKCİ KIYASLAMA & ŞIK MALİYET HASSASİYETİ
     # ============================================================================
     st.markdown("---")
-    st.markdown("##### ⚖️ Tedarikçi Zam Talebi vs. Piyasa Gerçeği Kıyaslaması")
-    
-    col_g1, col_g2 = st.columns([2, 3])
-    with col_g1:
-        tedarikci_zam = st.number_input(
-            "Tedarikçinin Talep Ettiği Zam Oranı (%)", 
-            value=round(zam * 1.2, 2) if zam > 0 else 15.0, 
-            step=0.5, 
-            key=f"ted_zam_{d_key}"
-        )
+    st.markdown("##### ⚖️ Tedarikçi Zam Talebi vs. Piyasa Gerçeği Analizi")
     
     pazarlik_marji = tedarikci_zam - zam
     pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
     
-    with col_g2:
+    # 1. ŞIK KPI KARTLARI (Koyu Temaya Tam Uyumlu)
+    c_k1, c_k2, c_k3 = st.columns([2, 2, 3])
+    with c_k1:
+        tedarikci_zam = st.number_input(
+            "Tedarikçi Talep Ettiği Zam (%)", 
+            value=round(zam * 1.2, 2) if zam > 0 else 15.0, 
+            step=0.5, 
+            key=f"ted_zam_{d_key}"
+        )
+    with c_k2:
+        st.metric("Piyasa Sepet Eskalasyonu", f"%{zam:.2f}")
+    with c_k3:
         if pazarlik_marji > 0:
-            st.error(f"🔴 **ANOMALİ TESPİTİ:** Tedarikçi talebi piyasa sepetinin **%{pazarlik_marji:.2f}** üzerinde! Masada geri istenecek tutar: **{tr_fmt(pazarlik_tl)} TL**")
+            st.metric("Pazarlık Edilecek Fahiş Marj", f"%{pazarlik_marji:+.2f}", delta=f"-{tr_fmt(pazarlik_tl)} TL Masada İstenmeli", delta_color="inverse")
         else:
-            st.success(f"🟢 **AVANTAJLI TEKLİF:** Tedarikçi talebi piyasa sepet eskalasyonunun **%{abs(pazarlik_marji):.2f}** altındadır.")
+            st.metric("Fiyat Avantajı", f"%{abs(pazarlik_marji):.2f}", delta=f"+{tr_fmt(abs(pazarlik_tl))} TL Avantajlı", delta_color="normal")
 
-    # Çift Taraflı Progress Bar Görselleştirmesi
+    # 2. İNCE VE ZARİF ZAM KIYASLAMA ÇUBUĞU (PLOTLY DARK TEMALI)
     fig_gouging = go.Figure()
     fig_gouging.add_trace(go.Bar(
-        y=['Kıyaslama'],
+        y=['Zam'],
         x=[zam],
-        name='Piyasa Sepet Eskalasyonu',
+        name='Piyasa Gerçeği',
         orientation='h',
-        marker=dict(color='#27AE60'),
-        text=[f"%{zam:.2f}"],
-        textposition='auto'
+        marker=dict(color='#27AE60', cornerradius=4),
+        text=[f"Piyasa: %{zam:.2f}"],
+        textposition='inside',
+        insidetextanchor='middle'
     ))
-    fig_gouging.add_trace(go.Bar(
-        y=['Kıyaslama'],
-        x=[max(0, pazarlik_marji)],
-        name='Tedarikçi Fazla Marjı (Pazarlık Payı)',
-        orientation='h',
-        marker=dict(color='#C0392B' if pazarlik_marji > 0 else '#2980B9'),
-        text=[f"%{pazarlik_marji:+.2f}"],
-        textposition='auto'
-    ))
+    if pazarlik_marji > 0:
+        fig_gouging.add_trace(go.Bar(
+            y=['Zam'],
+            x=[pazarlik_marji],
+            name='Tedarikçi Fazlası',
+            orientation='h',
+            marker=dict(color='#E74C3C', cornerradius=4),
+            text=[f"Fazlalık: %{pazarlik_marji:+.2f}"],
+            textposition='inside',
+            insidetextanchor='middle'
+        ))
+
     fig_gouging.update_layout(
         barmode='stack',
-        height=140,
+        height=70,
         margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        template="plotly_white",
-        xaxis=dict(title="Artış Oranı (%)", showgrid=True)
+        showlegend=False,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+        yaxis=dict(showgrid=False, showticklabels=False)
     )
-    st.plotly_chart(fig_gouging, use_container_width=True)
+    st.plotly_chart(fig_gouging, use_container_width=True, config={'displayModeBar': False})
 
-    # --- MALİYET HASSASİYET MATRİSİ (HEATMAP) ---
-    st.markdown("##### 🌡️ Bütçe Hassasiyet Haritası (Olası Şok Senaryoları)")
-    st.caption("Ağırlıklı ana girdilerinizin %5, %10, %20 artması durumunda bütçenizde oluşacak ek yük (TL):")
+    # 3. ZARİF MALİYET HASSASİYET MATRİSİ (DARK THEME HEATMAP)
+    st.markdown("##### 🌡️ Bütçe Hassasiyet Haritası (Ek Şok Senaryoları)")
     
     top_items = sorted([e for e in etkiler if e[2] > 0], key=lambda x: x[2], reverse=True)[:4]
     
@@ -1532,7 +1539,6 @@ with st.container(border=True):
             y_labels.append(f"{ad} (%{agr:.0f})")
             row = []
             for shock in shock_rates:
-                # O kaleme gelen ek şokun toplam bütçeye TL etkisi
                 ek_yuk = sozlesme_tutari * ((agr / 100) * (shock / 100))
                 row.append(ek_yuk)
             heatmap_data.append(row)
@@ -1541,19 +1547,23 @@ with st.container(border=True):
             z=heatmap_data,
             x=[f"+%{s} Şok" for s in shock_rates],
             y=y_labels,
-            colorscale='Reds',
+            colorscale=[[0, '#1E2A38'], [0.5, '#2C3E50'], [1.0, '#C0392B']], # Şık koyu ton geçişi
             text=[[f"+{tr_fmt(val)} TL" for val in row] for row in heatmap_data],
             texttemplate="%{text}",
-            textfont={"size": 12},
-            hoverongaps=False
+            textfont={"size": 11, "color": "white"},
+            showscale=False # Yan taraftaki çirkin renk çubuğu kaldırıldı
         ))
         
         fig_heat.update_layout(
-            height=260,
-            margin=dict(l=10, r=10, t=20, b=20),
-            template="plotly_white"
+            height=200,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white'),
+            xaxis=dict(showgrid=False),
+            yaxis=dict(showgrid=False)
         )
-        st.plotly_chart(fig_heat, use_container_width=True)
+        st.plotly_chart(fig_heat, use_container_width=True, config={'displayModeBar': False})
 
     st.markdown("---")
     r1, r2, r3 = st.columns(3)
@@ -1571,6 +1581,17 @@ with st.container(border=True):
             data["Etki"].append((deg * agr) / 100)
 
     df = pd.DataFrame(data)
+
+    st.dataframe(
+        df.style.format({
+            "Değişim": "%{:+.2f}",
+            "Ağırlık": "%{:.0f}",
+            "Etki": "%{:+.2f}"
+        })
+        .background_gradient(subset=["Ağırlık"], cmap="YlGn")
+        .highlight_max(subset=["Etki"], color="#D4EFDF"),
+        use_container_width=True
+    )
 
     st.dataframe(
         df.style.format({
