@@ -1849,17 +1849,17 @@ with st.container(border=True):
         st.plotly_chart(fig_dist, use_container_width=True)
         
 # ============================================================================
-# 📝 TEK TIKLA KARŞI FİYAT REVİZYON & İTİRAZ DİLEKÇESİ GENERATOR
+# 📝 TEK TIKLA KARŞI FİYAT REVİZYON & İTİRAZ DİLEKÇESİ GENERATOR (DİNAMİK)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
     st.subheader("📝 Resmi Karşı Fiyat Revizyonu & Müzakere Mektubu")
-    st.caption("Tedarikçinin zam talebine karşı, sistemdeki güncel endeks ve çapraz kur verileriyle otomatik hukuki/ticari itiraz taslağı üretir.")
+    st.caption("Tedarikçinin zam talebine karşı, seçilen stratejiye uygun resmi itiraz ve pazarlık mektubu üretir.")
 
     col_let1, col_let2 = st.columns(2)
     with col_let1:
         tedarikci_firma = st.text_input("Tedarikçi / Yüklenici Firma Adı", value="XYZ Ltd. Şti.", key="let_firm")
-        sozlesme_no_konu = st.text_input("Sözleşme No / İş Kapsamı", value="Lounge İnce İşler Yapım Sözleşmesi", key="let_subj")
+        sozlesme_no_konu = st.text_input("Sözleşme No / İş Kapsamı", value="xxx Sözleşmesi", key="let_subj")
     with col_let2:
         itiraz_maddesi = st.selectbox(
             "Müzakere & İtiraz Stratejisi Kurgusu",
@@ -1871,42 +1871,58 @@ with st.container(border=True):
             key="let_strat"
         )
 
-    # Otomatik Dilekçe Metni Oluşturucu
+    # 🟢 STRATEJİYE GÖRE DİNAMİK METİN KURGUSU
+    if itiraz_maddesi == "Standart Eskalasyon + Piyasa Sepeti Üstü Zam Reddi":
+        strateji_detayi = f"""Yapılan analitik değerlendirme neticesinde:
+1. Sahadaki reel maliyet eskalasyonu ve resmi endeks sepet artışı %{zam:.2f} seviyesinde gerçekleşmiştir.
+2. Tarafınızca talep edilen %{tedarikci_zam:.2f}'lik zam oranı, piyasa gerçeklerinin ve sepet ortalamasının %{max(0, pazarlik_marji):.2f} üzerinde kalmaktadır.
+
+Bu doğrultuda, şirketimizin maliyet disiplini gereği %{tedarikci_zam:.2f}'lik artış talebiniz kabul edilmemiş olup, hakedişin resmi sepet oranı olan %{zam:.2f} artış ile ({tr_fmt(yeni)} TL) revize edilmesini teklif ederiz."""
+
+    elif itiraz_maddesi == "Çapraz Kur & Reel Dolar/Euro Marjı İndirim Talebi":
+        strateji_detayi = f"""Sözleşme paritesi ve kur hassasiyeti üzerinden yapılan çapraz analizde:
+1. Sözleşme para birimi ({contract_curr}) ile sahadaki harcama birimi ({cost_curr}) arasındaki kur değişimi incelenmiştir.
+2. Döviz kurunun lokal enflasyondan daha hızlı yükselmesi sebebiyle tarafınızca reelde %{abs(reel_net_impact):.2f} oranında haksız kur marjı kazandığınız tespit edilmiştir.
+
+Sözleşmenin döviz bazlı alım gücü korunduğundan, %{tedarikci_zam:.2f}'lik ek zam talebiniz reddedilmiş; aksine çapraz kur avantajı doğrultusunda %{abs(reel_net_impact):.2f} oranında bir kur iskonto/revizyonu yapılması talep olunmaktadır."""
+
+    else: # Sert Fahiş Fiyat Reddi & Lock-In
+        strateji_detayi = f"""Yapılan piyasa ve risk analizlerinde:
+1. Talep ettiğiniz %{tedarikci_zam:.2f}'lik artış, makroekonomik göstergelerden ve sepet maliyetinden (%{zam:.2f}) tamamen kopuk fahiş bir oran olarak değerlendirilmiştir.
+2. Mevcut pazar koşullarında bu seviyedeki bir artışın kabul edilmesi şirket politikalarımız gereği mümkün değildir.
+
+Söz konusu fahiş talep tamamen reddedilmiş olup; iş birliğimizin devamı adına bir sonraki döneme kadar fiyatların %{zam:.2f} artış oranı ile sabitlenmesi (Lock-In / Fiyat Kilitleme) şartıyla sözleşmeye devam edilebileceğini bildiririz."""
+
+    # MEKTUP TASLAĞI BİRLEŞTİRME
     mektup_metni = f"""SAYIN {tedarikci_firma.upper()} YÖNETİMİNE,
 
-Konu: {sozlesme_no_konu} Kapsamındaki Fiyat Revizyonu Talebiniz ve Piyasa Sepet Analiz Değerlendirmesi
+Konu: {sozlesme_no_konu} Kapsamındaki Fiyat Revizyonu Talebiniz Hk.
 
-Tarafımıza iletmiş olduğunuz fiyat artış talebi ve güncel hakediş revizyon öneriniz, TAV Holding Satın Alma Yönetimi Standartları ve PNX Analitik Veri Terminali araçlarıyla detaylıca incelenmiştir.
+Tarafımıza iletmiş olduğunuz fiyat artış talebi ve hakediş revizyon öneriniz, TAV Holding Satın Alma / Maliyet Yönetimi Standartları ve PNX Analitik Veri Terminali araçlarıyla detaylıca incelenmiştir.
 
 Sözleşme konusu işin maliyet yapısını oluşturan ana girdiler (TÜFE, ÜFE, İşçilik, Emtia ve Döviz kurları) tarafımızca ağırlıklandırılmış ve {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')} dönemi kapsayan resmi veriler ışığında analiz edilmiştir.
 
-Yapılan analitik değerlendirme neticesinde:
-1. Sahadaki reel maliyet eskalasyonu ve resmi endeks sepet artışı %{zam:.2f} seviyesinde gerçekleşmiştir.
-2. Tarafınızca talep edilen %{tedarikci_zam:.2f}'lik zam oranı, piyasa gerçeklerinin %{max(0, pazarlik_marji):.2f} üzerinde kalmaktadır.
-3. Sözleşme para birimi ({contract_curr}) ile saha maliyet birimi ({cost_curr}) arasındaki çapraz kur etkisinde, reelde %{reel_net_impact:+.2f}'lik bir marj oluştuğu tespit edilmiştir.
-
-Bu doğrultuda; şirketimizin maliyet disiplini ve hakkaniyet ilkeleri gereği, %{tedarikci_zam:.2f}'lik artış talebiniz kabul edilebilir bulunmamış olup, sözleşmenin sürekliliği ve yapıcı iş birliğimizin devamı adına güncellenmiş hakediş tutarımızın %{zam:.2f} artış oranı ile ({tr_fmt(yeni)} TL / {contract_curr}) revize edilmesini teklif ederiz.
+{strateji_detayi}
 
 Gereğini ve bilgilerinizi rica ederiz.
 
 Saygılarımızla,
-TAV Havalimanları Holding
 Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')}
 """
 
-    st.text_area("📄 Üretilen Resmi Mektup Taslağı", value=mektup_metni, height=250, key="let_area")
+    st.text_area("📄 Üretilen Resmi Mektup Taslağı", value=mektup_metni, height=280, key=f"let_area_{itiraz_maddesi}")
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         st.download_button(
-            label="📥 Mektubu TXT / Metin Olarak İndir",
+            label="📥 Mektubu TXT Olarak İndir",
             data=mektup_metni.encode("utf-8"),
             file_name=f"Karsi_Fiyat_Revizyon_Mektubu_{datetime.today().strftime('%Y%m%d')}.txt",
             mime="text/plain",
             use_container_width=True
         )
     with col_btn2:
-        st.info("💡 Metni doğrudan kopyalayıp kurumsal e-posta veya resmi yazı ekinde tedarikçinize iletebilirsiniz Sir.")
+        st.info("💡 Seçtiğiniz stratejiye göre mektup paragrafı ve hukuki dille pazarlık şartları otomatik değişmektedir Sir.")
 
 # ============================================================================
 # JARVIS AI & YORUM MODÜLÜ
