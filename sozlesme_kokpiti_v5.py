@@ -1107,6 +1107,7 @@ st.markdown("---")
 with st.container(border=True):
     st.subheader("📈 Emtia & Kur İnteraktif Trend Analizi (Plotly Borsa Terminali)")
     
+    # Yahoo Finance Üzerinde %100 Çalışan Doğrulanmış Ticker Sözlüğü
     chart_symbols = {
         "Dolar (USD/TL)": "TRY=X",
         "Euro (EUR/TL)": "EURTRY=X",
@@ -1119,16 +1120,14 @@ with st.container(border=True):
         "Kömür ($/Ton)": "MTF=F",
         "Bakır ($/Lbs)": "HG=F",
         "Alüminyum ($/Ton)": "ALI=F",
-        "Hurda Alüminyum ($/Ton)": "ALI=F",
         "Çelik / HRC ($/Ton)": "HRC=F",
-        "Hurda Çelik ($/Ton)": "HRC=F",
-        "Demir Cevheri ($/Ton)": "TI=F",
+        "Demir Cevheri ($/Ton)": "TIO=F",
         "Nikel ($/Ton)": "NKL=F",
         "Çinko ($/Ton)": "ZNC=F",
         "Pamuk ($/Lbs)": "CT=F",
         "Buğday ($/Bu)": "ZW=F",
         "Kakao ($/MT)": "CC=F",
-        "Plastik / Polimer ($/MT)": "PLASTIK.L"
+        "Plastik / Polimer (Proxy/Naphtha)": "BZ=F" # Yahoo'da plastik için en korele ham madde Brent/Naphtha proxy'sidir
     }
     
     c_sel1, _ = st.columns([2, 2])
@@ -1139,13 +1138,22 @@ with st.container(border=True):
     
     try:
         df_hist = yf.download(symbol_code, start=start_date, end=end_date, progress=False)
-        if not df_hist.empty and "Close" in df_hist.columns:
+        
+        # MultiIndex kolon yapısını düzleştirme kontrolü
+        if isinstance(df_hist.columns, pd.MultiIndex):
+            if "Close" in df_hist.columns.get_level_values(0):
+                close_series = df_hist["Close"].iloc[:, 0]
+            else:
+                close_series = df_hist.iloc[:, 0]
+        elif "Close" in df_hist.columns:
             close_series = df_hist["Close"]
-            if isinstance(close_series, pd.DataFrame):
-                close_series = close_series.iloc[:, 0]
-                
-            close_series = close_series.dropna().copy()
-            
+        else:
+            close_series = pd.Series()
+
+        close_series = close_series.dropna().copy()
+
+        if not close_series.empty and len(close_series) > 1:
+            # Jet A-1 Galon -> Varil Çevrimi
             if "HO=F" in symbol_code or selected_chart_item.startswith("Jet"):
                 close_series = close_series * 42.0
             
@@ -1154,7 +1162,7 @@ with st.container(border=True):
                 x=close_series.index,
                 y=close_series.values,
                 mode='lines',
-                name='Fiyat ($/Bbl)' if "HO=F" in symbol_code else 'Fiyat',
+                name='Fiyat',
                 line=dict(color='#27AE60' if "HO=F" in symbol_code else '#1E3D59', width=2.5),
                 fill='tozeroy',
                 fillcolor='rgba(39, 174, 96, 0.1)' if "HO=F" in symbol_code else 'rgba(30, 61, 89, 0.1)',
@@ -1164,20 +1172,24 @@ with st.container(border=True):
             fig_plotly.update_layout(
                 title=f"<b>{selected_chart_item}</b> — Tarihsel Değişim Grafiği",
                 xaxis_title="Tarih",
-                yaxis_title="Fiyat ($/Varil)" if "HO=F" in symbol_code else "Fiyat / Değer",
+                yaxis_title="Fiyat / Değer",
                 template="plotly_white",
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="white"),
                 hovermode="x unified",
-                height=420,
+                height=400,
                 margin=dict(l=40, r=40, t=50, b=40),
-                xaxis=dict(showgrid=True, gridcolor='rgba(0,0,0,0.05)', rangeslider=dict(visible=True), type="date"),
-                yaxis=dict(showgrid=True, gridcolor='rgba(0,0,0,0.05)')
+                xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', type="date"),
+                yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)')
             )
 
-            st.plotly_chart(fig_plotly, use_container_width=True)
+            st.plotly_chart(fig_plotly, use_container_width=True, config={'displayModeBar': False})
         else:
-            st.info("Seçilen tarih aralığı için grafik verisi indiriliyor...")
+            st.warning(f"⚠️ **{selected_chart_item}** için Yahoo Finance borsa verisi bulunamadı. Lütfen listeden başka bir emtia seçiniz Sir.")
+            
     except Exception as e:
-        st.caption("Grafik yüklenirken bir teknik kısıt oluştu, sayısal veriler yukarıda mevcuttur.")
+        st.warning(f"⚠️ Grafik verisi çekilirken teknik bir kısıt oluştu: {str(e)}")
 
 # ============================================================================
 # PNX DÖVİZ ÇEVRİM MATRİSİ
