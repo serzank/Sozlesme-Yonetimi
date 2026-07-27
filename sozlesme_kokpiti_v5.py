@@ -144,7 +144,7 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(30, 61, 89) # Kurumsal Lacivert (#1E3D59)
     
-    # Başlık (Sürüm uyumlu ln parametresi kullanımı)
+    # Başlık
     pdf.cell(0, 10, clean_str("COST NEXUS | EXECUTIVE PROCUREMENT REPORT"), ln=1, align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
@@ -225,7 +225,11 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.cell(63, 15, "Imza: ....................", 0, 0, "C")
     pdf.cell(63, 15, "Imza: ....................", 0, 1, "C")
     
-    return bytes(pdf.output())
+    # Eski FPDF sürümü için güvenli byte çıktısı
+    pdf_output = pdf.output(dest='S')
+    if isinstance(pdf_output, str):
+        return pdf_output.encode('latin1')
+    return bytes(pdf_output)
     
 def ai_kapsam_analizi(kapsam_metni, api_key):
     if not api_key or not kapsam_metni.strip():
