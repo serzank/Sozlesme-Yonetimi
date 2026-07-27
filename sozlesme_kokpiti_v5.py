@@ -724,7 +724,6 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("##### 🌍 Sözleşme & Saha Para Birimi")
     c_fx1, c_fx2 = st.columns(2)
-    # KZT, GEL, BHD ve SAR hem Sözleşme hem de Saha para birimi listesine eklendi
     contract_curr = c_fx1.selectbox("Sözleşme Döviz Türü", ["EUR", "USD", "TRY", "GBP", "KZT", "GEL", "BHD", "SAR"], index=0)
     cost_curr = c_fx2.selectbox("Saha / Masraf Birimi", ["TRY", "KZT", "GEL", "EUR", "USD", "BHD", "SAR"], index=0)      
 
@@ -930,7 +929,7 @@ def piyasa_verisi_al_tekli(d_start, d_end, doviz_data, evds_gold_start, evds_key
                 if k_fred == "JET_FUEL" and data_dict["JET_FUEL"]["ilk"] > 0 and data_dict["JET_FUEL"]["ilk"] != data_dict["JET_FUEL"]["son"]: continue
                 
                 if pct == 0.0:
-                    yf_backup_map = {"DOGALGAZ": "NG=F", "PLASTIK": "PLASTIK.L", "BAKIR": "HG=F"}
+                    yf_backup_map = {"DOGALGAZ": "NG=F", "BAKIR": "HG=F"}
                     if k_fred in yf_backup_map:
                         try:
                             yt = yf.Ticker(yf_backup_map[k_fred])
@@ -1101,13 +1100,12 @@ with st.container(border=True):
     d_plastik = emtia_karti(em16, "🧪 Plastik/Polimer ($/MT)", "PLASTIK")
 
 # ============================================================================
-# İNTERAKTİF PLOTLY BORSA GRAFİK MODÜLÜ
+# İNTERAKTİF PLOTLY BORSA GRAFİK MODÜLÜ (GÜNCELLENMİŞ ÖLÇEKLENDİRME)
 # ============================================================================
 st.markdown("---")
 with st.container(border=True):
     st.subheader("📈 Emtia & Kur İnteraktif Trend Analizi (Plotly Borsa Terminali)")
     
-    # Yahoo Finance Üzerinde %100 Çalışan Doğrulanmış Ticker Sözlüğü
     chart_symbols = {
         "Dolar (USD/TL)": "TRY=X",
         "Euro (EUR/TL)": "EURTRY=X",
@@ -1127,7 +1125,7 @@ with st.container(border=True):
         "Pamuk ($/Lbs)": "CT=F",
         "Buğday ($/Bu)": "ZW=F",
         "Kakao ($/MT)": "CC=F",
-        "Plastik / Polimer (Proxy/Naphtha)": "BZ=F" # Yahoo'da plastik için en korele ham madde Brent/Naphtha proxy'sidir
+        "Plastik / Polimer (Proxy/Naphtha)": "BZ=F"
     }
     
     c_sel1, _ = st.columns([2, 2])
@@ -1139,7 +1137,6 @@ with st.container(border=True):
     try:
         df_hist = yf.download(symbol_code, start=start_date, end=end_date, progress=False)
         
-        # MultiIndex kolon yapısını düzleştirme kontrolü
         if isinstance(df_hist.columns, pd.MultiIndex):
             if "Close" in df_hist.columns.get_level_values(0):
                 close_series = df_hist["Close"].iloc[:, 0]
@@ -1153,10 +1150,17 @@ with st.container(border=True):
         close_series = close_series.dropna().copy()
 
         if not close_series.empty and len(close_series) > 1:
-            # Jet A-1 Galon -> Varil Çevrimi
             if "HO=F" in symbol_code or selected_chart_item.startswith("Jet"):
                 close_series = close_series * 42.0
             
+            # Plastik/Polimer Proxy Ölçeklendirmesi (Kart Verisiyle %100 Uyum İçin)
+            if selected_chart_item.startswith("Plastik"):
+                plastik_ilk = piyasa.get("PLASTIK", {}).get("ilk", 979.31)
+                if plastik_ilk <= 0: plastik_ilk = 979.31
+                start_val = float(close_series.iloc[0])
+                if start_val > 0:
+                    close_series = (close_series / start_val) * plastik_ilk
+
             fig_plotly = go.Figure()
             fig_plotly.add_trace(go.Scatter(
                 x=close_series.index,
@@ -1646,7 +1650,7 @@ with st.container(border=True):
     # Çapraz Kur Değişimini Hesapla
     fx_change_pct, p_start_fx, p_end_fx = get_cross_currency_rate(contract_curr, cost_curr, start_date, end_date)
     
-    # Reel Sözleşme Etkisi (Yukarıda hesaplanan 'zam' değerini kusursuz şekilde kullanır)
+    # Reel Sözleşme Etkisi
     reel_net_impact = (((1 + (zam / 100)) / (1 + (fx_change_pct / 100))) - 1) * 100
 
     col_fx1, col_fx2, col_fx3 = st.columns(3)
@@ -1870,7 +1874,7 @@ with st.container(border=True):
         )
 
         st.plotly_chart(fig_dist, use_container_width=True)
-        
+
 # ============================================================================
 # 📝 TEK TIKLA KARŞI FİYAT REVİZYON & İTİRAZ DİLEKÇESİ GENERATOR (DİNAMİK)
 # ============================================================================
