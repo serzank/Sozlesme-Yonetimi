@@ -140,23 +140,27 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
+    # Font Ayarları
     pdf.set_font("Helvetica", "B", 16)
-    pdf.set_text_color(30, 61, 89)
+    pdf.set_text_color(30, 61, 89) # Kurumsal Lacivert (#1E3D59)
     
-    pdf.cell(0, 10, clean_str("COST NEXUS | EXECUTIVE PROCUREMENT REPORT"), new_x="LMARGIN", new_y="NEXT", align="C")
+    # Başlık (Sürüm uyumlu ln parametresi kullanımı)
+    pdf.cell(0, 10, clean_str("COST NEXUS | EXECUTIVE PROCUREMENT REPORT"), ln=1, align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 5, clean_str(f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Donem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 5, clean_str(f"Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')} | Donem: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"), ln=1, align="C")
     pdf.ln(5)
     
-    pdf.set_draw_color(39, 174, 96)
+    # Çizgi
+    pdf.set_draw_color(39, 174, 96) # Yeşil Çizgi (#27AE60)
     pdf.set_line_width(0.8)
     pdf.line(10, 30, 200, 30)
     pdf.ln(5)
     
+    # Finansal Özet Tablosu
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 61, 89)
-    pdf.cell(0, 8, clean_str("1. SOZLESME VE HAKEDIS OZETI"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, clean_str("1. SOZLESME VE HAKEDIS OZETI"), ln=1)
     
     pdf.set_font("Helvetica", "", 10)
     pdf.set_fill_color(248, 249, 250)
@@ -176,9 +180,10 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.cell(130, 8, clean_str(f" {tr_fmt(yeni)} TL"), 1, 1, "L")
     pdf.ln(5)
     
+    # Aktif Sepet Detayları
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 61, 89)
-    pdf.cell(0, 8, clean_str("2. AKTIF SEPET VE MALIYET ETKI DETAYLARI"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, clean_str("2. AKTIF SEPET VE MALIYET ETKI DETAYLARI"), ln=1)
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(30, 61, 89)
     pdf.set_text_color(255, 255, 255)
@@ -198,16 +203,18 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
             pdf.cell(40, 6, f" %{(deg*agr)/100:+.2f}", 1, 1, "C")
     pdf.ln(5)
     
+    # Jarvis Yorumu
     if jarvis_comment:
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(30, 61, 89)
-        pdf.cell(0, 8, clean_str("3. JARVIS AI FINANSAL EVALUATION & RISK DEGERLENDIRMESI"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, clean_str("3. JARVIS AI FINANSAL EVALUATION & RISK DEGERLENDIRMESI"), ln=1)
         pdf.set_font("Helvetica", "I", 9)
         pdf.set_text_color(50, 50, 50)
         clean_comment = clean_str(jarvis_comment)
         pdf.multi_cell(0, 5, clean_comment, border=1)
         pdf.ln(10)
         
+    # Onay İmzaları
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(30, 61, 89)
     pdf.cell(63, 6, clean_str("Hazirlayan (Purchasing Spec.)"), 0, 0, "C")
@@ -219,7 +226,7 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     pdf.cell(63, 15, "Imza: ....................", 0, 1, "C")
     
     return bytes(pdf.output())
-
+    
 def ai_kapsam_analizi(kapsam_metni, api_key):
     if not api_key or not kapsam_metni.strip():
         return None
