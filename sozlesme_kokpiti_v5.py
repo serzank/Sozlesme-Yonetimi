@@ -1530,11 +1530,11 @@ with st.container(border=True):
             key=f"ted_zam_{d_key}"
         )
 
-    # 🟢 DÜZELTME 1: PAZARLIK HESAPLAMA SATIRLARI BUTONDAN ÖNCEYE ÇEKİLDİ (Sıralama Hatası Çözüldü)
+    # PAZARLIK HESAPLAMA SATIRLARI
     pazarlik_marji = tedarikci_zam - zam
     pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
 
-    # ➕ PORTFÖYE / KIYASLAMAYA EKLE BUTONU (Sıralaması ve Değişkenleri Düzeltildi)
+    # ➕ PORTFÖYE / KIYASLAMAYA EKLE BUTONU
     c_port1, c_port2 = st.columns([3, 1])
     with c_port1:
         varsayilan_etiket = f"Teklif / Sözleşme #{len(st.session_state.contract_portfolio) + 1} ({sozlesme_tipi})"
@@ -2062,14 +2062,17 @@ with st.container(border=True):
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
 
 # ============================================================================
-# 🟢 DÜZELTME 2 & 3: 📋 ÇOKLU SÖZLEŞME KIYASLAMA & PORTFÖY ÖZET TABLOSU
+# 📋 ÇOKLU SÖZLEŞME KIYASLAMA & PORTFÖY ÖZET TABLOSU (GÖRÜNÜR HALE GETİRİLDİ)
 # ============================================================================
-if st.session_state.get("contract_portfolio"):
-    st.markdown("---")
-    with st.container(border=True):
+st.markdown("---")
+with st.container(border=True):
+    st.subheader("📋 Karşılaştırmalı İhale & Sözleşme Portföyü")
+    
+    if not st.session_state.get("contract_portfolio"):
+        st.info("ℹ️ Henüz portföye eklenmiş bir sözleşme yok. Yukarıdaki **'⚖️ Tedarikçi Zam Talebi vs. Piyasa Gerçeği Analizi'** kutusunda yer alan **'➕ Analizi Portföye Ekle'** butonuna basarak ihaleleri buraya ekleyebilirsiniz Sir.")
+    else:
         c_phead1, c_phead2 = st.columns([3, 1])
         with c_phead1:
-            st.subheader("📋 Karşılaştırmalı İhale & Sözleşme Portföyü")
             st.caption("Bu oturumda kaydettiğiniz tüm ihalelerin toplu eskalasyon ve pazarlık karnesi.")
         with c_phead2:
             if st.button("🗑️ Portföy Hafızasını Temizle", use_container_width=True):
