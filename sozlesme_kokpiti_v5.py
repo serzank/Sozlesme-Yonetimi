@@ -739,6 +739,9 @@ with st.sidebar:
 # ============================================================================
 # SEPET AĞIRLIKLARI STATE YÖNETİMİ
 # ============================================================================
+if 'contract_portfolio' not in st.session_state:
+    st.session_state.contract_portfolio = []
+    
 if 'last_sozlesme_tipi' not in st.session_state or st.session_state.last_sozlesme_tipi != sozlesme_tipi:
     st.session_state.last_sozlesme_tipi = sozlesme_tipi
     auto_w = get_auto_weights(sozlesme_tipi)
@@ -1526,7 +1529,24 @@ with st.container(border=True):
             step=0.5, 
             key=f"ted_zam_{d_key}"
         )
-    
+    # ➕ PORTFÖYE / KIYASLAMAYA EKLE BUTONU
+    c_port1, c_port2 = st.columns([3, 1])
+    with c_port1:
+        port_label = st.text_input("Kıyaslama Etiketi / Firma Adı", value=f"{tedarikci_firma} - {sozlesme_no_konu}", key=f"port_lbl_{d_key}")
+    with c_port2:
+        st.markdown("<div style='padding-top:28px;'></div>", unsafe_allow_html=True)
+        if st.button("➕ Analizi Portföye Ekle", use_container_width=True):
+            st.session_state.contract_portfolio.append({
+                "Etiket / Sözleşme": port_label,
+                "Sözleşme Türü": sozlesme_tipi,
+                "Başlangıç Tutarı": f"{tr_fmt(sozlesme_tutari)} {contract_curr}",
+                "Piyasa Zammı (%)": f"%{zam:.2f}",
+                "Tedarikçi Talebi (%)": f"%{tedarikci_zam:.2f}",
+                "Fahiş Marj (%)": f"%{max(0, pazarlik_marji):.2f}",
+                "Masadaki Tasarruf (TL)": pazarlik_tl if pazarlik_marji > 0 else 0.0,
+                "Yeni Tutar": f"{tr_fmt(yeni)} {contract_curr}"
+            })
+            st.success(f"✅ '{port_label}' kıyaslama portföyüne eklendi!")
     pazarlik_marji = tedarikci_zam - zam
     pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
 
@@ -2037,3 +2057,36 @@ with st.container(border=True):
                         st.error(f"Bir hata oluştu: {str(e)}")
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
+
+
+    # ============================================================================
+# 📋 ÇOKLU SÖZLEŞME KIYASLAMA & PORTFÖY ÖZETİ (MULTI-CONTRACT PORTFOLIO)
+# ============================================================================
+if st.session_state.get("contract_portfolio"):
+    st.markdown("---")
+    with st.container(border=True):
+        c_phead1, c_phead2 = st.columns([3, 1])
+        with c_phead1:
+            st.subheader("📋 Karşılaştırmalı İhale & Sözleşme Portföyü")
+            st.caption("Bu oturumda kaydettiğiniz tüm ihalelerin toplu eskalasyon ve pazarlık karnesi.")
+        with c_phead2:
+            if st.button("🗑️ Portföy Hafızasını Temizle", use_container_width=True):
+                st.session_state.contract_portfolio = []
+                st.rerun()
+
+        df_portfolio = pd.DataFrame(st.session_state.contract_portfolio)
+        
+        st.dataframe(df_portfolio, use_container_width=True)
+
+        # Toplam Tasarruf ve Portföy KPI
+        total_pazarlik_tl = sum([item["Masadaki Tasarruf (TL)"] for item in st.session_state.contract_portfolio])
+        
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(90deg, #1E3D59 0%, #27AE60 100%); 
+                        color: white; padding: 15px; border-radius: 8px; font-size: 16px; margin-top: 10px;'>
+                💰 <b>PORTFÖY GENELİ TOPLAM MÜZAKERE KAZANCI (PAZARLIK MARJI):</b> {tr_fmt(total_pazarlik_tl)} TL
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
