@@ -236,7 +236,7 @@ def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni,
     # Eski FPDF sürümü için güvenli byte çıktısı
     pdf_output = pdf.output(dest='S')
     if isinstance(pdf_output, str):
-        return pdf_output.encode('latin1')
+        return pdf_output.encode('latin1', errors='ignore')
     return bytes(pdf_output)
     
 def ai_kapsam_analizi(kapsam_metni, api_key):
@@ -1529,10 +1529,16 @@ with st.container(border=True):
             step=0.5, 
             key=f"ted_zam_{d_key}"
         )
-    # ➕ PORTFÖYE / KIYASLAMAYA EKLE BUTONU
+
+    # 🟢 DÜZELTME 1: PAZARLIK HESAPLAMA SATIRLARI BUTONDAN ÖNCEYE ÇEKİLDİ (Sıralama Hatası Çözüldü)
+    pazarlik_marji = tedarikci_zam - zam
+    pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
+
+    # ➕ PORTFÖYE / KIYASLAMAYA EKLE BUTONU (Sıralaması ve Değişkenleri Düzeltildi)
     c_port1, c_port2 = st.columns([3, 1])
     with c_port1:
-        port_label = st.text_input("Kıyaslama Etiketi / Firma Adı", value=f"{tedarikci_firma} - {sozlesme_no_konu}", key=f"port_lbl_{d_key}")
+        varsayilan_etiket = f"Teklif / Sözleşme #{len(st.session_state.contract_portfolio) + 1} ({sozlesme_tipi})"
+        port_label = st.text_input("Kıyaslama Etiketi / Firma Adı", value=varsayilan_etiket, key=f"port_lbl_{d_key}_{len(st.session_state.contract_portfolio)}")
     with c_port2:
         st.markdown("<div style='padding-top:28px;'></div>", unsafe_allow_html=True)
         if st.button("➕ Analizi Portföye Ekle", use_container_width=True):
@@ -1547,8 +1553,6 @@ with st.container(border=True):
                 "Yeni Tutar": f"{tr_fmt(yeni)} {contract_curr}"
             })
             st.success(f"✅ '{port_label}' kıyaslama portföyüne eklendi!")
-    pazarlik_marji = tedarikci_zam - zam
-    pazarlik_tl = sozlesme_tutari * (pazarlik_marji / 100)
 
     with c_k2:
         st.metric("Piyasa Sepet Eskalasyonu", f"%{zam:.2f}")
@@ -1976,7 +1980,6 @@ Saygılarımızla,
 Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')}
 """
 
-    # 🟢 DÜZELTME B: Tedarikçi zam oranı veya sepet eskalasyon oranı değiştikçe alanı tazeleyen key
     let_key = f"let_area_{itiraz_maddesi}_{round(tedarikci_zam, 2)}_{round(zam, 2)}"
     st.text_area("📄 Üretilen Resmi Mektup Taslağı", value=mektup_metni, height=280, key=let_key)
 
@@ -2058,24 +2061,33 @@ with st.container(border=True):
         else:
             st.info("Jarvis şu an beklemede. Güncel verileri yapay zeka ile yorumlamak için butona basınız.")
 
+# ============================================================================
+# 🟢 DÜZELTME 2 & 3: 📋 ÇOKLU SÖZLEŞME KIYASLAMA & PORTFÖY ÖZET TABLOSU
+# ============================================================================
+if st.session_state.get("contract_portfolio"):
+    st.markdown("---")
+    with st.container(border=True):
+        c_phead1, c_phead2 = st.columns([3, 1])
+        with c_phead1:
+            st.subheader("📋 Karşılaştırmalı İhale & Sözleşme Portföyü")
+            st.caption("Bu oturumda kaydettiğiniz tüm ihalelerin toplu eskalasyon ve pazarlık karnesi.")
+        with c_phead2:
+            if st.button("🗑️ Portföy Hafızasını Temizle", use_container_width=True):
+                st.session_state.contract_portfolio = []
+                st.rerun()
 
-# ➕ PORTFÖYE / KIYASLAMAYA EKLE BUTONU (NameError Düzeltildi)
-    c_port1, c_port2 = st.columns([3, 1])
-    with c_port1:
-        # Varsayılan metni dinamik olarak güvenli hazırlıyoruz
-        varsayilan_etiket = f"Teklif / Sözleşme #{len(st.session_state.contract_portfolio) + 1} ({sozlesme_tipi})"
-        port_label = st.text_input("Kıyaslama Etiketi / Firma Adı", value=varsayilan_etiket, key=f"port_lbl_{d_key}_{len(st.session_state.contract_portfolio)}")
-    with c_port2:
-        st.markdown("<div style='padding-top:28px;'></div>", unsafe_allow_html=True)
-        if st.button("➕ Analizi Portföye Ekle", use_container_width=True):
-            st.session_state.contract_portfolio.append({
-                "Etiket / Sözleşme": port_label,
-                "Sözleşme Türü": sozlesme_tipi,
-                "Başlangıç Tutarı": f"{tr_fmt(sozlesme_tutari)} {contract_curr}",
-                "Piyasa Zammı (%)": f"%{zam:.2f}",
-                "Tedarikçi Talebi (%)": f"%{tedarikci_zam:.2f}",
-                "Fahiş Marj (%)": f"%{max(0, pazarlik_marji):.2f}",
-                "Masadaki Tasarruf (TL)": pazarlik_tl if pazarlik_marji > 0 else 0.0,
-                "Yeni Tutar": f"{tr_fmt(yeni)} {contract_curr}"
-            })
-            st.success(f"✅ '{port_label}' kıyaslama portföyüne eklendi!")
+        df_portfolio = pd.DataFrame(st.session_state.contract_portfolio)
+        st.dataframe(df_portfolio, use_container_width=True)
+
+        # Toplam Tasarruf ve Portföy KPI
+        total_pazarlik_tl = sum([item["Masadaki Tasarruf (TL)"] for item in st.session_state.contract_portfolio])
+        
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(90deg, #1E3D59 0%, #27AE60 100%); 
+                        color: white; padding: 15px; border-radius: 8px; font-size: 16px; margin-top: 10px;'>
+                💰 <b>PORTFÖY GENELİ TOPLAM MÜZAKERE KAZANCI (PAZARLIK MARJI):</b> {tr_fmt(total_pazarlik_tl)} TL
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
