@@ -126,14 +126,22 @@ def extract_text_from_pdf(uploaded_file):
 def clean_str(text):
     if not text:
         return ""
-    tr_map = {
+    
+    char_map = {
         "İ": "I", "ı": "i", "Ğ": "G", "ğ": "g", 
         "Ü": "U", "ü": "u", "Ş": "S", "ş": "s", 
-        "Ö": "O", "ö": "o", "Ç": "C", "ç": "c"
+        "Ö": "O", "ö": "o", "Ç": "C", "ç": "c",
+        "—": "-", "–": "-", "“": '"', "”": '"',
+        "’": "'", "‘": "'", "•": "*", "…": "...",
+        "📌": "", "✨": "", "⚖️": "", "📄": "", "📥": "",
+        "💡": "", "⚠️": "", "✅": "", "🎲": "", "📊": ""
     }
-    for tr, en in tr_map.items():
-        text = str(text).replace(tr, en)
-    return text.encode("latin-1", errors="replace").decode("latin-1")
+    
+    s_text = str(text)
+    for k_char, v_char in char_map.items():
+        s_text = s_text.replace(k_char, v_char)
+        
+    return s_text.encode("latin-1", errors="ignore").decode("latin-1")
 
 def create_executive_pdf_report(sozlesme_tipi, sozlesme_tutari, zam, fark, yeni, etkiler, jarvis_comment, start_date, end_date):
     pdf = FPDF()
@@ -1948,7 +1956,9 @@ Saygılarımızla,
 Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')}
 """
 
-    st.text_area("📄 Üretilen Resmi Mektup Taslağı", value=mektup_metni, height=280, key=f"let_area_{itiraz_maddesi}")
+    # 🟢 DÜZELTME B: Tedarikçi zam oranı veya sepet eskalasyon oranı değiştikçe alanı tazeleyen key
+    let_key = f"let_area_{itiraz_maddesi}_{round(tedarikci_zam, 2)}_{round(zam, 2)}"
+    st.text_area("📄 Üretilen Resmi Mektup Taslağı", value=mektup_metni, height=280, key=let_key)
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
@@ -1960,7 +1970,7 @@ Rapor Tarihi: {datetime.today().strftime('%d.%m.%Y')}
             use_container_width=True
         )
     with col_btn2:
-        st.info("💡 Seçtiğiniz stratejiye göre mektup paragrafı ve hukuki dille pazarlık şartları otomatik değişmektedir Sir.")
+        st.info("💡 Seçtiğiniz stratejiye ve girilen zam oranlarına göre mektup paragrafı anında güncellenmektedir Sir.")
 
 # ============================================================================
 # JARVIS AI & YORUM MODÜLÜ
